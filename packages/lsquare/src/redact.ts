@@ -13,8 +13,8 @@ const WS = '\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\
 /**
  * 0.1's patterns, with `\s` written out. Redaction runs on the host app's event loop, so every
  * pattern must match in linear time: emails, JWTs and IPv6 addresses may only start at a token
- * boundary (one attempt per run of token characters), a PEM body can't run past the next "-----",
- * a URL's credentials can't run past the next "/" or "@", and the Basic token check looks at most
+ * boundary, or straight after an escape written in a string (at most two attempts per run of token characters), a PEM body can't run past the next "-----",
+ * a URL's credentials can't run past the next "/", "?", "#", '"' or 256 characters, and the Basic token check looks at most
  * 512 characters ahead. Secrets are not length-bounded, so long credentials are still caught.
  * The phone pattern and the IPv4 octet are 0.1's, rewritten so that adjacent digit repeats can't
  * split one run of digits in more than one way, and they match exactly what 0.1's did, which tests
@@ -25,14 +25,14 @@ const WS = '\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\
  * `\d`, `\w` and `\b` are ASCII-only here, as in Python with `re.ASCII`.
  */
 export const PATTERNS: Record<PatternName, RegExp> = {
-  email: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}/g,
-  phone: /\+(?=[1-9](?:[ .()-]{0,2}\d){5})(?:\d{1,3}(?:[ .-]\(?|\()(?:\d{1,4}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{3,8}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{5,12}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{7,16}(?:[ .-]\d{2,4}\b|\b)|\d{9,20}\b)|\d{2,7}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{4,11}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{6,15}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{8,19}(?:[ .-]\d{2,4}\b|\b)|\d{10,23}\b)|\(\d{3}\) ?\d{3}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b/g,
-  card: /\b[3-6]\d{3}(?:[ -]?\d){11,12}\b/g,
+  email: /(?:(?<![A-Za-z0-9._%+-])(?!(?<=\\)(?:[nrtfb]|(?:u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|U[0-9A-Fa-f]{8})(?!%40)[A-Za-z0-9._%+-]))|(?<=\\[nrtfb])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}/g,
+  phone: /\+(?=[1-9](?:[ .()-]{0,2}\d){5})(?:\d{1,3}(?:[ .-]\(?|\()(?:\d{1,4}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{3,8}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{5,12}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{7,16}(?:[ .-]\d{2,4}\b|\b)|\d{9,20}\b)|\d{2,7}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{4,11}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{6,15}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{8,19}(?:[ .-]\d{2,4}\b|\b)|\d{10,23}\b)|\(\d{3}\) ?\d{3}-\d{4}\b|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))\d{3}-\d{3}-\d{4}\b/g,
+  card: /(?<!\d\.)(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[3-6]\d{3}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720))(?:[ -]?\d){11,12}\b(?<![ -]\d)(?<![ -]\d\d)|3[068]\d\d(?:[ -]?\d){10}\b)/g,
   secret: new RegExp(
-    String.raw`\b(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack\.com\/services\/[A-Za-z0-9\/_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)["']?[${WS}]*[:=][${WS}]*["']?[A-Za-z0-9\/+]{40}|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9._-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|phx_[A-Za-z0-9]{20,})|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(?:[Bb]earer|BEARER)[${WS}]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*|\b(?:Basic|BASIC)[${WS}]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}|(?<=:\/\/)[^${WS}/:@?#]{0,256}:[^${WS}/@?#]{1,256}(?=@)|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?-----END [A-Z ]{0,32}PRIVATE KEY-----`,
+    String.raw`(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|xox[a-z]-[A-Za-z0-9%+\/=-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack(?:-gov)?\.com\\{0,2}\/(?:services|triggers|workflows|commands|actions)\\{0,2}\/[A-Za-z0-9\/\\_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)(?:\\{0,7}["'])?[${WS}]*[:=][${WS}]*(?:\\{0,7}["'])?(?:[A-Za-z0-9\/+]|\\{1,2}\/){40}|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9._-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|phx_[A-Za-z0-9]{20,})|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(?:[Bb]earer|BEARER)[${WS}]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[${WS}]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))(?:(?!',|,')[^${WS}/:?#"]){0,256}:[^${WS}/?#"]{1,256}(?=@)|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))`,
     'g',
   ),
-  ip: /\b(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)){3}\b|(?<![0-9A-Za-z:.])(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}|:(?::[0-9A-Fa-f]{1,4}){1,7})(?![0-9A-Za-z:]|\.\d)/g,
+  ip: /(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)){3}\b|(?:(?<![0-9A-Za-z:.])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}|:(?::[0-9A-Fa-f]{1,4}){1,7})(?![0-9A-Za-z:]|\.\d)/g,
 }
 
 /**
@@ -60,13 +60,15 @@ const WHOLE_PLACEHOLDER = /^\[(?:EMAIL|PHONE|CARD|SECRET|IP)_\d{1,9}\]$/
  * whole: a known key prefix or a JWT's `eyJ`, at the start of the token the cut ends.
  */
 const SECRET_START =
-  /^(?:lsq_|sk-|[rs]k_(?:live|test)_|whsec_|gh[opsur]_|github_pat_|glpat-|npm_|xox[abprs]-|xapp-|hooks\.slack\.com\/services\/|AKIA|ASIA|AIza|ya29\.|GOCSPX-|phx_|eyJ)/
+  /^(?:lsq_|sk-|[rs]k_(?:live|test)_|whsec_|gh[opsur]_|github_pat_|glpat-|npm_|xox[a-z]-|xapp-|hooks\.slack(?:-gov)?\.com\\{0,2}\/|AKIA|ASIA|AIza|ya29\.|GOCSPX-|phx_|eyJ)/
 /** A Bearer or Basic token's scheme, just before the token the cut ends. */
 const AUTH_SCHEME = new RegExp(`(?:[Bb]earer|BEARER|Basic|BASIC)[${WS}]+$`)
 const PEM_BEGIN = /^-----BEGIN [A-Z ]{0,32}(?:PRIVATE KEY-----|$)/
 /** A PEM key's closing line, whole: until one follows its BEGIN line, the block runs into the cut. */
 const PEM_END = /-----END [A-Z ]{0,32}PRIVATE KEY-----/
 const TOKEN_CHAR = /[A-Za-z0-9._~+/=-]/
+/** What's after the backslash of an escape a value can start straight after. */
+const WRITTEN_ESCAPE = /^(?:[nrtfb0aevNLP_]|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|U[0-9A-Fa-f]{8})/
 /** Inside a run of token characters, a secret can start after one of these, as the patterns allow. */
 const SECRET_BOUNDARY = /[.~+/=]/
 /** Matched values longer than this are numbered by a hash, so a pending event doesn't keep them. */
@@ -214,6 +216,8 @@ export class Redactor {
   private readonly keyNames: readonly string[]
 
   private readonly scanWork: ScanWork = { left: SCAN_WORK }
+  /** What the scan made of strings before `beforeSend`, which isn't read again: a placeholder could be taken for part of what's around it. */
+  private readonly scanned = new Set<string>()
 
   constructor(
     private readonly patterns: PatternName[],
@@ -318,6 +322,7 @@ export class Redactor {
     }
     walk(event)
     for (const text of this.cuts.keys()) if (!strings.has(text)) this.cuts.delete(text)
+    for (const text of this.scanned) if (!strings.has(text)) this.scanned.delete(text)
     for (const [key, n] of this.assigned) {
       const pattern = key.slice(0, key.indexOf('\u0000')) as PatternName
       if (!present.get(pattern)?.has(n)) this.assigned.delete(key)
@@ -330,7 +335,7 @@ export class Redactor {
   retainedBytes(): number {
     let bytes = 0
     for (const key of this.assigned.keys()) bytes += key.length * 2 + 64
-    bytes += this.cuts.size * 64
+    bytes += (this.cuts.size + this.scanned.size) * 64
     for (const numbers of this.used.values()) bytes += numbers.size * 16
     return bytes
   }
@@ -358,12 +363,13 @@ export class Redactor {
 
   /** A string value: what's under secret key names in JSON it holds, then the patterns. */
   string(input: string): string {
-    return this.text(this.withoutSecretValues(input))
+    return this.text(this.scanned.has(input) ? input : this.withoutSecretValues(input))
   }
 
   /** A string value before the hook: only what's under secret key names, which the hook never sees. */
   private beforeHook(input: string): string {
     const out = this.withoutSecretValues(input)
+    if (mayHoldKey(out)) this.scanned.add(out)
     // One ending with a marker is read as any other marked string after the hook.
     if (out !== input && !isMarked(out)) {
       const [, length] = advance(input, 0, input.length)
@@ -449,6 +455,8 @@ export class Redactor {
     }
     let run = kept.length
     while (run > 0 && TOKEN_CHAR.test(kept[run - 1] as string)) run--
+    // What ends an escape written in JSON, such as the `n` of `\\n`, isn't part of the token.
+    if (kept[run - 1] === '\\') run += WRITTEN_ESCAPE.exec(kept.slice(run, run + 9))?.[0].length ?? 0
     // The earliest place in the run where a secret could start: its beginning, or just after a
     // character that ends one in the patterns, as `=` does in `token=eyJ…`.
     for (let start = run; start < kept.length; start++) {
@@ -464,7 +472,7 @@ export class Redactor {
   private number(value: number): Json {
     if (!this.patterns.includes('card') || !Number.isInteger(value) || value <= 0) return value
     const digits = String(value)
-    if (!/^[3-6]\d{14,15}$/.test(digits) || !luhn(digits)) return value
+    if (!/^(?:[3-6]\d{14,15}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720)\d{11,12}|3[068]\d{12})$/.test(digits) || !luhn(digits)) return value
     return this.placeholder('card', digits, false)
   }
 

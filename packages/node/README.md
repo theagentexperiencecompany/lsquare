@@ -77,8 +77,9 @@ key is secret when its name, ignoring case and punctuation, ends with `password(
 part of the `secret` pattern. Redact names specific to your app with `beforeSend`.
 
 The same rule applies to JSON held in a string, such as an input or an answer:
-`{"password":"hunter2"}` becomes `{"password":"[SECRET_1]"}`, and the rest of the string stays. Other
-syntax (`password=hunter2`, Python's `{'password': 'x'}`) isn't covered. Use `beforeSend` for those.
+`{"password":"hunter2"}` becomes `{"password":"[SECRET_1]"}`, and the rest of the string stays. So do
+Python's `{'password': 'x'}`, as pydantic's errors quote an input, and a URL's `?token=abc`. Other
+syntax (`password=hunter2`, `{password: "x"}`) isn't covered. Use `beforeSend` for those.
 
 Identifier fields are never redacted: `conversationId`, `turnId`, `orgId`, `toolName`, `apiKeyId`,
 `surface`, `client` and `status`. Put opaque IDs there, never emails, names or other personal data.

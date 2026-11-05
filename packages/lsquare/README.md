@@ -222,10 +222,11 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole, in
   structured data and in JSON held in a string, such as a text block, an input or an error message:
   `{"password":"hunter2"}` becomes `{"password":"[SECRET_1]"}`, and the rest of the string stays.
+  So do Python's `{'password': 'x'}`, as pydantic's errors quote an input, and a URL's `?token=abc`.
   `redactKeys: ['name', 'address']` (an array or a Set) adds your own: matched on their ASCII letters and digits only, ignoring case, by the end
   of the key, so `name` also covers `firstName` and `fileName`; a narrower name such as `fullname`
   avoids that. Free text, such as a name inside a sentence, isn't caught, nor is other syntax
-  (`password=hunter2`, Python's `{'password': 'x'}`).
+  (`password=hunter2`, `{password: "x"}`).
 - `beforeSend(event, { signal })` sees every event before the patterns above are applied, and can
   change it or drop it by returning `null`. Values under secret key names are already replaced, and
   a string cut for length has had its kept part redacted. What it returns is shaped and redacted

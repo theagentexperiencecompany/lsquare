@@ -259,6 +259,14 @@ describe('long secrets', () => {
   })
 })
 
+describe('a token cut off straight after a line end or tab written in JSON', () => {
+  it('is masked: the escape\'s letter isn\'t part of the token', () => {
+    for (const escape of ['\\n', '\\r', '\\t']) {
+      expect(new Redactor(all).cutText(`a${escape}sk-abcdefgh`, 14)).toBe(`a${escape}[SECRET_1]`)
+    }
+  })
+})
+
 describe('a PEM key cut off', () => {
   const pem = (label: string) => `-----BEGIN ${label}PRIVATE KEY-----\n${'ABCD'.repeat(16)}\n-----END ${label}PRIVATE KEY-----`
 
