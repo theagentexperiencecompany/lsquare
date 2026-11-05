@@ -11,7 +11,7 @@
 # runs them all. The regular tests stay on the pinned MCP SDKs; the weekly job tries new ones. And
 # as the gate of a Python release (pypi-release.yml), whose upload is the wheel and sdist built here
 # (python-build's artifact, by the ID and SHA-256s this workflow outputs): everything, always,
-# restoring no cache.
+# restoring no cache. One last job, all checks passed, stands for all the others in a branch rule.
 name: CI
 
 # A branch's pushes are checked through its pull request, so each change runs once.
@@ -519,3 +519,34 @@ jobs:
           uv venv --python 3.10 --seed "$RUNNER_TEMP/venv"
           "$RUNNER_TEMP/venv/bin/pip" install dist/lsquare-*.whl ${WITH:+"$WITH"}
       - run: '"$RUNNER_TEMP/venv/bin/python" scripts/clean_install.py ${{ matrix.case }}'
+
+  # What a branch rule requires: green only if no other job failed or was cancelled, and a skipped
+  # one is fine. A rule can't require the matrix jobs here: on a pull request that skips one, it
+  # reports under its unexpanded name, so the rule would wait for its real name forever. It runs whatever
+  # the jobs it needs did, since a job skipped by a failure would skip it too, and a skipped job
+  # counts as passing. A new job goes in `needs` too, which workflows_test.py checks.
+  all-checks:
+    name: all checks passed
+    needs:
+      - changes
+      - contract-version
+      - build
+      - core
+      - wrapper
+      - types
+      - tests
+      - bun
+      - python-build
+      - python-core
+      - python-wrapper
+      - python-types
+      - python-clean-install
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: No job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::A job this one needs failed or was cancelled."
+          exit 1

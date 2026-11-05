@@ -15,6 +15,8 @@ cache and the token, which files a release publishes, and which pull requests sk
   changes it must raise its version, by which LSquare's ingestion takes it: checked in a job
   of its own, by a script run on scratch repositories too.
 - The contract's smoke check runs on each of the core job's Node versions its engines include.
+- all checks passed waits for every other job in ci.yml, and fails if one failed or was cancelled,
+  so a branch rule can require it alone.
 """
 
 from __future__ import annotations
@@ -275,8 +277,9 @@ def test_a_pull_request_has_the_contracts_version_checked_against_its_base() -> 
     assert checking == ["contract-version"]
     job = every["contract-version"]
     assert job["if"] == "github.event_name == 'pull_request'"
-    # A job of its own, which needs nothing and nothing needs: its failure skips no test suite.
-    assert needs(job) == [] and [job_id for job_id, other in every.items() if "contract-version" in needs(other)] == []
+    # A job of its own, which needs nothing and only all checks passed needs, which runs whatever the
+    # jobs before it did: its failure skips no test suite.
+    assert needs(job) == [] and [job_id for job_id, other in every.items() if "contract-version" in needs(other)] == ["all-checks"]
     steps = job["steps"]
     [step] = [step for step in steps if "contract-version.mjs" in str(step.get("run", ""))]
     assert step["env"] == {"BASE": "${{ github.event.pull_request.base.sha }}"}
@@ -360,3 +363,16 @@ def test_which_pull_requests_pass_the_contracts_version_check(tmp_path: Path, ch
     assert run.returncode == (0 if failing is None else 1), run.stdout + run.stderr
     annotated = [line.split("::")[1] for line in run.stdout.splitlines() if line.startswith("::error")]
     assert annotated == ([] if failing is None else [f"error file={failing}"])
+
+
+def test_all_checks_passed_stands_for_every_other_job() -> None:
+    every = jobs("ci.yml")
+    job = every["all-checks"]
+    assert job["name"] == "all checks passed"
+    assert sorted(needs(job)) == sorted(set(every) - {"all-checks"})
+    # Skipped along with a job that failed, it would count as passing.
+    assert job["if"] == "always()"
+    assert "continue-on-error" not in job
+    [step] = job["steps"]
+    assert step["if"] == "contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')"
+    assert "exit 1" in step["run"]
