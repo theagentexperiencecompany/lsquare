@@ -40,6 +40,7 @@ PACKAGE = (
     "lsquare/_normalize.py",
     "lsquare/_redact.py",
     "lsquare/_runtime.py",
+    "lsquare/_secret_spans.py",
     "lsquare/_sending.py",
     "lsquare/_shape.py",
     "lsquare/_threads.py",
