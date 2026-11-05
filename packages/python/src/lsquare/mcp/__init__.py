@@ -126,12 +126,14 @@ def _dry_run(state: State) -> dict[str, Any]:
                 "for a server whose instances list and serve their own tools, the same to every request"
             )
             return line
-        on = [name for name, flag in ((SESSION_ID, low.sessions), (INTENT, low.intent), (MISSING_TOOLS, low.missing_tools)) if flag]
+        on = [name for name, flag in ((SESSION_ID, low.sessions), (INTENT, low.intent), (MISSING_TOOLS, low.missing_tools and state.settings.inputs_mode != "off")) if flag]
         low_line: dict[str, Any] = {
             "on": on,
             "from": "the server's own tool list: every page, read before anything changes and again after it changes; a call waits at most 1 second for it",
             "for": "instances that list the same tools to every request they serve",
         }
+        if MISSING_TOOLS in on and state.settings.inputs_mode == "asked":
+            low_line[MISSING_TOOLS] = "only where the inputs function answers true for it"
         if state.line == "v2":
             low_line["2026-07-28"] = "requests on 2026-07-28 or later are passed on unchanged: their change notifications go where the wrapper can't see them"
         line["extras"] = low_line
@@ -160,6 +162,10 @@ def _dry_run(state: State) -> dict[str, Any]:
         described[MISSING_TOOLS] = (
             "not added: the server has its own"
             if MISSING_TOOLS in names
+            else "not added: its input wouldn't be recorded"
+            if state.settings.inputs_mode == "off"
+            else "added while the server has an enabled tool of its own, and the inputs function answers true for it"
+            if state.settings.inputs_mode == "asked"
             else "added while the server has an enabled tool of its own"
         )
     if extras.sessions:

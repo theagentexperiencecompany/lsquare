@@ -22,7 +22,7 @@ const ID = /^ses_[A-Za-z0-9_-]{22}$/
 const SENT = 'ses_AbCdEfGhIjKlMnOpQrStUv'
 const LINE = /^Task ID: (ses_[A-Za-z0-9_-]{22})\. Send it as session_id on later calls for this task, and pass it to any subagent working on it\.$/
 const ON = { sessions: true, intent: true, missingTools: true }
-const REPLY = "Noted. No other tools are available right now, and your request was passed on to the server's developers."
+const REPLY = 'Noted. No other tools are available right now.'
 
 const issued = (reply: any): string | undefined => {
   const last = reply?.content?.at?.(-1)
@@ -169,6 +169,56 @@ describe.each([kit1, kit2])('$name: low-level extras', (kit) => {
     }
   })
 
+  it.each([
+    [[true, false], true],
+    [[false, true], false],
+  ])('asks the inputs function once a call: answers %j', async (answers, noted) => {
+    const lsquare = setup()
+    let reads = 0
+    const fixed = kit.make()
+    instrument(fixed.server, lsquare.client, { extras: { missingTools: true }, results: false, inputs: () => (answers as boolean[])[reads++] ?? false })
+    const reply = await (await kit.connect(fixed.server)).call('get_more_tools', { need: 'Cancel an order' })
+    expect(JSON.stringify(reply).includes('Noted.')).toBe(noted)
+    expect(reads).toBe(1)
+    const [event] = await lsquare.calls()
+    if (noted) expect(event).toMatchObject({ extra: 'missing_tools', input: { need: 'Cancel an order' } })
+    else expect(event).not.toHaveProperty('extra')
+  })
+
+  it('records how a handler failed but none of its text with results off', async () => {
+    const lsquare = setup()
+    const fixed = kit.make()
+    instrument(fixed.server, lsquare.client, { results: false })
+    const connection = await kit.connect(fixed.server)
+    fixed.answer = () => {
+      throw new TypeError('the private note')
+    }
+    await connection.call('search', { q: 'a' }).catch(() => undefined)
+    fixed.answer = () => {
+      throw Object.assign(new Error('the private note'), { code: -32000 })
+    }
+    await connection.call('search', { q: 'b' }).catch(() => undefined)
+    const [plain, coded] = await lsquare.calls()
+    expect(plain!.error).toEqual({ type: 'TypeError', category: 'thrown' })
+    expect(coded!.error).toEqual({ type: 'Error', code: -32000, category: 'protocol' })
+    expect(JSON.stringify([plain, coded])).not.toContain('private note')
+  })
+
+  it.each([[false], [(name: string) => name !== 'get_more_tools']])("doesn't offer get_more_tools where its need wouldn't be recorded", async (inputs) => {
+    const lsquare = setup()
+    const fixed = kit.make()
+    instrument(fixed.server, lsquare.client, { extras: { missingTools: true }, inputs })
+    const connection = await kit.connect(fixed.server)
+    expect((await connection.list()).tools.map((entry: any) => entry.name)).not.toContain('get_more_tools')
+    const reply = await connection.call('get_more_tools', { need: 'Cancel an order' })
+    expect(JSON.stringify(reply)).not.toContain('Noted.')
+    // The server's own handler got the call, as it gets any other: nothing of the wrapper's answered it.
+    expect(fixed.seen.at(-1)).toMatchObject({ name: 'get_more_tools' })
+    const [event] = await lsquare.calls()
+    expect(event).not.toHaveProperty('extra')
+    expect(event).not.toHaveProperty('input')
+  })
+
   it('turned on, lists the inputs and get_more_tools, takes them out of calls, and gives the first result a task ID', async () => {
     const lsquare = setup()
     const fixed = kit.make()
@@ -176,7 +226,7 @@ describe.each([kit1, kit2])('$name: low-level extras', (kit) => {
     const connection = await kit.connect(fixed.server)
     const listed = await connection.list()
     expect(Object.keys(tool(listed, 'search').inputSchema.properties)).toEqual(['q', 'session_id', 'intent'])
-    expect(tool(listed, 'get_more_tools')).toMatchObject({ inputSchema: { required: ['need'] }, annotations: { readOnlyHint: true } })
+    expect(tool(listed, 'get_more_tools')).toMatchObject({ inputSchema: { required: ['need'] }, annotations: { readOnlyHint: false, openWorldHint: true } })
     const first = await connection.call('search', { q: 'a', intent: 'Find late orders' })
     expect(withoutLine(first)).toEqual(text('{"q":"a"}'))
     const id = issued(first)
@@ -753,6 +803,22 @@ describe('a high-level server whose tools/call handler was replaced', () => {
 })
 
 describe('dry run on a low-level server', () => {
+  it("doesn't count get_more_tools as on with inputs off", async () => {
+    const lsquare = setup({ apiKey: undefined, dryRun: true })
+    instrument(kit2.make().server, lsquare.client, { extras: { sessions: true, missingTools: true }, inputs: false })
+    await tick()
+    const [line] = lsquare.logs.filter((entry) => entry.startsWith('[lsquare dry-run]')).map((entry) => JSON.parse(entry.replace('[lsquare dry-run] ', '')))
+    expect(line.extras.on).toEqual(['session_id'])
+  })
+
+  it('says that get_more_tools depends on an inputs function', async () => {
+    const lsquare = setup({ apiKey: undefined, dryRun: true })
+    instrument(kit2.make().server, lsquare.client, { extras: { sessions: true, missingTools: true }, inputs: (name) => name !== 'get_more_tools' })
+    await tick()
+    const [line] = lsquare.logs.filter((entry) => entry.startsWith('[lsquare dry-run]')).map((entry) => JSON.parse(entry.replace('[lsquare dry-run] ', '')))
+    expect(line.extras.get_more_tools).toBe('only where the inputs function answers true for it')
+  })
+
   it('says the extras are off and how to turn them on, or which are on and where they come from', async () => {
     const lsquare = setup({ apiKey: undefined, dryRun: true })
     instrument(kit2.make().server, lsquare.client)

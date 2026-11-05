@@ -3,7 +3,9 @@ of calls, the ID line and grouping, and get_more_tools."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
+import gc
 import re
 from typing import Any
 
@@ -173,6 +175,104 @@ async def test_answers_get_more_tools_itself_and_records_the_need_under_the_inpu
     first, second = events.calls()
     assert first["extra"] == "missing_tools" and first["input"] == {"need": "issue refunds"} and first["status"] == "completed"
     assert second["error"]["category"] == "protocol"
+
+
+@pytest.mark.parametrize(("answers", "noted"), [([True, False], True), ([False, True], False)])
+async def test_asks_the_inputs_function_once_a_call(answers: list[bool], noted: bool) -> None:
+    lsquare, events = client()
+    app = high()
+    tool(app, search)
+    left: list[bool] = []
+    instrument(app, lsquare, inputs=lambda name: left.pop(0) if left else True)
+    async with connect(app) as connection:
+        # The client's own listings, which it can make around a call, answer true.
+        await connection.tools()
+        left[:] = answers
+        try:
+            reply = await connection.call("get_more_tools", {"need": "issue refunds"})
+        except Exception:
+            reply = None
+    await lsquare.aflush(timeout_ms=5_000)
+    assert (reply is not None and bool(reply.texts) and reply.texts[0].startswith("Noted.")) is noted
+    [event] = events.calls()
+    if noted:
+        assert event["extra"] == "missing_tools" and event["input"] == {"need": "issue refunds"}
+    else:
+        assert "extra" not in event
+
+
+async def test_keeps_a_warning_of_its_own_for_an_inputs_function_that_doesnt_know_get_more_tools() -> None:
+    recorder = Recorder()
+    lsquare, _ = client(logger=recorder)
+    app = high()
+    tool(app, search)
+    tool(app, own_intent)
+    policy = {"search": True}
+    instrument(app, lsquare, inputs=lambda name: policy[name])
+    async with connect(app) as connection:
+        await connection.tools()
+        lines = [line for _, line in recorder.lines]
+        assert sum("when asked about get_more_tools" in line for line in lines) == 1
+        assert not any("recorded for the calls" in line for line in lines)
+        await connection.call("own_intent", {"query": "a"})
+    assert sum("recorded for the calls" in line for _, line in recorder.lines) == 1
+
+
+async def test_a_failing_task_from_the_inputs_function_is_never_logged_with_its_text() -> None:
+    seen: list[dict[str, Any]] = []
+    asyncio.get_running_loop().set_exception_handler(lambda _, context: seen.append(context))
+
+    async def fail() -> bool:
+        raise RuntimeError("the private note")
+
+    lsquare, _ = client()
+    app = high()
+    tool(app, search)
+    inputs: Any = lambda name: asyncio.create_task(fail())
+    instrument(app, lsquare, inputs=inputs)
+    async with connect(app) as connection:
+        await connection.tools()
+    await asyncio.sleep(0)
+    gc.collect()
+    await asyncio.sleep(0)
+    assert seen == []
+
+
+async def test_still_warns_of_the_servers_own_get_more_tools_with_inputs_off() -> None:
+    def get_more_tools(need: str) -> str:
+        return need
+
+    recorder = Recorder()
+    lsquare, _ = client(logger=recorder)
+    app = high()
+    tool(app, get_more_tools)
+    instrument(app, lsquare, inputs=False)
+    async with connect(app) as connection:
+        await connection.tools()
+        await connection.call("get_more_tools", {"need": "x"})
+    assert sum("has its own get_more_tools" in line for _, line in recorder.lines) == 1
+
+
+@pytest.mark.parametrize("inputs", [False, lambda name: name != "get_more_tools"])
+async def test_doesnt_offer_get_more_tools_where_its_need_wouldnt_be_recorded_and_says_so_once(inputs: Any) -> None:
+    recorder = Recorder()
+    lsquare, events = client(logger=recorder)
+    app = high()
+    tool(app, search)
+    instrument(app, lsquare, inputs=inputs)
+    async with connect(app) as connection:
+        names = [item.name for item in await connection.tools()]
+        await connection.tools()
+        assert sum("get_more_tools isn't offered" in line for _, line in recorder.lines) == 1
+        try:
+            reply = await connection.call("get_more_tools", {"need": "issue refunds"})
+        except Exception:
+            reply = None
+    await lsquare.aflush(timeout_ms=5_000)
+    assert names == ["search"]
+    assert reply is None or (reply.is_error and not reply.texts[0].startswith("Noted."))
+    assert events.calls()
+    assert all("extra" not in event and "issue refunds" not in str(event) for event in events.calls())
 
 
 async def test_get_more_tools_gives_way_to_a_tool_of_that_name_and_needs_a_tool_of_the_servers_own() -> None:

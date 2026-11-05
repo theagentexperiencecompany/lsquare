@@ -114,6 +114,9 @@ name, its arguments (`input`), its result, how it ended (`status`, and an `error
 `category`: `thrown`, `tool_error`, `protocol` or `timeout`), how long it took, the calling app and
 protocol version, and the IDs below. Results are sent by default, each string cut at 4,000
 characters; turn inputs or results off everywhere, or for chosen tools, with `inputs` and `results`.
+A failed call's text, in `error.message` and in an `isError` result, can quote what the tool was
+sent and what it would have returned, so it's recorded only with both on. The event still says how
+the call failed: `category`, `type` and `code`. A cancelled call's fixed sentence stays.
 A call the SDK's HTTP layer refuses before dispatch, such as one on SDK 2.x whose `Mcp-Param`
 headers don't match its arguments, never reaches the handler and makes no event.
 
@@ -152,8 +155,8 @@ they're off unless you turn them on ([in the reference](REFERENCE.md#low-level-s
 | Option | Default | |
 |---|---|---|
 | `identify` | | `({ toolName, args, context, signal }) => ({ orgId, userId, conversationId, metadata })` ([how it works](REFERENCE.md#who-the-call-is-for-identify)) |
-| `inputs` | `true` | `false`, or `(toolName) => boolean` |
-| `results` | `true` | `false`, or `(toolName) => boolean`. An `isError` result's text is result text too |
+| `inputs` | `true` | `false`, or `(toolName) => boolean`. Off for `get_more_tools`, the server doesn't get that tool |
+| `results` | `true` | `false`, or `(toolName) => boolean` |
 | `extras` | all on (high-level), all off (low-level) | `{ sessions, intent, missingTools }`; one left out keeps its default. `false`: all off |
 | `waitUntil` | | The current request's `waitUntil`: each call's sending is handed to it ([serverless hosts](REFERENCE.md#serverless-hosts-and-frameworks)) |
 | `flushBeforeReply` | `false` | Wait for each call's event to be sent, up to `flushTimeoutMs`, before replying |
@@ -199,7 +202,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - **`get_more_tools`**: both called it in every run where no tool fitted, or one fitted only in
   part (8 of 8 each). Claude Code never called it otherwise. Codex did in 3 of the 18 runs where the
   tools fitted: each time, after confirming a customer had been charged twice and before answering,
-  it asked for the payment-processor logs that would explain why.
+  it asked for the payment-processor logs that would explain why. These runs were before the tool
+  stopped being marked read-only, which a client may treat differently.
 
 ## What leaves your process
 
@@ -234,10 +238,12 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - The wrapper never records HTTP headers, auth info, environment variables or anything else from the
   request context by itself, with three exceptions: the calling app, MCP's own
   `MCP-Protocol-Version` header, as the call's protocol version, and, for a client on a protocol
-  version before 2026-07-28, a stateful HTTP server's `Mcp-Session-Id` or an SSE connection's ID, as
-  `sessionId`. That ID groups a task's calls and is sent unchanged, not hashed;
-  `extras: { sessions: false }` stops it. `identify` can read the rest; only what it returns is
-  sent, its IDs and `metadata`, shaped and redacted like the rest.
+  version before 2026-07-28, a SHA-256 hash of a stateful HTTP server's `Mcp-Session-Id` or an SSE
+  connection's ID, as `sessionId`. The hash groups a task's calls, and `extras: { sessions: false }` stops it. The wrapper
+  doesn't record the ID itself, but what an agent or a tool writes can hold it: an argument under `inputs`,
+  `intent`, or a result or error text under `results` (with `inputs`, for a failed call). So can an ID an
+  agent sends on another connection, if your IDs have the SDK's own `ses_` format. `identify` can read
+  the rest; only what it returns is sent, its IDs and `metadata`, shaped and redacted like the rest.
 - IDs (`orgId`, `userId`, `conversationId`, `turnId`, `sessionId`, `toolName`) are never redacted.
   Each must be at most 512 bytes, except `turnId`, which may be longer (up to 256 KB as JSON writes
   it), or a safe integer.
@@ -253,9 +259,6 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   address or phone number is still sent as given, since masking it would stop deletion, and the SDK
   warns once. Return it from [`identify`](REFERENCE.md#who-the-call-is-for-identify), or pass it to
   `capture()`.
-- On a stateful HTTP server, check that a session ID alone gives no access: LSquare stores it as
-  sent. If it does give access, turn it off with `extras: { sessions: false }`, which also removes
-  `session_id` and the task ID line.
 - Keep retention short. It's set per project: ask for a short one, especially if you handle personal
   data, since events without a `userId`, and names written inside results, go only with retention.
 

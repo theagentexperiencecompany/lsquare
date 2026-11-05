@@ -1,10 +1,13 @@
 // Cloudflare's McpAgent: an SDK 1.x server in a Durable Object per session, instrumented in init().
 import { SELF } from 'cloudflare:test'
+import { createHash } from 'node:crypto'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { text, until } from '../shared/ingestion.js'
 import { ingestion, logs } from './worker.js'
+
+const hashed = (id: string | undefined): string => createHash('sha256').update(id ?? '').digest('hex')
 
 const WARNING = /This looks like Cloudflare Workers \(unless the server runs in a Durable Object\)/
 
@@ -43,9 +46,9 @@ describe('McpAgent', () => {
     })
     // Grouped by the session McpAgent issued each client, which is its object's.
     expect(issuedTo(first)).toBeTruthy()
-    expect(late!.sessionId).toBe(issuedTo(first))
-    expect(early!.sessionId).toBe(issuedTo(first))
-    expect(lost!.sessionId).toBe(issuedTo(second))
+    expect(late!.sessionId).toBe(hashed(issuedTo(first)))
+    expect(early!.sessionId).toBe(hashed(issuedTo(first)))
+    expect(lost!.sessionId).toBe(hashed(issuedTo(second)))
     expect(issuedTo(second)).not.toBe(issuedTo(first))
   })
 
@@ -56,7 +59,7 @@ describe('McpAgent', () => {
     expect(await first.callTool({ name: 'count' })).toEqual(text('2'))
     expect(await second.callTool({ name: 'count' })).toEqual(text('1'))
     await until(() => ingestion.events('tool_call').length === 3)
-    expect(ingestion.events('tool_call').map((event) => event.sessionId)).toEqual([issuedTo(first), issuedTo(first), issuedTo(second)])
+    expect(ingestion.events('tool_call').map((event) => event.sessionId)).toEqual([hashed(issuedTo(first)), hashed(issuedTo(first)), hashed(issuedTo(second))])
   })
 
   it('sends without waitUntil: the object stays active while the ingestion answers', async () => {

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import inspect
 import json
 import math
@@ -94,6 +95,11 @@ class IdentifyInput:
 class Settings:
     identify: Callable[..., Any] | None
     inputs: Callable[[str], bool]
+    #: The same, asked when listing get_more_tools, with a warning of its own: a function may only
+    #: know the app's tools.
+    listing_inputs: Callable[[str], bool]
+    #: How `inputs` was given, for dry run, which runs outside any request and so doesn't ask a function.
+    inputs_mode: str
     results: Callable[[str], bool]
     wait_until: Callable[[Any], Any] | None
     flush_before_reply: bool
@@ -211,7 +217,7 @@ def read_options(
 ) -> Settings:
     # A function that raises, or answers with an awaitable (which can't be waited for), records
     # nothing for that call: the field stays out of its event, and one warning per option says so.
-    def choice(key: str, value: Any) -> Callable[[str], bool]:
+    def choice(key: str, value: Any, warn_key: str | None = None, warning: str | None = None) -> Callable[[str], bool]:
         def decide(tool_name: str) -> bool:
             if not callable(value):
                 return value is not False
@@ -222,7 +228,10 @@ def read_options(
                 close(answer)
             except Exception:
                 pass
-            internal.warn_once(f"{key}-unanswered", f"[lsquare] The {key} function raised or returned an awaitable: {key} aren't recorded for the calls it answered that way.")
+            internal.warn_once(
+                warn_key or f"{key}-unanswered",
+                warning or f"[lsquare] The {key} function raised or returned an awaitable: {key} aren't recorded for the calls it answered that way.",
+            )
             return False
 
         return decide
@@ -246,6 +255,13 @@ def read_options(
     return Settings(
         identify=identify if callable(identify) else None,
         inputs=choice("inputs", inputs),
+        listing_inputs=choice(
+            "inputs",
+            inputs,
+            f"inputs-unanswered/{MISSING_TOOLS}",
+            f"[lsquare] The inputs function raised or returned an awaitable when asked about {MISSING_TOOLS}: it isn't listed.",
+        ),
+        inputs_mode="off" if inputs is False else "asked" if callable(inputs) else "on",
         results=choice("results", results),
         wait_until=wait_until if callable(wait_until) else None,
         flush_before_reply=flush and not callable(wait_until),
@@ -484,6 +500,18 @@ def ownership_of(state: State, tool_name: str, read: Read | None = None) -> Owne
     return owner
 
 
+def records_need(state: State) -> bool:
+    """Whether to list get_more_tools, once all else says yes: only where its `need` would be
+    recorded, since what it tells agents isn't true otherwise."""
+    if state.settings.listing_inputs(MISSING_TOOLS):
+        return True
+    state.internal.warn_once(
+        f"extras-no-inputs/{MISSING_TOOLS}",
+        f"[lsquare] {MISSING_TOOLS} isn't offered: inputs are off for it, so what an agent asks for wouldn't be recorded.",
+    )
+    return False
+
+
 def offers_missing_tools(state: State, read: Read | None = None) -> bool:
     registry = state.registry
     if registry is None:
@@ -550,7 +578,7 @@ def low_on(state: State, dispatch: Dispatch) -> bool:
     return True
 
 
-def prepare_low(state: State, dispatch: Dispatch, snapshot: Snapshot | None) -> Prepared:
+def prepare_low(state: State, dispatch: Dispatch, snapshot: Snapshot | None, inputs: bool) -> Prepared:
     """The same for a low-level server, or one whose handler was replaced, from its snapshot, or
     without one: the call is passed on as it came."""
     extras = state.low_extras
@@ -561,7 +589,7 @@ def prepare_low(state: State, dispatch: Dispatch, snapshot: Snapshot | None) -> 
             return none
         if snapshot.own_missing_tools and extras.missing_tools:
             own_missing_tools(state)
-        if extras.missing_tools and tool_name == MISSING_TOOLS and snapshot.tools and not snapshot.own_missing_tools:
+        if extras.missing_tools and inputs and tool_name == MISSING_TOOLS and snapshot.tools and not snapshot.own_missing_tools:
             return strip(none, extras, None, dispatch)
         owner = snapshot.tools.get(tool_name)
         if owner is not None:
@@ -634,7 +662,7 @@ def listed(
     # Added to the last page only, never next to a tool of that name, and only to a listing that
     # shows a tool of the server's own (a disabled one isn't listed).
     names = [name_of(tool) for tool in shown]
-    if extras.missing_tools and last and MISSING_TOOLS not in names and any(name != MISSING_TOOLS for name in names) and offers_missing_tools(state, read):
+    if extras.missing_tools and last and MISSING_TOOLS not in names and any(name != MISSING_TOOLS for name in names) and offers_missing_tools(state, read) and records_need(state):
         shown.append(missing_tool(missing_tools_tool(extras.sessions)))
         changed = True
     return shown if changed else None
@@ -703,7 +731,7 @@ async def low_listed(
         mark(state.lists, False)
     if snapshot.own_missing_tools and extras.missing_tools:
         own_missing_tools(state)
-    if extras.missing_tools and last and not disagrees and snapshot.tools and not snapshot.own_missing_tools and MISSING_TOOLS not in names:
+    if extras.missing_tools and last and not disagrees and snapshot.tools and not snapshot.own_missing_tools and MISSING_TOOLS not in names and records_need(state):
         shown.append(missing_tool(missing_tools_tool(extras.sessions)))
         changed = True
     return shown if changed else None
@@ -740,6 +768,9 @@ async def on_call(state: State, dispatch: Dispatch, tap: Callable[[State, str, R
     # The app's inputs and results functions run first, before the registry is read below: what
     # they change of it is what that read finds.
     recorded = recording(state, dispatch)
+    # Asked once a call: the wrapper never answers get_more_tools without recording the need.
+    inputs = recorded is not None and recorded[0]
+    answers = answers and inputs
     # Then the extras' inputs come out, in the same step as the handler is called, so the snapshot
     # they're taken by can't go stale before it runs.
     if low and callable(refresh):
@@ -750,7 +781,7 @@ async def on_call(state: State, dispatch: Dispatch, tap: Callable[[State, str, R
     # The registry is read once for the extras' inputs and the functions tapped, both in this step,
     # with neither an await nor any of the app's code between them.
     read = None if low or answers else call_read(state)
-    prepared = prepare_low(state, dispatch, fresh(state.lists)) if low else prepare(state, dispatch, answers, read)
+    prepared = prepare_low(state, dispatch, fresh(state.lists), inputs) if low else prepare(state, dispatch, answers, read)
     passed = prepared.request
 
     async def handler(request: Any) -> Any:
@@ -889,6 +920,13 @@ def start(state: State, prepared: Prepared, dispatch: Dispatch, arrived: tuple[f
     )
 
 
+def session_hash(id: str) -> str:
+    """A protocol session's ID as events carry it: the ID itself can be a live handle to the
+    session, and grouping only needs the same value each time."""
+    # As TypeScript writes a string: a surrogate pair joined, and a lone surrogate as U+FFFD.
+    return hashlib.sha256(id.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace").encode("utf-8")).hexdigest()
+
+
 def protocol_session(state: State, dispatch: Dispatch, version: Any) -> str | None:
     """The session the transport established: none from 2026-07-28 on, which has no sessions; a
     version that isn't known counts as older."""
@@ -959,7 +997,8 @@ def group(call: Running, outcome: Outcome, result: Any, dispatch: Dispatch, rais
     extras = call.extras
     if not extras.grouping:
         return result
-    if extras.sent is not None:
+    # The transport's own ID, sent back, is still that session: it never leaves as it is.
+    if extras.sent is not None and extras.sent != call.protocol_session:
         call.session = (extras.sent, "sent")
         return result
     agent = call.scope.agent
@@ -967,7 +1006,7 @@ def group(call: Running, outcome: Outcome, result: Any, dispatch: Dispatch, rais
     if isinstance(conversation_id, str) and conversation_id != "":
         return result
     if call.protocol_session is not None:
-        call.session = (call.protocol_session, "protocol")
+        call.session = (session_hash(call.protocol_session), "protocol")
         return result
     if raised or not extras.sessions:
         return result
@@ -1518,8 +1557,9 @@ def outcome_of(state: State, call: Running, dispatch: Dispatch, result: Any, thr
     JSON-RPC error, `thrown` otherwise. An isError result is `thrown` when the tool's own function
     raised (the SDK turned it into the result), `protocol` when the SDK made it (the tool never
     ran, or its output failed the SDK's checks), and `tool_error` when the tool returned it. A
-    cancelled call is `timeout`. An isError result's message is its first text block, which is
-    result text: left out when results aren't recorded."""
+    cancelled call is `timeout`. An isError result's message is its first text block. A failed call's
+    text, in the error and an isError result, is kept only under `error_text`; its category, type and
+    code always are."""
     scope = call.scope
     outcome = Outcome()
     if thrown is None:
@@ -1542,7 +1582,7 @@ def outcome_of(state: State, call: Running, dispatch: Dispatch, result: Any, thr
         # The message the client got: mcp 2.x sends its own for params pydantic refused, whose text
         # quotes the values it refused, arguments included. That text is never read.
         sent = dispatch.jsonrpc_message(thrown) if code is not None else None
-        outcome.error = error_of(thrown, "protocol" if code is not None else "thrown", code, sent)
+        outcome.error = error_of(thrown, "protocol" if code is not None else "thrown", code, sent, error_text(call))
         return outcome
     if result is None:
         return outcome
@@ -1554,8 +1594,9 @@ def outcome_of(state: State, call: Running, dispatch: Dispatch, result: Any, thr
         outcome.result = call.results
     if dispatch.read(result, "isError") is True:
         outcome.status = "error"
+        outcome.result = outcome.result and error_text(call)
         if scope.thrown is not None:
-            outcome.error = error_of(scope.thrown[0], "thrown", None)
+            outcome.error = error_of(scope.thrown[0], "thrown", None, None, error_text(call))
         else:
             # The tool's own error result, and the SDK sent it on: not one the SDK made when it
             # couldn't convert or validate what the tool returned.
@@ -1565,7 +1606,7 @@ def outcome_of(state: State, call: Running, dispatch: Dispatch, result: Any, thr
             # The wrapper's own get_more_tools refuses arguments as the SDKs do, at either level.
             protocol = call.extras.answer or (high_mode(state) and made_by_sdk(state, call, returned, content))
             error: dict[str, Any] = {"category": "protocol" if protocol else "tool_error"}
-            if call.results:
+            if error_text(call):
                 text = first_text(dispatch.read(result, "content"))
                 if text is not None:
                     error["message"] = text
@@ -1616,13 +1657,20 @@ def cancel_requested(dispatch: Dispatch) -> bool:
         return False
 
 
-def error_of(error: BaseException, category: str, code: int | None, message: str | None = None) -> dict[str, Any]:
-    """`message`, when given, is recorded instead of the exception's text."""
+def error_text(call: Running) -> bool:
+    """Whether a failed call's text is recorded. It can quote what the tool would have returned, and
+    what it was sent: a validator's message does, and it can't always be told from the tool's own."""
+    return call.results and call.inputs
+
+
+def error_of(error: BaseException, category: str, code: int | None, message: str | None, text: bool) -> dict[str, Any]:
+    """`message`, when given, is recorded instead of the exception's text; neither without `text`."""
     details: dict[str, Any] = {"category": category}
-    try:
-        details["message"] = str(error) if message is None else message
-    except Exception:
-        details["message"] = "Unknown error"
+    if text:
+        try:
+            details["message"] = str(error) if message is None else message
+        except Exception:
+            details["message"] = "Unknown error"
     try:
         details["type"] = type(error).__name__
     except Exception:
