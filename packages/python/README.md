@@ -246,14 +246,21 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors,
   intents and agent details alike. Each pattern can be turned off: `redact={"ip": False}`, or
   `redact=False` for all.
-- Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole.
+- In structured objects, values under secret key names (`password`, `token`, `apiKey` and the like)
+  are replaced whole.
   `redact_keys=["name", "address"]` (a list or a set) adds your own: matched ignoring case and punctuation, by the end
   of the key, so `name` also covers `firstName` and `fileName`; a narrower name such as `fullname`
   avoids that. Free text, such as a name inside a sentence, isn't caught.
+- JSON encoded inside a string is treated as text: the SDK does not parse it to apply secret key
+  names or `redact_keys`. This includes MCP `result.content[].text` and strings nested in inputs.
+  For example, `'{"password":"plain-value"}'` can be sent unchanged. Known-format patterns still
+  run on the text. A result can contain both `structuredContent` and a text copy; masking the
+  structured object does not mask the same fields in that text copy.
 - `before_send(event, signal)` sees every event before the patterns above are applied, and can
   change it or drop it by returning `None`; it may be sync or async. Values under secret key names
-  are already replaced, and a string cut for length has had its kept part redacted. What it returns
-  is shaped and redacted again, on one of the client's threads, never on your event loop nor while
+  in structured objects are already replaced, and a string cut for length has had its kept part
+  redacted. What it returns is shaped and redacted again, on one of the client's threads,
+  never on your event loop nor while
   other captures wait (with no thread to take it, the system refusing to start one, the event is
   dropped as `hook_failed`). It is on time if it returns before `before_send_timeout_ms`, however long
   that reading takes, up to twice that deadline, after which the event is dropped as `hook_failed`.
@@ -272,8 +279,9 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 ## Privacy checklist
 
 - Turn results off for tools that return customer records: `results=lambda tool: tool != "get_customer"`.
-- Use `redact_keys` for personal data in structured inputs and results, and `before_send` for
-  anything finer.
+- Use `redact_keys` for personal data in structured inputs and results. For JSON encoded as text,
+  use `before_send` to remove or sanitize every text copy, or turn result collection off for that
+  tool with `results`. To omit sensitive inputs, use `inputs`.
 - Send `userId`, as an internal ID rather than an email address or phone number: LSquare deletes a
   person's events by it, and finds only events that carry it. A `userId` that looks like an email
   address or phone number is still sent as given, since masking it would stop deletion, and the SDK

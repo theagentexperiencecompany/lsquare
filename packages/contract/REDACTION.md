@@ -66,6 +66,15 @@ const SECRET_KEYS = [
 - It is part of the `secret` pattern: `redact: { secret: false }` turns it off too. Names specific
   to an app are left to `beforeSend`.
 
+Key rules apply to fields in structured objects. JSON encoded inside a string is not parsed, so
+neither secret key names nor custom `redactKeys` / `redact_keys` inspect its fields. For example,
+`'{"password":"plain-value"}'` can remain unchanged in an input string or an MCP
+`result.content[].text` block. Known-format patterns still run on these strings. If a result has
+both `structuredContent` and a text copy, masking the structured object does not mask the same
+fields in the text copy. Use `beforeSend` / `before_send` to remove or sanitize those strings, or
+disable collection of the affected inputs or results with the wrapper's `inputs` / `results`
+options.
+
 Placeholders are numbered per event:
 
 - The first distinct email becomes `[EMAIL_1]`, the second `[EMAIL_2]`, and the same value gets the

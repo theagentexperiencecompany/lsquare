@@ -76,6 +76,10 @@ key is secret when its name, ignoring case and punctuation, ends with `password(
 `accesskey`, `signingkey`, `encryptionkey`, `credential(s)`, `cookie(s)` or `connectionstring`. This is
 part of the `secret` pattern. Redact names specific to your app with `beforeSend`.
 
+These key rules apply to fields in structured objects. JSON encoded inside a string is not parsed:
+an input string such as `'{"password":"plain-value"}'` can be sent unchanged. Known-format
+patterns still run on the string. Use `beforeSend` to remove or sanitize such strings.
+
 Identifier fields are never redacted: `conversationId`, `turnId`, `orgId`, `toolName`, `apiKeyId`,
 `surface`, `client` and `status`. Put opaque IDs there, never emails, names or other personal data.
 `beforeSend` can't change the first four: they are restored from the original capture.
