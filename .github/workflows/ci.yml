@@ -521,8 +521,8 @@ jobs:
       - run: '"$RUNNER_TEMP/venv/bin/python" scripts/clean_install.py ${{ matrix.case }}'
 
   # What a branch rule requires: green only if no other job failed or was cancelled, and a skipped
-  # one is fine. A rule can't require a matrix job: on a pull request that skips it, it reports
-  # under its unexpanded name, so the rule would wait for its real name forever. It runs whatever
+  # one is fine. A rule can't require the matrix jobs here: on a pull request that skips one, it
+  # reports under its unexpanded name, so the rule would wait for its real name forever. It runs whatever
   # the jobs it needs did, since a job skipped by a failure would skip it too, and a skipped job
   # counts as passing. A new job goes in `needs` too, which workflows_test.py checks.
   all-checks:
