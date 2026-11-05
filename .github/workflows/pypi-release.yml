@@ -1,0 +1,216 @@
+# Releases lsquare (packages/python) to TestPyPI or PyPI, run by hand from sdk-v0
+# (packages/python/RELEASING.md). The whole CI runs on the commit first, and the wheel and sdist it
+# built and tested are the files uploaded (python-build's artifact, by the ID ci.yml outputs, and
+# only the bytes whose SHA-256s it recorded), through trusted publishing: no token, PyPI trusts this
+# workflow's file name in this repository. The checks are scripts/release_check.py's. No job here,
+# ci.yml's included, restores or saves a cache: caches are written by runs the release doesn't
+# vouch for, the weekly job's on sdk-v0 among them, and restoring one unpacks an archive over the
+# runner's files.
+name: PyPI release
+run-name: lsquare ${{ inputs.version }} to ${{ inputs.index }}${{ inputs.recover && ' (recovering)' || '' }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The version in packages/python/src/lsquare/_version.py, such as 0.2.0b1
+        required: true
+        type: string
+      index:
+        description: testpypi for the rehearsal, pypi for the release
+        required: true
+        type: choice
+        options: [testpypi, pypi]
+        default: testpypi
+      recover:
+        description: Upload only what a release that failed partway is missing (RELEASING.md)
+        type: boolean
+        default: false
+      commit:
+        description: Recovering only, the commit that release ran on (its run's summary)
+        type: string
+        default: ''
+
+permissions: {}
+
+# No cache access for any job, enforced by GitHub's cache service whatever a step runs; and on the
+# job that calls ci.yml too, which limits what the called workflow gets. The setup steps are told
+# the same (enable-cache), so none of them tries.
+cache-mode: none
+
+# One release at a time, through its last check: two runs can't both find the version absent.
+concurrency:
+  group: pypi-lsquare
+  cancel-in-progress: false
+
+# The inputs reach the checks through the environment, never expanded into a command.
+env:
+  VERSION: ${{ inputs.version }}
+  INDEX: ${{ inputs.index }}
+  RECOVER: ${{ inputs.recover }}
+  COMMIT: ${{ inputs.commit }}
+
+jobs:
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      # From sdk-v0, the version _version.py says, a beta, not on the index yet (or, recovering,
+      # partly, and from that release's own commit), and its tag nowhere but here: before CI
+      # spends its time.
+      - run: uv run --no-project --python 3.12 python scripts/release_check.py preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  ci:
+    name: CI
+    needs: preflight
+    permissions:
+      contents: read
+    cache-mode: none
+    uses: ./.github/workflows/ci.yml
+    with:
+      release: true
+
+  verify:
+    name: the tested files
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      # python-build's artifact by its ID: another of that name, uploaded later in the run, isn't
+      # it. An empty ID would download every artifact of the run.
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.ci.outputs.python-artifact-id }}
+        run: test -n "$ID" || { echo "::error::CI gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.ci.outputs.python-artifact-id }}
+          path: packages/python/dist
+      # The files whose SHA-256s python-build recorded, this version's wheel and sdist alone, their
+      # metadata agreeing, and their SHA-256s in the run's summary; recovering, the files the index
+      # has are this build's, byte for byte.
+      - run: uv run --no-project --python 3.12 python scripts/release_check.py artifacts dist
+        env:
+          TESTED: ${{ needs.ci.outputs.python-sha256 }}
+
+  publish:
+    name: publish to ${{ inputs.index }}
+    needs: [ci, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The only job that can publish: it downloads the tested files and hands them to PyPA's action.
+    permissions:
+      id-token: write
+    steps:
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.ci.outputs.python-artifact-id }}
+        run: test -n "$ID" || { echo "::error::CI gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.ci.outputs.python-artifact-id }}
+          path: dist
+      # The bytes python-build recorded, and nothing else: the upload takes all of dist/.
+      - name: The files python-build made
+        working-directory: dist
+        env:
+          TESTED: ${{ needs.ci.outputs.python-sha256 }}
+        run: |
+          printf '%s\n' "$TESTED" | sha256sum --check --strict -
+          test "$(ls -A | sort)" = "$(printf '%s\n' "$TESTED" | cut -c 67- | sort)"
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
+          packages-dir: dist/
+          # Off while the repository is private: they'd log its name, workflow and commit in
+          # Sigstore's public transparency log for good (RELEASING.md).
+          attestations: false
+          # A file already there fails the upload, except when recovering, once `verify` has
+          # checked those files are this build's.
+          skip-existing: ${{ inputs.recover }}
+          print-hash: true
+
+  tag:
+    name: tag the commit
+    if: inputs.index == 'pypi'
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      # python-v<version> on this run's commit, through the API; an existing tag is never moved.
+      - run: uv run --no-project --python 3.12 python scripts/release_check.py tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  check:
+    name: what ${{ inputs.index }} serves
+    needs: [ci, publish]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.ci.outputs.python-artifact-id }}
+        run: test -n "$ID" || { echo "::error::CI gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.ci.outputs.python-artifact-id }}
+          path: packages/python/dist
+      # The index's files are the ones python-build made, byte for byte, once it serves them.
+      - run: uv run --no-project --python 3.12 python scripts/release_check.py published dist
+        env:
+          TESTED: ${{ needs.ci.outputs.python-sha256 }}
+      # pip installs the pinned version in a fresh venv, and on PyPI a plain install gets it too.
+      # Nothing here publishes again, whatever fails.
+      - run: uv run --no-project --python 3.12 python scripts/release_check.py installs

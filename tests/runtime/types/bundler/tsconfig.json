@@ -1,0 +1,4 @@
+{
+  "compilerOptions": { "module": "preserve", "moduleResolution": "bundler", "target": "es2022", "strict": true, "exactOptionalPropertyTypes": true, "noEmit": true, "types": ["node"] },
+  "files": ["server.ts", "mixed.ts"]
+}

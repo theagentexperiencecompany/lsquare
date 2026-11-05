@@ -1,0 +1,66 @@
+{
+  "name": "@lsquare/node",
+  "version": "0.1.2",
+  "description": "Capture MCP turns and send them to LSquare",
+  "license": "MIT",
+  "author": "The Agent Experience Company",
+  "homepage": "https://lsquare.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theagentexperiencecompany/lsquare.git",
+    "directory": "packages/node"
+  },
+  "bugs": {
+    "url": "https://github.com/theagentexperiencecompany/lsquare/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agents",
+    "ai",
+    "analytics",
+    "observability",
+    "llm"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check-package": "node scripts/check-package.mjs",
+    "prepublishOnly": "npm run build && npm run typecheck && npm test && npm run check-package"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "fast-check": "^4.10.2",
+    "tsup": "^8.5.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.4"
+  }
+}

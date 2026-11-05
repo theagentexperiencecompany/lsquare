@@ -1,0 +1,4 @@
+{
+  "compilerOptions": { "module": "node16", "moduleResolution": "node16", "target": "es2022", "strict": true, "exactOptionalPropertyTypes": true, "noEmit": true, "types": ["node"] },
+  "files": ["esm.mts", "cjs.cts", "cjs-client.mts", "esm-client.mts", "app.cts"]
+}

@@ -1,0 +1,20 @@
+{
+  // The contract runs in Node 20+ and in Workers: Web APIs only (TextEncoder, crypto.subtle), no
+  // Node types, so a `node:` import or a Buffer fails to compile.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "WebWorker"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": [],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src"]
+}

@@ -1,0 +1,89 @@
+{
+  "name": "lsquare",
+  "version": "0.2.0",
+  "description": "Record every tool call of your MCP server, and the agent turns behind them, in LSquare",
+  "license": "MIT",
+  "author": "The Agent Experience Company",
+  "homepage": "https://lsquare.io",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theagentexperiencecompany/lsquare.git",
+    "directory": "packages/lsquare"
+  },
+  "bugs": {
+    "url": "https://github.com/theagentexperiencecompany/lsquare/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agents",
+    "ai",
+    "analytics",
+    "observability",
+    "llm"
+  ],
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.cts",
+  "typesVersions": {
+    "*": {
+      "mcp": [
+        "./dist/mcp.d.cts"
+      ]
+    }
+  },
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./mcp": {
+      "import": {
+        "types": "./dist/mcp.d.ts",
+        "default": "./dist/mcp.js"
+      },
+      "require": {
+        "types": "./dist/mcp.d.cts",
+        "default": "./dist/mcp.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "REFERENCE.md",
+    "THIRD_PARTY_NOTICES"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check-package": "node scripts/check-package.mjs",
+    "prepublishOnly": "node -e \"console.error('lsquare is published from the tarball CI built and tested, never from a folder: RELEASING.md, in the repository, says how.'); process.exit(1)\""
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@modelcontextprotocol/server": "2.4.0",
+    "@types/node": "^22.20.5",
+    "tsup": "^8.5.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.4",
+    "zod": "4.6.7"
+  }
+}

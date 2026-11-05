@@ -1,0 +1,113 @@
+[
+  {
+    "name": "numbers are written as JavaScript writes them: shortest digits, no .0, exponents only below 1e-6 or from 1e21, -0 as 0",
+    "turn": {
+      "toolCalls": [
+        {
+          "name": "small",
+          "result": 1e-7
+        },
+        {
+          "name": "large",
+          "result": 1e21
+        },
+        {
+          "name": "sum",
+          "result": 0.30000000000000004
+        },
+        {
+          "name": "negative zero",
+          "result": -0.0
+        },
+        {
+          "name": "past 2^53",
+          "result": 9007199254740993
+        },
+        {
+          "name": "list",
+          "result": [
+            1.5e-7,
+            123e18,
+            1e16,
+            0.000001,
+            100,
+            1.5e300,
+            5e-324,
+            -1e21,
+            9007199254740992,
+            2.5,
+            -0.0000015
+          ]
+        },
+        {
+          "name": "too large for a double",
+          "result": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "toolCalls": [
+        {
+          "name": "small",
+          "resultChars": 4
+        },
+        {
+          "name": "large",
+          "resultChars": 5
+        },
+        {
+          "name": "sum",
+          "resultChars": 19
+        },
+        {
+          "name": "negative zero",
+          "resultChars": 1
+        },
+        {
+          "name": "past 2^53",
+          "resultChars": 16
+        },
+        {
+          "name": "list",
+          "resultChars": 116
+        },
+        {
+          "name": "too large for a double",
+          "resultChars": 4
+        }
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an integer past 2^53 is the nearest double, and one too large for a double isn't JSON",
+    "call": {
+      "input": {
+        "near": 9007199254740993,
+        "huge": 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000,
+        "kept": 1
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "near": 9007199254740992,
+        "kept": 1
+      },
+      "dropped": {
+        "input": "not_json"
+      }
+    }
+  }
+]

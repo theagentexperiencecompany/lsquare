@@ -1,0 +1,79 @@
+[project]
+name = "lsquare"
+dynamic = ["version"]
+description = "Record every tool call of an MCP server, and the agents inside them, for LSquare"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES"]
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://lsquare.io"
+Source = "https://github.com/theagentexperiencecompany/lsquare"
+Issues = "https://github.com/theagentexperiencecompany/lsquare/issues"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "mypy>=1.13",
+  "pydantic>=2.11",
+  "trio>=0.27",
+  # tests/workflows_test.py reads the repository's workflows.
+  "pyyaml>=6",
+  "types-pyyaml>=6",
+]
+# One MCP SDK line at a time: `uv run --group mcp2 pytest tests/wrapper`.
+mcp1 = ["mcp>=1.30,<2"]
+mcp2 = ["mcp>=2.3,<3"]
+fastmcp3 = ["fastmcp>=3.4,<4"]
+fastmcp4 = ["fastmcp>=4.1,<5"]
+# The framework checks (tests/frameworks), alongside one SDK line: `--group mcp1 --group frameworks`.
+frameworks = ["fastapi>=0.115", "mangum>=0.19", "httpx>=0.27"]
+
+[tool.uv]
+conflicts = [
+  [{ group = "mcp1" }, { group = "mcp2" }, { group = "fastmcp3" }, { group = "fastmcp4" }],
+]
+
+[build-system]
+requires = ["hatchling==1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/lsquare/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lsquare"]
+
+# Only what a build needs: the default takes the whole directory, tests, scripts and RELEASING.md
+# included. The tests can't run from an sdist anyway (they read the repo's shared cases and call the contract's validator,
+# both in packages/contract).
+# Hatchling adds PKG-INFO and .gitignore; scripts/check_package.py checks the list.
+[tool.hatch.build.targets.sdist]
+only-include = ["src/lsquare", "README.md", "REFERENCE.md", "LICENSE", "THIRD_PARTY_NOTICES"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["*_test.py"]
+# Run by anyio's pytest plugin, which the MCP SDKs install.
+markers = ["anyio: run on anyio's event loop backends"]
+
+[tool.mypy]
+strict = true
+python_version = "3.10"
+
+# The MCP SDKs are installed one line at a time: never by default.
+[[tool.mypy.overrides]]
+module = ["mcp", "mcp.*", "mcp_types", "mcp_types.*", "fastmcp", "fastmcp.*", "anyio", "anyio.*"]
+ignore_missing_imports = true
+
+# The wrapper's tests subclass and decorate with the SDKs' classes.
+[[tool.mypy.overrides]]
+module = ["lines", "wrapper_test", "extras_flow_test", "identify_test", "provenance_test", "boundary_test", "transport_test", "review_s2_test", "wrapper_fixes_test", "lowlevel_test", "trio_test", "send", "clean_install"]
+disallow_subclassing_any = false
+disallow_untyped_decorators = false

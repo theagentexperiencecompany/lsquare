@@ -1,0 +1,42 @@
+{
+  "name": "@lsquare/contract",
+  "version": "0.1.2",
+  "private": true,
+  "description": "What the SDKs send LSquare's ingestion and what it answers: the wire limits, the event checks, turn references, the acknowledgement, and the shared test cases",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "cases"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsup": "^8.5.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.4"
+  }
+}

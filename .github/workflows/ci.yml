@@ -1,0 +1,521 @@
+# On every pull request, and every push to sdk-v0 (spec section 10): the packed package on each Node
+# version it supports (and @lsquare/node 0.1's smoke checks, and from Node 20 the contract's, each
+# packed), its types under each module resolution, the wrapper on each MCP SDK's, every workspace's
+# tests, the frameworks in workerd and Node, and Bun; and the Python package (Python spec, sections
+# 7 and 8): the built wheel on each Python version, the wrapper and the frameworks on each MCP SDK
+# line, its types, and clean installs. A pull request that changes packages/contract raises its
+# version (LSquare's ingestion takes it by its version). A pull request into sdk-v0 that
+# changes Markdown alone builds and checks the two packages (the READMEs are packed, and the Python
+# one rendered as PyPI will) and skips the test suites, unless it changes
+# packages/contract/REDACTION.md, which the TypeScript packages' tests read; every push to sdk-v0
+# runs them all. The regular tests stay on the pinned MCP SDKs; the weekly job tries new ones. And
+# as the gate of a Python release (pypi-release.yml), whose upload is the wheel and sdist built here
+# (python-build's artifact, by the ID and SHA-256s this workflow outputs): everything, always,
+# restoring no cache.
+name: CI
+
+# A branch's pushes are checked through its pull request, so each change runs once.
+on:
+  push:
+    branches: [sdk-v0]
+  pull_request:
+  workflow_call:
+    inputs:
+      release:
+        description: Called by pypi-release.yml, as its gate
+        type: boolean
+        required: true
+    # What python-build made: a release uploads that artifact, and only those bytes.
+    outputs:
+      python-artifact-id:
+        description: The ID of python-build's lsquare-python artifact
+        value: ${{ jobs.python-build.outputs.artifact-id }}
+      python-sha256:
+        description: The SHA-256 of each file python-build made, as sha256sum writes them
+        value: ${{ jobs.python-build.outputs.sha256 }}
+
+permissions:
+  contents: read
+
+# No cache-mode here: pull requests and pushes keep GitHub's defaults, and pypi-release.yml gives a
+# release's run none (a mode asked for here beyond the caller's would stop the release before it
+# starts). The setup steps are told the same: in a release, enable-cache and cache turn caching off,
+# and package-manager-cache keeps setup-node from turning it on by itself.
+
+# A release's run has its own group, never cancelled: a push to sdk-v0 meanwhile doesn't stop it.
+concurrency:
+  group: ${{ inputs.release && format('ci-release-{0}', github.run_id) || format('ci-{0}', github.ref) }}
+  cancel-in-progress: ${{ !inputs.release }}
+
+jobs:
+  # Whether a pull request into sdk-v0 touches anything but Markdown: the test suites run only then.
+  # packages/contract/REDACTION.md counts as code: both TypeScript packages' spec tests read it. It
+  # compares the whole pull request with its base, so a later push can't hide an earlier one's code.
+  # sdk-v0 is the only base it skips for: retargeting a pull request starts no run (GitHub sends
+  # `edited`), so a skip decided against another branch would stand once it targets sdk-v0.
+  # Re-running a run reuses its event, the old base included; reopening the pull request or pushing
+  # to it compares again. Everything else runs them: a pull request into another branch, a push to
+  # sdk-v0 (a newer push there can cancel a run it would rely on), a release, a commit it doesn't
+  # have, no files.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.files.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: files
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE_REF: ${{ github.base_ref }}
+          RELEASE: ${{ inputs.release }}
+        run: |
+          from=""
+          if [ "$EVENT" = "pull_request" ] && [ "$BASE_REF" = "sdk-v0" ]; then from="$BASE"; fi
+          code=true
+          if [ "$RELEASE" != "true" ] && [ -n "$from" ] && ! [[ "$from" =~ ^0+$ ]] && git cat-file -e "$from^{commit}" 2>/dev/null; then
+            # Without renames, a file moved to a .md name, or a .md file moved away, still shows its
+            # old name.
+            files=$(git diff --name-only --no-renames "$from" HEAD)
+            echo "$files"
+            if [ -n "$files" ] && ! grep -qvi '\.md$' <<< "$files" && ! grep -qxF 'packages/contract/REDACTION.md' <<< "$files"; then code=false; fi
+          fi
+          echo "Test suites: $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
+  # LSquare's ingestion takes packages/contract by its version, as the tarball the build job
+  # packs: a pull request that changes the contract raises its version. Compared with the pull
+  # request's base, which a checkout of every commit has. A job of its own that nothing needs, so a
+  # failure here leaves the test suites running.
+  contract-version:
+    name: contract version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: The contract's version, if it changed
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: node .github/scripts/contract-version.mjs "$BASE"
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ !inputs.release && 'npm' || '' }}
+          package-manager-cache: false
+      - run: npm ci
+      # The contract's build, which its pack below takes.
+      - run: npm run build -w @lsquare/contract
+      - run: npm run build -w lsquare
+      - run: npm run typecheck
+      # The tarball an npm release publishes, a push run's (packages/lsquare/RELEASING.md).
+      - name: Pack the package as it would be published
+        run: |
+          npm run check-package -w lsquare
+          mkdir -p pack
+          npm pack -w lsquare --pack-destination pack
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lsquare-package
+          path: pack/*.tgz
+          retention-days: 7
+      # @lsquare/node 0.1, for core's smoke checks. An artifact of its own: lsquare-package holds
+      # lsquare's tarball alone, and this one's name matches pack/lsquare-*.tgz too.
+      - name: Pack @lsquare/node as it would be published
+        run: |
+          npm run build -w @lsquare/node
+          npm run check-package -w @lsquare/node
+          mkdir -p pack-node
+          npm pack -w @lsquare/node --pack-destination pack-node
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lsquare-node-package
+          path: pack-node/*.tgz
+          retention-days: 7
+      # @lsquare/contract, for core's smoke check, in an artifact of its own too: its name matches
+      # pack/lsquare-*.tgz as well.
+      - name: Pack @lsquare/contract
+        run: |
+          mkdir -p pack-contract
+          npm pack -w @lsquare/contract --pack-destination pack-contract
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lsquare-contract-package
+          path: pack-contract/*.tgz
+          retention-days: 7
+
+  core:
+    name: core on Node ${{ matrix.node }}
+    needs: [changes, build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20, 22, 24, 26]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lsquare-package
+          path: pack
+      # The package installed alone, run with Node's own test runner: Vitest doesn't run on Node 18 or 20.
+      - run: tests/runtime/run.sh core pack/lsquare-*.tgz
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lsquare-node-package
+          path: pack-node
+      # @lsquare/node 0.1 installed alone too: its ESM and CommonJS builds, each smoke section in a process of its own.
+      - run: packages/node/test/smoke/run.sh pack-node/lsquare-node-*.tgz
+      # The contract installed alone, on the Node versions its engines name (20 and up): its ESM and
+      # CommonJS builds, each in a process of its own.
+      - if: matrix.node >= 20
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lsquare-contract-package
+          path: pack-contract
+      - if: matrix.node >= 20
+        run: packages/contract/test/smoke/run.sh pack-contract/lsquare-contract-*.tgz
+
+  wrapper:
+    name: wrapper with ${{ matrix.sdk }} on Node ${{ matrix.node }}
+    needs: [changes, build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each MCP SDK on the Node versions it supports: 1.x from 18, 2.x from 20.
+          - { sdk: sdk1, node: 18 }
+          - { sdk: sdk1, node: 20 }
+          - { sdk: sdk1, node: 22 }
+          - { sdk: sdk1, node: 24 }
+          - { sdk: sdk1, node: 26 }
+          - { sdk: sdk2, node: 20 }
+          - { sdk: sdk2, node: 22 }
+          - { sdk: sdk2, node: 24 }
+          - { sdk: sdk2, node: 26 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lsquare-package
+          path: pack
+      - run: tests/runtime/run.sh ${{ matrix.sdk }} pack/lsquare-*.tgz
+
+  types:
+    name: package types
+    needs: [changes, build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: lsquare-package
+          path: pack
+      # The packed declarations, compiled as consumers would by the TypeScript the lockfile pins:
+      # each build alone under node10, node16, nodenext and bundler, a client from one build passed
+      # to the other's wrapper, both ways, under all but node10, and servers of both MCP SDKs.
+      - run: tests/runtime/run.sh types pack/lsquare-*.tgz
+
+  tests:
+    name: every workspace's tests
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ !inputs.release && 'npm' || '' }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build -w @lsquare/contract
+      # The frameworks' tests use the built package, as users get it.
+      - run: npm run build -w lsquare
+      - run: npm test
+
+  bun:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ !inputs.release && 'npm' || '' }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build -w lsquare
+      # Bun from npm's package for the platform, pinned with the workspace's other dependencies.
+      - run: npm run test:bun -w @lsquare/frameworks-test
+
+  # The wheel and sdist every Python job tests and a release uploads. Their SHA-256s are recorded
+  # once nothing but pinned code has run beside them, and the upload is the only step after.
+  python-build:
+    name: python package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.files.outputs.sha256 }}
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # No cache, in any event: uv takes a restored cache's word for what it holds, so one another
+      # run wrote could change the build whatever the hashes below say.
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      # hatchling and everything it imports, at the versions and hashes build-constraints.txt pins.
+      - run: uv build --out-dir dist --build-constraints build-constraints.txt --require-hashes
+      # The wheel's files and metadata, and a wheel built from the sdist, with the same pins, the
+      # same as it.
+      - run: uv run --no-project --python 3.12 python scripts/check_package.py dist
+      # The README as PyPI will render it, and the metadata: twine and what it imports at the
+      # versions and hashes twine-requirements.txt pins, wheels only, in a venv of their own.
+      - name: twine check
+        run: |
+          uv venv --python 3.12 "$RUNNER_TEMP/twine"
+          uv pip install --python "$RUNNER_TEMP/twine" --require-hashes --only-binary :all: -r twine-requirements.txt
+          "$RUNNER_TEMP/twine/bin/twine" check --strict dist/*
+      # Each file's SHA-256, as sha256sum writes them: the hidden .gitignore uv writes isn't
+      # uploaded, and isn't listed.
+      - id: files
+        working-directory: packages/python/dist
+        run: |
+          {
+            echo 'sha256<<SHA256SUMS'
+            sha256sum -- *
+            echo SHA256SUMS
+          } >> "$GITHUB_OUTPUT"
+      - id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: lsquare-python
+          path: packages/python/dist/*
+          retention-days: 7
+
+  python-core:
+    name: python core on ${{ matrix.python }}
+    needs: [changes, python-build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The shared cases' events are checked by the contract's validator, through Node.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ !inputs.release && 'npm' || '' }}
+          package-manager-cache: false
+      - run: npm ci
+      - run: npm run build -w @lsquare/contract
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: ${{ inputs.release && 'false' || 'auto' }}
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.python-build.outputs.artifact-id }}
+        run: test -n "$ID" || { echo "::error::python-build gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.python-build.outputs.artifact-id }}
+          path: packages/python/dist
+      - name: The files python-build made
+        working-directory: packages/python/dist
+        env:
+          TESTED: ${{ needs.python-build.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$TESTED" | sha256sum --check --strict -
+          test "$(ls -A | sort)" = "$(printf '%s\n' "$TESTED" | cut -c 67- | sort)"
+      # The built wheel, never the source tree: the project itself isn't installed, and nothing resyncs it.
+      - name: Install the wheel with the test tools
+        working-directory: packages/python
+        run: |
+          uv sync --frozen --no-install-project --python ${{ matrix.python }}
+          uv pip install dist/lsquare-*.whl
+      - name: Every test
+        working-directory: packages/python
+        env:
+          LSQUARE_INSTALLED: '1'
+        run: uv run --frozen --no-sync pytest -q tests
+
+  python-wrapper:
+    name: python wrapper with ${{ matrix.line }} on ${{ matrix.python }}
+    needs: [changes, python-build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        line: [mcp1, mcp2, fastmcp3, fastmcp4]
+        python: ['3.10', '3.11', '3.12', '3.13', '3.14']
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: ${{ inputs.release && 'false' || 'auto' }}
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.python-build.outputs.artifact-id }}
+        run: test -n "$ID" || { echo "::error::python-build gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.python-build.outputs.artifact-id }}
+          path: packages/python/dist
+      - name: The files python-build made
+        working-directory: packages/python/dist
+        env:
+          TESTED: ${{ needs.python-build.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$TESTED" | sha256sum --check --strict -
+          test "$(ls -A | sort)" = "$(printf '%s\n' "$TESTED" | cut -c 67- | sort)"
+      - name: Install the wheel with the SDK line and the frameworks
+        run: |
+          uv sync --frozen --no-install-project --python ${{ matrix.python }} --group ${{ matrix.line }} --group frameworks
+          uv pip install dist/lsquare-*.whl
+      # The wrapper's tests need no Node; the core's run in the job above.
+      - name: The wrapper's and the frameworks' tests
+        env:
+          LSQUARE_INSTALLED: '1'
+        run: uv run --frozen --no-sync pytest -q tests/wrapper tests/frameworks tests/installed_test.py
+
+  python-types:
+    name: python types
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: ${{ inputs.release && 'false' || 'auto' }}
+      - run: uv run --frozen mypy --strict src tests scripts
+
+  python-clean-install:
+    name: python clean install (${{ matrix.case }}) on 3.10
+    needs: [changes, python-build]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The wheel alone, then beside each 2.x line as it resolves on 3.10 (spec section 7).
+          - { case: core, with: '' }
+          - { case: mcp2, with: 'mcp>=2.3,<3' }
+          - { case: fastmcp4, with: 'fastmcp>=4.1,<5' }
+    defaults:
+      run:
+        working-directory: packages/python
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: ${{ inputs.release && 'false' || 'auto' }}
+      - name: python-build's artifact ID
+        env:
+          ID: ${{ needs.python-build.outputs.artifact-id }}
+        run: test -n "$ID" || { echo "::error::python-build gave no artifact ID"; exit 1; }
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.python-build.outputs.artifact-id }}
+          path: packages/python/dist
+      - name: The files python-build made
+        working-directory: packages/python/dist
+        env:
+          TESTED: ${{ needs.python-build.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$TESTED" | sha256sum --check --strict -
+          test "$(ls -A | sort)" = "$(printf '%s\n' "$TESTED" | cut -c 67- | sort)"
+      # The requirement goes through the environment, quoted: `<` and `>` would be redirections.
+      - name: A fresh venv, installed with pip
+        env:
+          WITH: ${{ matrix.with }}
+        run: |
+          uv venv --python 3.10 --seed "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install dist/lsquare-*.whl ${WITH:+"$WITH"}
+      - run: '"$RUNNER_TEMP/venv/bin/python" scripts/clean_install.py ${{ matrix.case }}'

@@ -1,0 +1,231 @@
+[
+  {
+    "name": "a result keeps MCP's shape, without anything binary",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "3 orders"
+          },
+          {
+            "type": "image",
+            "data": "QUJD",
+            "mimeType": "image/png"
+          },
+          {
+            "type": "audio",
+            "data": "QUJDREVG",
+            "mimeType": "audio/wav"
+          },
+          {
+            "type": "resource_link",
+            "uri": "file:///orders.csv",
+            "name": "orders.csv",
+            "mimeType": "text/csv",
+            "extra": "x"
+          },
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "file:///a.txt",
+              "mimeType": "text/plain",
+              "text": "hello"
+            }
+          },
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "file:///a.bin",
+              "blob": "QUJD"
+            }
+          },
+          {
+            "type": "widget",
+            "payload": "anything"
+          }
+        ],
+        "isError": false,
+        "_meta": {
+          "trace": "x"
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "3 orders"
+          },
+          {
+            "type": "image",
+            "mimeType": "image/png",
+            "bytes": 3
+          },
+          {
+            "type": "audio",
+            "mimeType": "audio/wav",
+            "bytes": 6
+          },
+          {
+            "type": "resource_link",
+            "uri": "file:///orders.csv",
+            "name": "orders.csv",
+            "mimeType": "text/csv"
+          },
+          {
+            "type": "resource",
+            "uri": "file:///a.txt",
+            "mimeType": "text/plain",
+            "text": "hello"
+          },
+          {
+            "type": "resource",
+            "uri": "file:///a.bin",
+            "bytes": 3
+          },
+          {
+            "type": "widget"
+          }
+        ],
+        "isError": false
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "an error carries its category, and a code only when given one",
+    "call": {
+      "status": "error",
+      "error": {
+        "message": "Unknown tool",
+        "code": -32602,
+        "category": "protocol"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "error",
+      "durationMs": 1,
+      "error": {
+        "message": "Unknown tool",
+        "code": -32602,
+        "category": "protocol"
+      }
+    }
+  },
+  {
+    "name": "the agent part keeps every 0.1 turn field, and the turn's IDs fill the event's",
+    "call": {
+      "ids": {
+        "orgId": "org_1",
+        "conversationId": "c"
+      },
+      "agent": {
+        "question": "How many?",
+        "answer": "Two.",
+        "turnId": 3,
+        "toolCalls": [
+          {
+            "name": "find",
+            "input": {
+              "q": "x"
+            },
+            "result": "abc"
+          }
+        ],
+        "usage": {
+          "inputTokens": 1
+        },
+        "surface": "mcp",
+        "orgId": "ignored"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "orgId": "org_1",
+      "conversationId": "c",
+      "agent": {
+        "question": "How many?",
+        "answer": "Two.",
+        "turnId": "3",
+        "toolCalls": [
+          {
+            "name": "find",
+            "input": {
+              "q": "x"
+            },
+            "resultChars": 3
+          }
+        ],
+        "usage": {
+          "inputTokens": 1
+        },
+        "surface": "mcp",
+        "status": "completed"
+      }
+    }
+  },
+  {
+    "name": "limited diagnostics keep only what every event needs, the call's outline and the error category",
+    "call": {
+      "diagnostics": true,
+      "status": "error",
+      "ids": {
+        "orgId": "org_1"
+      },
+      "input": {
+        "email": "jane@acme.io"
+      },
+      "error": {
+        "message": "Not found: jane@acme.io",
+        "code": 404,
+        "category": "tool_error"
+      },
+      "client": {
+        "name": "laptop"
+      },
+      "intent": "look someone up",
+      "metadata": {
+        "tenant": "acme"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "error",
+      "durationMs": 1,
+      "identity": "failed",
+      "error": {
+        "category": "tool_error"
+      }
+    }
+  }
+]

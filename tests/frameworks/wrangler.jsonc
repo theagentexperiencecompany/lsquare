@@ -1,0 +1,15 @@
+// The Worker the Workers tests run: Cloudflare's agents, serving instrumented MCP servers.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "lsquare-frameworks-test",
+  "main": "workers/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ORDERS", "class_name": "OrdersAgent" },
+      { "name": "QUIET", "class_name": "QuietAgent" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["OrdersAgent", "QuietAgent"] }]
+}

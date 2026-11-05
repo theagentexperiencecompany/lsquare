@@ -1,0 +1,1120 @@
+[
+  {
+    "name": "a turn's answer is cut at 16,000 code points, with the exact count of the rest",
+    "turn": {
+      "answer": {
+        "$prose": 20000
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 16000
+          },
+          "\u2026[+4000 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an emoji is one character, and a cut never splits one",
+    "turn": {
+      "answer": {
+        "$repeat": [
+          "\ud83d\ude00",
+          16001
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$repeat": [
+              "\ud83d\ude00",
+              16000
+            ]
+          },
+          "\u2026[+1 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a lone surrogate is one character",
+    "turn": {
+      "answer": {
+        "$repeat": [
+          "\ud800",
+          16001
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$repeat": [
+              "\ud800",
+              16000
+            ]
+          },
+          "\u2026[+1 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "characters are code points, not what a reader sees: e and a combining accent are two",
+    "turn": {
+      "answer": {
+        "$repeat": [
+          "e\u0301",
+          8001
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$repeat": [
+              "e\u0301",
+              8000
+            ]
+          },
+          "\u2026[+2 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a string at the limit is left alone",
+    "turn": {
+      "answer": {
+        "$prose": 16000
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$prose": 16000
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "in a call, inputs are cut at 16,000, results at 4,000 and the intent at 500",
+    "call": {
+      "intent": {
+        "$prose": 600
+      },
+      "input": {
+        "q": {
+          "$prose": 17000
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$prose": 5000
+            }
+          }
+        ],
+        "structuredContent": {
+          "rows": [
+            {
+              "$prose": 4500
+            }
+          ]
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "intent": {
+        "$concat": [
+          {
+            "$prose": 500
+          },
+          "\u2026[+100 chars]"
+        ]
+      },
+      "input": {
+        "q": {
+          "$concat": [
+            {
+              "$prose": 16000
+            },
+            "\u2026[+1000 chars]"
+          ]
+        }
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$prose": 4000
+                },
+                "\u2026[+1000 chars]"
+              ]
+            }
+          }
+        ],
+        "structuredContent": {
+          "rows": [
+            {
+              "$concat": [
+                {
+                  "$prose": 4000
+                },
+                "\u2026[+500 chars]"
+              ]
+            }
+          ]
+        }
+      },
+      "truncated": [
+        "intent",
+        "input",
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "lists and objects keep their first 100 entries",
+    "call": {
+      "input": {
+        "list": {
+          "$range": 150
+        },
+        "object": {
+          "$keys": 150
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "list": {
+          "$range": 100
+        },
+        "object": {
+          "$keys": 100
+        }
+      },
+      "truncated": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "nesting stops at 10 levels: the input is level 1",
+    "call": {
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "e": {
+                  "f": {
+                    "g": {
+                      "h": {
+                        "i": {
+                          "j": {
+                            "k": "deep"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "a": {
+          "b": {
+            "c": {
+              "d": {
+                "e": {
+                  "f": {
+                    "g": {
+                      "h": {
+                        "i": {
+                          "j": {
+                            "omitted": "depth"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "truncated": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "a base64 string of 1,000 characters or more is kept as its decoded size",
+    "turn": {
+      "answer": {
+        "$repeat": [
+          "QUJD",
+          500
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": "[binary, 1500 bytes]",
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "in JSON, a file is { omitted, bytes }; a data: URI of any length counts",
+    "call": {
+      "input": {
+        "file": {
+          "$concat": [
+            {
+              "$repeat": [
+                "QUJD",
+                499
+              ]
+            },
+            "QQ=="
+          ]
+        },
+        "uri": "data:image/png;base64,QUJD"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "file": {
+          "omitted": "binary",
+          "bytes": 1498
+        },
+        "uri": {
+          "omitted": "binary",
+          "bytes": 3
+        }
+      },
+      "truncated": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "prose and code at least 1,000 characters long are left alone",
+    "turn": {
+      "answer": {
+        "$prose": 1500
+      },
+      "question": {
+        "$concat": [
+          "function f() { return ",
+          {
+            "$repeat": [
+              "a",
+              1200
+            ]
+          },
+          " }"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$prose": 1500
+      },
+      "question": {
+        "$concat": [
+          "function f() { return ",
+          {
+            "$repeat": [
+              "a",
+              1200
+            ]
+          },
+          " }"
+        ]
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "counts are exact while the scan budget lasts; then counting uses it up, and nothing more is read",
+    "call": {
+      "input": {
+        "strings": [
+          {
+            "$prose": 200000
+          },
+          {
+            "$prose": 200000
+          },
+          {
+            "$prose": 200000
+          },
+          {
+            "$prose": 200000
+          },
+          {
+            "$prose": 200000
+          },
+          {
+            "$prose": 200000
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "strings": [
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+184000 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+184000 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+184000 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+184000 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[cut]"
+            ]
+          }
+        ]
+      },
+      "truncated": [
+        "input"
+      ]
+    }
+  },
+  {
+    "name": "past the scan budget, an agent's tool calls take no more entries, like any list: left out, not none",
+    "turn": {
+      "question": {
+        "$prose": 2000000
+      },
+      "toolCalls": [
+        {
+          "name": "lookup",
+          "input": {
+            "q": "a"
+          }
+        },
+        {
+          "name": "lookup"
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": {
+        "$concat": [
+          {
+            "$prose": 16000
+          },
+          "\u2026[cut]"
+        ]
+      },
+      "truncated": [
+        "question",
+        "toolCalls"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "past the scan budget, the tool calls read before it ran out are kept, and no more",
+    "turn": {
+      "toolCalls": [
+        {
+          "name": "a",
+          "input": {
+            "s": {
+              "$prose": 2000000
+            }
+          }
+        },
+        {
+          "name": "b"
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "toolCalls": [
+        {
+          "name": "a",
+          "input": {
+            "s": {
+              "$concat": [
+                {
+                  "$prose": 16000
+                },
+                "\u2026[cut]"
+              ]
+            }
+          }
+        }
+      ],
+      "truncated": [
+        "toolCalls"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "past the scan budget, a result's content and the agent's tool calls take no more entries",
+    "call": {
+      "input": {
+        "big": {
+          "$prose": 2000000
+        }
+      },
+      "agent": {
+        "toolCalls": [
+          {
+            "name": "lookup"
+          }
+        ]
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "a"
+          },
+          {
+            "type": "text",
+            "text": "b"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "big": {
+          "$concat": [
+            {
+              "$prose": 16000
+            },
+            "\u2026[cut]"
+          ]
+        }
+      },
+      "agent": {
+        "status": "completed"
+      },
+      "result": {
+        "content": []
+      },
+      "truncated": [
+        "input",
+        "agent",
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "a turn over 256 KB loses its toolCalls first",
+    "turn": {
+      "conversationId": "c",
+      "turnId": 1,
+      "question": {
+        "$prose": 15000
+      },
+      "answer": {
+        "$prose": 15000
+      },
+      "toolCalls": [
+        {
+          "name": "t0",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t1",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t2",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t3",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t4",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t5",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t6",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t7",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t8",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t9",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t10",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t11",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t12",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t13",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t14",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t15",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t16",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t17",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t18",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        },
+        {
+          "name": "t19",
+          "input": {
+            "q": {
+              "$prose": 15000
+            }
+          }
+        }
+      ]
+    },
+    "event": {
+      "eventId": "k/4bb72610076ba2346c86c4bb6327caa5c07aa3bad0b47936a7b1d3303f064cc6",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "c",
+      "turnId": "1",
+      "question": {
+        "$prose": 15000
+      },
+      "answer": {
+        "$prose": 15000
+      },
+      "truncated": [
+        "toolCalls"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a pair written as two halves, which $concat joins, is one character",
+    "turn": {
+      "answer": {
+        "$concat": [
+          {
+            "$repeat": [
+              "a",
+              15999
+            ]
+          },
+          "\ud83d",
+          "\ude00",
+          "bc"
+        ]
+      },
+      "toolCalls": [
+        {
+          "name": "t",
+          "result": {
+            "$concat": [
+              "\ud83d",
+              "\ude00"
+            ]
+          }
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$repeat": [
+              "a",
+              15999
+            ]
+          },
+          "\ud83d",
+          "\ude00",
+          "\u2026[+2 chars]"
+        ]
+      },
+      "toolCalls": [
+        {
+          "name": "t",
+          "resultChars": 1
+        }
+      ],
+      "truncated": [
+        "answer"
+      ],
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an error's type and a tool call's name over 16,000 characters are dropped as too_large, the event kept",
+    "turn": {
+      "question": "q",
+      "error": {
+        "message": "m",
+        "type": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        }
+      },
+      "toolCalls": [
+        {
+          "name": {
+            "$repeat": [
+              "x",
+              16001
+            ]
+          }
+        },
+        {
+          "name": "ok"
+        },
+        {
+          "durationMs": 1
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "q",
+      "status": "completed",
+      "error": {
+        "message": "m"
+      },
+      "toolCalls": [
+        {
+          "name": "ok"
+        }
+      ],
+      "dropped": {
+        "error.type": "too_large",
+        "toolCalls[0]": "too_large",
+        "toolCalls[2]": "missing_name"
+      }
+    }
+  },
+  {
+    "name": "a client's version over 16,000 characters is dropped as too_large, its name kept",
+    "turn": {
+      "question": "q",
+      "client": {
+        "name": "app",
+        "version": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        }
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "q",
+      "status": "completed",
+      "client": {
+        "name": "app"
+      },
+      "dropped": {
+        "client.version": "too_large"
+      }
+    }
+  },
+  {
+    "name": "in a call, an over-long server, client version, protocol version and task ID are dropped as too_large, and so are the agent part's",
+    "call": {
+      "server": {
+        "name": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        }
+      },
+      "client": {
+        "name": "c",
+        "version": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        }
+      },
+      "protocolVersion": {
+        "$repeat": [
+          "x",
+          16001
+        ]
+      },
+      "task": {
+        "id": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        },
+        "status": "working"
+      },
+      "agent": {
+        "question": "q",
+        "error": {
+          "message": "m",
+          "type": {
+            "$repeat": [
+              "x",
+              16001
+            ]
+          }
+        },
+        "toolCalls": [
+          {
+            "name": {
+              "$repeat": [
+                "x",
+                16001
+              ]
+            }
+          }
+        ],
+        "client": {
+          "name": "a",
+          "version": {
+            "$repeat": [
+              "x",
+              16001
+            ]
+          }
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "client": {
+        "name": "c"
+      },
+      "agent": {
+        "question": "q",
+        "status": "completed",
+        "error": {
+          "message": "m"
+        },
+        "client": {
+          "name": "a"
+        }
+      },
+      "dropped": {
+        "task": "too_large",
+        "agent.error.type": "too_large",
+        "agent.toolCalls[0]": "too_large",
+        "agent.client.version": "too_large",
+        "server": "too_large",
+        "client.version": "too_large",
+        "protocolVersion": "too_large"
+      }
+    }
+  },
+  {
+    "name": "a task whose ID or status isn't a string stays wrong_type, even with the other over 16,000 characters",
+    "call": {
+      "task": {
+        "id": {
+          "$repeat": [
+            "x",
+            16001
+          ]
+        },
+        "status": 3
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "dropped": {
+        "task": "wrong_type"
+      }
+    }
+  }
+]

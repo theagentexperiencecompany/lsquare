@@ -1,0 +1,149 @@
+# Weekly (spec section 10): lsquare/mcp's tests against the newest MCP SDK releases, pre-releases
+# included, so a release that changes what the wrapper relies on is caught before customers' tool
+# calls stop being recorded; and the Python wrapper's, against the newest mcp 1.x and 2.x and
+# fastmcp 3.x and 4.x on PyPI (Python spec, section 8), one job per line. A failure, or a run that
+# hangs and is cancelled, posts to the maintainers' alerts channel through the LSQUARE_ALERTS_WEBHOOK secret. Both
+# jobs run releases nobody has vetted, and whatever they install, on sdk-v0: their checkouts keep no
+# token, and they get no cache access, so nothing run here can write a cache that pull requests and
+# pushes restore. Code there can still reach each job's own GITHUB_TOKEN, read-only, while the job
+# runs (by rewriting a later step's action files).
+name: MCP SDK releases
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Enforced by GitHub's cache service, whatever a step runs. The setup steps are told the same
+# (enable-cache, package-manager-cache), so none of them tries.
+cache-mode: none
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      sdk: ${{ steps.pick.outputs.sdk }}
+      server: ${{ steps.pick.outputs.server }}
+      client: ${{ steps.pick.outputs.client }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Pick the newest versions, pre-releases included
+        id: pick
+        run: node .github/scripts/newest-mcp-sdks.mjs pick
+      # This checkout is thrown away, so the package's pins and the lockfile may change.
+      - name: Use them as the package's own
+        env:
+          SDK: ${{ steps.pick.outputs.sdk }}
+          SERVER: ${{ steps.pick.outputs.server }}
+          CLIENT: ${{ steps.pick.outputs.client }}
+        run: |
+          node .github/scripts/newest-mcp-sdks.mjs apply
+          npm install --no-audit --no-fund
+      - name: Check the tests load them
+        env:
+          SDK: ${{ steps.pick.outputs.sdk }}
+          SERVER: ${{ steps.pick.outputs.server }}
+          CLIENT: ${{ steps.pick.outputs.client }}
+        run: node .github/scripts/newest-mcp-sdks.mjs check
+      - run: npm run build -w lsquare
+      - name: The wrapper's tests
+        working-directory: packages/lsquare
+        run: npx vitest run test/mcp
+
+  python:
+    name: python wrapper with the newest ${{ matrix.line }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        line: [mcp1, mcp2, fastmcp3, fastmcp4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: '0.13.1'
+          enable-cache: false
+      - name: Pick the newest release, pre-releases included
+        id: pick
+        run: uv run --no-project --with 'packaging==24.2' python .github/scripts/newest_python_sdks.py pick ${{ matrix.line }}
+      # This checkout is thrown away, so the group's pin and the lockfile may change. A release that
+      # can't be installed with the package fails here, and alerts: nothing older is tried instead.
+      - name: Use it as the line's own
+        working-directory: packages/python
+        run: |
+          uv run --no-project --with 'packaging==24.2' python ../../.github/scripts/newest_python_sdks.py apply ${{ matrix.line }} ${{ steps.pick.outputs.version }}
+          uv lock
+          uv sync --frozen --group ${{ matrix.line }}
+      - name: Check the tests load it
+        id: check
+        working-directory: packages/python
+        run: uv run --frozen --no-sync python ../../.github/scripts/newest_python_sdks.py check ${{ matrix.line }} ${{ steps.pick.outputs.version }}
+      - name: The wrapper's tests
+        working-directory: packages/python
+        run: uv run --frozen --no-sync pytest -q tests/wrapper
+      # Each line's versions and result, for the alert: one artifact per line.
+      - name: Record what ran
+        if: ${{ always() }}
+        env:
+          LINE: ${{ matrix.line }}
+          VERSION: ${{ steps.pick.outputs.version }}
+          MCP: ${{ steps.check.outputs.mcp }}
+          STATUS: ${{ job.status }}
+        run: |
+          mkdir -p ran
+          echo "$LINE ${VERSION:-unknown}${MCP:+ on mcp $MCP} ($STATUS)" > "ran/$LINE.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ always() }}
+        with:
+          name: python-${{ matrix.line }}
+          path: ran/${{ matrix.line }}.txt
+          retention-days: 7
+
+  notify:
+    needs: [test, python]
+    if: ${{ always() && (contains(fromJSON('["failure","cancelled"]'), needs.test.result) || contains(fromJSON('["failure","cancelled"]'), needs.python.result)) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: python-*
+          path: ran
+          merge-multiple: true
+      - name: Post to the alerts channel
+        env:
+          WEBHOOK: ${{ secrets.LSQUARE_ALERTS_WEBHOOK }}
+          RESULT: ${{ needs.test.result }}
+          PYTHON_RESULT: ${{ needs.python.result }}
+          SDK: ${{ needs.test.outputs.sdk }}
+          SERVER: ${{ needs.test.outputs.server }}
+          CLIENT: ${{ needs.test.outputs.client }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::notice::No LSQUARE_ALERTS_WEBHOOK secret: nothing posted. The run's own result stands."
+            exit 0
+          fi
+          if [ -n "$SDK" ] && [ -n "$SERVER" ] && [ -n "$CLIENT" ]; then
+            versions="@modelcontextprotocol/sdk $SDK, server $SERVER, client $CLIENT"
+          else
+            versions="versions unknown (the run stopped before it picked them)"
+          fi
+          [ "$RESULT" = cancelled ] && what="was cancelled (it hung or timed out)" || what="$RESULT"
+          python=$(cat ran/*.txt 2>/dev/null | paste -sd ';' - | sed 's/;/; /g')
+          text="lsquare's weekly test against new MCP SDK releases: TypeScript $what ($versions); Python $PYTHON_RESULT (${python:-no line recorded its versions}). $RUN"
+          payload=$(node -e 'process.stdout.write(JSON.stringify({ text: process.argv[1] }))' "$text")
+          curl --fail --silent --show-error --max-time 30 -X POST -H 'content-type: application/json' --data "$payload" "$WEBHOOK"

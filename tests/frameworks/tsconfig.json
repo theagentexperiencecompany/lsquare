@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "types": ["@cloudflare/vitest-plugin/types", "node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["shared", "workers", "node", "worker-configuration.d.ts"]
+}

@@ -1,0 +1,16 @@
+{
+  "name": "lsquare",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "tests/frameworks"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}

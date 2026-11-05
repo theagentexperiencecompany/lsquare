@@ -1,0 +1,27 @@
+{
+  "name": "@lsquare/frameworks-test",
+  "version": "0.0.0",
+  "private": true,
+  "description": "lsquare's built package against the frameworks and runtimes it supports: Cloudflare's agents in workerd, Vercel's mcp-handler in Node, and Bun",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --config vitest.workers.config.ts && vitest run --config vitest.node.config.ts",
+    "test:bun": "node scripts/bun.mjs test ./bun",
+    "typecheck": "wrangler types --strict-vars=false > /dev/null && tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.2",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@types/node": "22.20.5",
+    "agents": "0.31.0",
+    "bun": "1.4.4",
+    "lsquare": "*",
+    "mcp-handler": "2.3.0",
+    "typescript": "5.9.3",
+    "vitest": "5.0.4",
+    "wrangler": "4.151.0",
+    "zod": "4.6.7"
+  }
+}

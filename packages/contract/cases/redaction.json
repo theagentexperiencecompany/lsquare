@@ -1,0 +1,1058 @@
+[
+  {
+    "name": "emails, phone numbers and card numbers become numbered placeholders, the same value the same number",
+    "turn": {
+      "question": "mail jane.doe@acme.io or JANE.DOE@acme.io, not bob@acme.io; call +44 20 7946 0958; card 4111 1111 1111 1111"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "mail [EMAIL_1] or [EMAIL_1], not [EMAIL_2]; call [PHONE_1]; card [CARD_1]",
+      "redactions": {
+        "email": 3,
+        "phone": 1,
+        "card": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "digits are ASCII only: Arabic-Indic digits are no phone number",
+    "turn": {
+      "question": "call +\u0664\u0664 \u0662\u0660 \u0667\u0669\u0664\u0666 \u0660\u0669\u0665\u0668"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "call +\u0664\u0664 \u0662\u0660 \u0667\u0669\u0664\u0666 \u0660\u0669\u0665\u0668",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "whitespace is JavaScript's: a no-break space separates Bearer from its token",
+    "turn": {
+      "question": "Authorization: Bearer\u00a0abcdefghijklmnop1234"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Authorization: [SECRET_1]",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "whitespace is JavaScript's: U+0085, which Python's \\s matches, doesn't",
+    "turn": {
+      "question": "Authorization: Bearer\u0085abcdefghijklmnop1234"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Authorization: Bearer\u0085abcdefghijklmnop1234",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "secret key names: lowercased, stripped to a-z0-9, matched by their end; the value is replaced whole",
+    "call": {
+      "input": {
+        "dbPassword": "hunter2",
+        "X-Api-Key": {
+          "v": 1
+        },
+        "apiKeyId": "key_1",
+        "passw\u00f6rd": "kept",
+        "token": null
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "dbPassword": "[SECRET_1]",
+        "X-Api-Key": "[SECRET_2]",
+        "apiKeyId": "key_1",
+        "passw\u00f6rd": "kept",
+        "token": null
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "a secret is numbered by its raw value: two that shortening would turn into the same file size differ",
+    "call": {
+      "input": {
+        "password": {
+          "$repeat": [
+            "a",
+            2000
+          ]
+        },
+        "token": {
+          "$repeat": [
+            "b",
+            2000
+          ]
+        },
+        "secret": {
+          "$repeat": [
+            "a",
+            2000
+          ]
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "password": "[SECRET_1]",
+        "token": "[SECRET_2]",
+        "secret": "[SECRET_1]"
+      },
+      "redactions": {
+        "secret": 3
+      }
+    }
+  },
+  {
+    "name": "secrets that differ only in a lone surrogate differ",
+    "call": {
+      "input": {
+        "password": {
+          "$concat": [
+            {
+              "$repeat": [
+                "z",
+                65
+              ]
+            },
+            "\ud800"
+          ]
+        },
+        "token": {
+          "$concat": [
+            {
+              "$repeat": [
+                "z",
+                65
+              ]
+            },
+            "\ud801"
+          ]
+        },
+        "secret": {
+          "$concat": [
+            {
+              "$repeat": [
+                "z",
+                65
+              ]
+            },
+            "\ud800"
+          ]
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "password": "[SECRET_1]",
+        "token": "[SECRET_2]",
+        "secret": "[SECRET_1]"
+      },
+      "redactions": {
+        "secret": 3
+      }
+    }
+  },
+  {
+    "name": "a secret too long to read whole gets a number of its own, never shared",
+    "call": {
+      "input": {
+        "password": {
+          "$prose": 20000
+        },
+        "token": {
+          "$prose": 20000
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "password": "[SECRET_1]",
+        "token": "[SECRET_2]"
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "redactKeys add key names, matched the same way",
+    "options": {
+      "redactKeys": [
+        "name"
+      ]
+    },
+    "call": {
+      "input": {
+        "firstName": "Jane",
+        "fileName": "a.csv",
+        "city": "Rome"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "firstName": "[SECRET_1]",
+        "fileName": "[SECRET_2]",
+        "city": "Rome"
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "redactKeys as one string is one key name",
+    "options": {
+      "redactKeys": "name"
+    },
+    "call": {
+      "input": {
+        "customerName": "Jane Roe",
+        "address": "1 Main St"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "customerName": "[SECRET_1]",
+        "address": "1 Main St"
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "redactKeys skips entries that aren't key names, and keeps the rest",
+    "options": {
+      "redactKeys": [
+        "name",
+        7,
+        "",
+        "--",
+        null,
+        "address"
+      ]
+    },
+    "call": {
+      "input": {
+        "customerName": "Jane Roe",
+        "address": "1 Main St",
+        "city": "Rome"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "customerName": "[SECRET_1]",
+        "address": "[SECRET_2]",
+        "city": "Rome"
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "redactKeys as an object isn't read, in either language (the client refuses it)",
+    "options": {
+      "redactKeys": {
+        "name": true
+      }
+    },
+    "call": {
+      "input": {
+        "customerName": "Jane Roe"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "customerName": "Jane Roe"
+      }
+    }
+  },
+  {
+    "name": "objects are read in JavaScript's order: integer-like keys first, ascending",
+    "call": {
+      "input": {
+        "b": "b@acme.io",
+        "10": "ten@acme.io",
+        "2": "two@acme.io"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "2": "[EMAIL_1]",
+        "10": "[EMAIL_2]",
+        "b": "[EMAIL_3]"
+      },
+      "redactions": {
+        "email": 3
+      }
+    }
+  },
+  {
+    "name": "a secret cut at the limit is masked whole, even after token=",
+    "turn": {
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15899
+          },
+          " token=",
+          {
+            "$concat": [
+              "eyJhbGciOiJIUzI1NiJ9.",
+              {
+                "$repeat": [
+                  "a",
+                  30000
+                ]
+              },
+              ".sig"
+            ]
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15899
+          },
+          " token=[SECRET_1]\u2026[+29931 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a PEM key cut inside its END line, where the scan budget ran out, is still masked whole",
+    "turn": {
+      "question": {
+        "$prose": 999896
+      },
+      "answer": {
+        "$concat": [
+          "-----BEGIN PRIVATE KEY-----\n",
+          {
+            "$repeat": [
+              "ABCD",
+              16
+            ]
+          },
+          "\n-----END PRIVATE KEY-----"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": {
+        "$concat": [
+          {
+            "$prose": 16000
+          },
+          "\u2026[+983896 chars]"
+        ]
+      },
+      "answer": "[SECRET_1]\u2026[cut]",
+      "truncated": [
+        "question",
+        "answer"
+      ],
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a PEM key cut at the limit inside an END line that ends the string is still masked whole",
+    "turn": {
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15890
+          },
+          " -----BEGIN PRIVATE KEY-----\n",
+          {
+            "$repeat": [
+              "ABCD",
+              16
+            ]
+          },
+          "\n-----END PRIVATE KEY"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15890
+          },
+          " [SECRET_1]\u2026[+4 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a match running past the cut is replaced whole; one entirely past it is neither replaced nor counted",
+    "turn": {
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15990
+          },
+          " jane@acme.io and bob@acme.io"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "answer": {
+        "$concat": [
+          {
+            "$prose": 15990
+          },
+          " [EMAIL_1]\u2026[+19 chars]"
+        ]
+      },
+      "truncated": [
+        "answer"
+      ],
+      "redactions": {
+        "email": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "where the scan budget runs out inside a string, a token running into the cut is masked whole, as at the limit",
+    "call": {
+      "input": {
+        "strings": [
+          {
+            "$prose": 990000
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 9980
+              },
+              " 4111 1111 1111 1111 ",
+              {
+                "$prose": 20000
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "strings": [
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+974000 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 9980
+              },
+              " [CARD_1]\u2026[cut]"
+            ]
+          }
+        ]
+      },
+      "truncated": [
+        "input"
+      ],
+      "redactions": {
+        "card": 1
+      }
+    }
+  },
+  {
+    "name": "where the scan budget runs out in the 8,000 characters read past a cut, they are still read, and a token running into the cut is masked whole",
+    "call": {
+      "input": {
+        "strings": [
+          {
+            "$prose": 983985
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 15990
+              },
+              " jane.doe@example.com ",
+              {
+                "$prose": 10000
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "strings": [
+          {
+            "$concat": [
+              {
+                "$prose": 16000
+              },
+              "\u2026[+967985 chars]"
+            ]
+          },
+          {
+            "$concat": [
+              {
+                "$prose": 15990
+              },
+              " [EMAIL_1]\u2026[cut]"
+            ]
+          }
+        ]
+      },
+      "truncated": [
+        "input"
+      ],
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "redaction can be turned off, entirely or per pattern",
+    "options": {
+      "redact": {
+        "ip": false
+      }
+    },
+    "turn": {
+      "question": "jane@acme.io from 10.0.0.1"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "[EMAIL_1] from 10.0.0.1",
+      "redactions": {
+        "email": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "phone numbers and IPv4 addresses match as in 0.1, crafted digit runs included",
+    "turn": {
+      "question": "call +1 (555) 123-4567, +1-555-123-4567, +12025550123, +33 1 23 45 67 89, +49 (30) 1234 5678, +7 (495) 123-45-67, +44 20 7946 0958 ext 2, +1 555 0100 x, +1 2 3 4 5 6, +11 111 1, +111111111111111111a, +111111111111111111 1, +1111111111111111111111111 1, +1(1111)1111111111111111a, (555) 123-4567, 555-123-4567; hosts 10.0.0.1, 192.168.01.1, 11.11.11.11a, 1.1.1.1.1, 255.255.255.255, 256.1.1.1",
+      "answer": {
+        "$concat": [
+          " ",
+          {
+            "$repeat": [
+              "+111111111111111111a",
+              400
+            ]
+          },
+          " ",
+          {
+            "$repeat": [
+              "11.11.11.11a ",
+              500
+            ]
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "call [PHONE_1], [PHONE_1], [PHONE_2], [PHONE_3], [PHONE_4], [PHONE_5], [PHONE_6] ext 2, [PHONE_7] x, +1 2 3 4 5 6, +11 111 1, +111111111111111111a, [PHONE_8] 1, +1111111111111111111111111 1, +1(1111)1111111111111111a, [PHONE_9], [PHONE_9]; hosts [IP_1], [IP_2], 11.11.11.11a, [IP_3].1, [IP_4], 256.1.1.1",
+      "answer": {
+        "$concat": [
+          " ",
+          {
+            "$repeat": [
+              "+111111111111111111a",
+              400
+            ]
+          },
+          " ",
+          {
+            "$repeat": [
+              "11.11.11.11a ",
+              500
+            ]
+          }
+        ]
+      },
+      "redactions": {
+        "phone": 11,
+        "ip": 4
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a secret the scan budget stops before its first entry gets a number of its own, never kept as empty",
+    "call": {
+      "intent": {
+        "$prose": 999991
+      },
+      "input": {
+        "password": [
+          "hunter2"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "intent": {
+        "$concat": [
+          {
+            "$prose": 500
+          },
+          "\u2026[+999491 chars]"
+        ]
+      },
+      "input": {
+        "password": "[SECRET_1]"
+      },
+      "truncated": [
+        "intent"
+      ],
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "numbering skips placeholders already in a result block's type and MIME type, and in an error's type and code",
+    "call": {
+      "status": "error",
+      "input": {
+        "email": "jane@acme.io"
+      },
+      "error": {
+        "message": "failed",
+        "type": "[EMAIL_1]",
+        "code": "[EMAIL_2]",
+        "category": "tool_error"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "[EMAIL_3]",
+            "data": "QUJD"
+          },
+          {
+            "type": "[EMAIL_4]"
+          }
+        ],
+        "isError": true
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "error",
+      "durationMs": 1,
+      "input": {
+        "email": "[EMAIL_5]"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "image",
+            "mimeType": "[EMAIL_3]",
+            "bytes": 3
+          },
+          {
+            "type": "[EMAIL_4]"
+          }
+        ],
+        "isError": true
+      },
+      "error": {
+        "message": "failed",
+        "type": "[EMAIL_1]",
+        "code": "[EMAIL_2]",
+        "category": "tool_error"
+      },
+      "redactions": {
+        "email": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "numbering skips placeholders already in a task's ID and status",
+    "call": {
+      "input": {
+        "email": "jane@acme.io"
+      },
+      "task": {
+        "id": "[EMAIL_1]",
+        "status": "[EMAIL_2]"
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "email": "[EMAIL_3]"
+      },
+      "task": {
+        "id": "[EMAIL_1]",
+        "status": "[EMAIL_2]"
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "numbering skips a placeholder already in a turn's error type",
+    "turn": {
+      "question": "mail jane@acme.io",
+      "error": {
+        "message": "failed",
+        "type": "[EMAIL_1]"
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "mail [EMAIL_2]",
+      "status": "completed",
+      "error": {
+        "message": "failed",
+        "type": "[EMAIL_1]"
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "numbering skips placeholders already in fields that are never redacted: IDs, a tool call's name, surface, apiKeyId, client",
+    "turn": {
+      "userId": "[EMAIL_1]",
+      "conversationId": "[EMAIL_2]",
+      "question": "mail jane@acme.io",
+      "surface": "[EMAIL_3]",
+      "apiKeyId": "[EMAIL_4]",
+      "client": {
+        "name": "[EMAIL_6]",
+        "version": "[EMAIL_7]"
+      },
+      "toolCalls": [
+        {
+          "name": "[EMAIL_8]"
+        }
+      ]
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "userId": "[EMAIL_1]",
+      "conversationId": "[EMAIL_2]",
+      "question": "mail [EMAIL_5]",
+      "status": "completed",
+      "toolCalls": [
+        {
+          "name": "[EMAIL_8]"
+        }
+      ],
+      "client": {
+        "name": "[EMAIL_6]",
+        "version": "[EMAIL_7]"
+      },
+      "apiKeyId": "[EMAIL_4]",
+      "surface": "[EMAIL_3]",
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "numbering skips placeholders already in a call's tool name, server and client, and its agent part's tool-call names",
+    "call": {
+      "toolName": "[EMAIL_1]",
+      "server": {
+        "name": "[EMAIL_2]",
+        "version": "1"
+      },
+      "client": {
+        "name": "c",
+        "version": "[EMAIL_3]"
+      },
+      "protocolVersion": "[EMAIL_4]",
+      "input": {
+        "email": "jane@acme.io"
+      },
+      "agent": {
+        "question": "q",
+        "toolCalls": [
+          {
+            "name": "[EMAIL_5]"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "[EMAIL_1]",
+      "status": "completed",
+      "durationMs": 1,
+      "server": {
+        "name": "[EMAIL_2]",
+        "version": "1"
+      },
+      "client": {
+        "name": "c",
+        "version": "[EMAIL_3]"
+      },
+      "protocolVersion": "[EMAIL_4]",
+      "input": {
+        "email": "[EMAIL_6]"
+      },
+      "agent": {
+        "question": "q",
+        "status": "completed",
+        "toolCalls": [
+          {
+            "name": "[EMAIL_5]"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "numbering skips placeholders already in keys and in what is kept of a cut string",
+    "turn": {
+      "question": {
+        "$concat": [
+          "[EMAIL_1] ",
+          {
+            "$prose": 16100
+          }
+        ]
+      },
+      "answer": "mail jane@acme.io",
+      "latency": {
+        "[EMAIL_2]": 1
+      },
+      "metadata": {
+        "[EMAIL_3]": "x"
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": {
+        "$concat": [
+          "[EMAIL_1] ",
+          {
+            "$prose": 15990
+          },
+          "\u2026[+110 chars]"
+        ]
+      },
+      "answer": "mail [EMAIL_4]",
+      "status": "completed",
+      "latency": {
+        "[EMAIL_2]": 1
+      },
+      "metadata": {
+        "[EMAIL_3]": "x"
+      },
+      "redactions": {
+        "email": 1
+      },
+      "truncated": [
+        "question"
+      ]
+    }
+  }
+]

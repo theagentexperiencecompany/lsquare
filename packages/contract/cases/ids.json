@@ -1,0 +1,276 @@
+[
+  {
+    "name": "a turn's ID is k/ and the SHA-256 of [orgId, conversationId, turnId] as compact JSON",
+    "turn": {
+      "orgId": "org_1",
+      "conversationId": "conv1",
+      "turnId": 7,
+      "question": "q"
+    },
+    "event": {
+      "eventId": "k/3f8e87b789e2e017772841b8a6b6be39f9ad5b3384435e43ff6be84ac541c1cc",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "orgId": "org_1",
+      "conversationId": "conv1",
+      "turnId": "7",
+      "question": "q",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "turnId 7 and \"7\" give one ID",
+    "turn": {
+      "orgId": "org_1",
+      "conversationId": "conv1",
+      "turnId": "7",
+      "question": "q"
+    },
+    "event": {
+      "eventId": "k/3f8e87b789e2e017772841b8a6b6be39f9ad5b3384435e43ff6be84ac541c1cc",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "orgId": "org_1",
+      "conversationId": "conv1",
+      "turnId": "7",
+      "question": "q",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a missing org is JSON null, and a conversation may contain /",
+    "turn": {
+      "conversationId": "conv/1",
+      "turnId": "t_1"
+    },
+    "event": {
+      "eventId": "k/808ca52684483385c951e9c815da6d29511a8743454656ae124ef951942cf6d0",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "conv/1",
+      "turnId": "t_1",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "non-ASCII characters are hashed as UTF-8, written as themselves",
+    "turn": {
+      "orgId": "org_\u00e9",
+      "conversationId": "c\ud83d\ude00",
+      "turnId": "x"
+    },
+    "event": {
+      "eventId": "k/7667cae4d178cedaf66c9c9afd64b6397aa564fcfc08f6083d0af90633e6783d",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "orgId": "org_\u00e9",
+      "conversationId": "c\ud83d\ude00",
+      "turnId": "x",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "without a conversation or a turnId, the ID is random",
+    "turn": {
+      "turnId": 1,
+      "question": "q"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "turnId": "1",
+      "question": "q",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an ID over 512 UTF-8 bytes drops the event",
+    "turn": {
+      "conversationId": {
+        "$repeat": [
+          "\u00e9",
+          257
+        ]
+      }
+    },
+    "error": "invalid_id"
+  },
+  {
+    "name": "an ID of exactly 512 UTF-8 bytes is kept",
+    "turn": {
+      "userId": {
+        "$repeat": [
+          "\u00e9",
+          256
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "userId": {
+        "$repeat": [
+          "\u00e9",
+          256
+        ]
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an ID with NUL drops the event",
+    "turn": {
+      "userId": "a\u0000b"
+    },
+    "error": "invalid_id"
+  },
+  {
+    "name": "an ID that isn't a string drops the event",
+    "turn": {
+      "orgId": 7
+    },
+    "error": "invalid_id"
+  },
+  {
+    "name": "an empty ID is absent",
+    "turn": {
+      "orgId": "",
+      "question": "q"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "q",
+      "dropped": {
+        "orgId": "empty"
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a boolean turnId is refused: Python's True isn't 1",
+    "turn": {
+      "conversationId": "c",
+      "turnId": true
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "c",
+      "dropped": {
+        "turnId": "wrong_type"
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a turnId must be a safe integer",
+    "turn": {
+      "conversationId": "c",
+      "turnId": 9007199254740993
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "c",
+      "dropped": {
+        "turnId": "unsafe_integer"
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "an ID whose pair is written as two halves is hashed as one character",
+    "turn": {
+      "orgId": "org_\u00e9",
+      "conversationId": {
+        "$concat": [
+          "c",
+          "\ud83d",
+          "\ude00"
+        ]
+      },
+      "turnId": "x"
+    },
+    "event": {
+      "eventId": "k/7667cae4d178cedaf66c9c9afd64b6397aa564fcfc08f6083d0af90633e6783d",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "orgId": "org_\u00e9",
+      "conversationId": {
+        "$concat": [
+          "c",
+          "\ud83d",
+          "\ude00"
+        ]
+      },
+      "turnId": "x",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "a turnId over 256 KB in UTF-8 is dropped before it is hashed, the event kept, though it has fewer characters: an emoji is 4 bytes",
+    "turn": {
+      "conversationId": "c",
+      "question": "q",
+      "turnId": {
+        "$repeat": [
+          "\ud83d\ude00",
+          70000
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "c",
+      "question": "q",
+      "status": "completed",
+      "dropped": {
+        "turnId": "too_large"
+      }
+    }
+  },
+  {
+    "name": "a turnId is measured as JSON writes it: 50,000 lone surrogates are 300,000 bytes, escaped",
+    "turn": {
+      "conversationId": "c",
+      "question": "q",
+      "turnId": {
+        "$repeat": [
+          "\ud800",
+          50000
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "conversationId": "c",
+      "question": "q",
+      "status": "completed",
+      "dropped": {
+        "turnId": "too_large"
+      }
+    }
+  }
+]
