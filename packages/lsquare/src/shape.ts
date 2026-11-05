@@ -40,6 +40,8 @@ export class Cut {
     readonly cut: number,
     readonly mark: string,
     readonly limit: number,
+    /** Already read for values under secret key names, with the lookahead this one no longer has. */
+    readonly scanned: boolean = false,
   ) {}
 }
 
@@ -70,7 +72,7 @@ export interface ShapeState {
   lossy: boolean
   /** Shaping `beforeSend`'s output: a string this SDK cut keeps its marker. */
   afterHook: boolean
-  /** The strings this SDK cut before `beforeSend`, as the hook got them, and the limit each was cut at. */
+  /** The strings this SDK cut or rewrote before `beforeSend`, as the hook got them (`Redactor.cuts`). */
   cuts: ReadonlyMap<string, number> | undefined
   /** This event's secret key names; undefined when the `secret` pattern is off. */
   secretKeys: ((key: string) => boolean) | undefined
@@ -191,13 +193,21 @@ export function shapeString(text: string, limit: number, state: ShapeState): str
         const [end, passed] = advance(body, 0, scan.remaining)
         if (end === body.length) {
           scan.remaining -= passed
-          return new Cut(body, body.length, marked[0], limit)
+          return new Cut(body, body.length, marked[0], limit, true)
         }
         scan.remaining = 0
-        return new Cut(body.slice(0, end), end, CUT_MARK, limit)
+        return new Cut(body.slice(0, end), end, CUT_MARK, limit, true)
       }
       earlier = marked[0]
       text = body
+    } else {
+      // A string whose secret values were replaced before the hook, as the hook got it, is kept
+      // whole where its length before that fits: placeholders may have made it longer than that.
+      const before = state.cuts?.get(text)
+      if (before !== undefined && before <= limit && before <= scan.remaining) {
+        scan.remaining -= before
+        return text
+      }
     }
   }
 

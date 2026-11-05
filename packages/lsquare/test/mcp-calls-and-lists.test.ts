@@ -2177,3 +2177,22 @@ describe("Codex's seventh review: what the app's code answers is adopted where t
     },
   )
 })
+
+describe('JSON in a text block, as a real server sends it', () => {
+  it.each([1, 2] as const)('hides what is under secret key names, and the client still gets it (SDK %d.x)', async (sdk) => {
+    const lsquare = setup()
+    const server = instrument(high(sdk), lsquare.client, { extras: OFF })
+    const row = { db_password: 'hunter2', plan: 'pro' }
+    server.registerTool('t', {}, async () => ({ content: [{ type: 'text' as const, text: JSON.stringify(row, null, 2) }], structuredContent: row }))
+    const connection = await connect(sdk, server)
+    const reply = await connection.call('t')
+    await lsquare.client.flush({ timeoutMs: 2_000 })
+    expect(JSON.stringify(reply)).toContain('hunter2')
+    const [event] = lsquare.calls()
+    expect(event?.result).toEqual({
+      content: [{ type: 'text', text: '{\n  "db_password": "[SECRET_1]",\n  "plan": "pro"\n}' }],
+      structuredContent: { db_password: '[SECRET_1]', plan: 'pro' },
+    })
+    expect(event?.redactions).toEqual({ secret: 2 })
+  })
+})

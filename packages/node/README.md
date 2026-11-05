@@ -76,9 +76,9 @@ key is secret when its name, ignoring case and punctuation, ends with `password(
 `accesskey`, `signingkey`, `encryptionkey`, `credential(s)`, `cookie(s)` or `connectionstring`. This is
 part of the `secret` pattern. Redact names specific to your app with `beforeSend`.
 
-These key rules apply to fields in structured objects. JSON encoded inside a string is not parsed:
-an input string such as `'{"password":"plain-value"}'` can be sent unchanged. Known-format
-patterns still run on the string. Use `beforeSend` to remove or sanitize such strings.
+The same rule applies to JSON held in a string, such as an input or an answer:
+`{"password":"hunter2"}` becomes `{"password":"[SECRET_1]"}`, and the rest of the string stays. Other
+syntax (`password=hunter2`, Python's `{'password': 'x'}`) isn't covered. Use `beforeSend` for those.
 
 Identifier fields are never redacted: `conversationId`, `turnId`, `orgId`, `toolName`, `apiKeyId`,
 `surface`, `client` and `status`. Put opaque IDs there, never emails, names or other personal data.

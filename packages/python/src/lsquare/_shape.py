@@ -83,6 +83,8 @@ class Cut:
     cut: int
     mark: str
     limit: int
+    #: Already read for values under secret key names, with the lookahead this one no longer has.
+    scanned: bool = False
 
 
 @dataclass(frozen=True)
@@ -118,7 +120,7 @@ class ShapeState:
     lossy: bool = False
     #: Shaping `before_send`'s output: a string this SDK cut keeps its marker.
     after_hook: bool = False
-    #: The strings this SDK cut before `before_send`, as the hook got them, and the limit each was cut at.
+    #: The strings this SDK cut or rewrote before `before_send`, as the hook got them (`Redactor.cuts`).
     cuts: Mapping[str, int] | None = None
     #: This event's secret key names; None when the `secret` pattern is off.
     secret_keys: Callable[[str], bool] | None = None
@@ -264,13 +266,21 @@ def shape_string(value: str, limit: int, state: ShapeState) -> str | Cut | Binar
                 end, passed = advance(whole, 0, scan.remaining)
                 if end == len(whole):
                     scan.remaining -= passed
-                    return Cut(whole, len(whole), marked.group(0), limit)
+                    return Cut(whole, len(whole), marked.group(0), limit, True)
                 scan.remaining = 0
-                return Cut(whole[:end], end, CUT_MARK, limit)
+                return Cut(whole[:end], end, CUT_MARK, limit, True)
             earlier = marked.group(0)
             # Only what joined_prefix reads below, plus one character, so it can still tell that
             # the body goes on: its verdict, whole or not, is the same as on the whole body.
             raw = raw[: min(body_end, 2 * (scan.remaining + LOOKAHEAD + 2) + 3)]
+        elif state.cuts and len(raw) <= 2 * state.longest_cut + 2:
+            # A string whose secret values were replaced before the hook, as the hook got it, is kept
+            # whole where its length before that fits: placeholders may have made it longer than that.
+            whole = join(raw)
+            before = state.cuts.get(whole)
+            if before is not None and before <= limit and before <= scan.remaining:
+                scan.remaining -= before
+                return whole
 
     # Never more than what's left of the budget is read, plus one: a string longer than that
     # can't be counted, so where it ends doesn't matter.

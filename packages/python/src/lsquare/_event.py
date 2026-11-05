@@ -1,8 +1,8 @@
 """Building events, as event.ts does: a turn from `capture()`, a call from the wrapper, and either
 again from `before_send`'s output.
 
-`hook=True` means a `before_send` is pending: only cut strings are redacted yet, and the event is
-redacted whole after the hook (`after_hook`).
+`hook=True` means a `before_send` is pending: only cut strings and what's under secret key names are
+redacted yet, and the event is redacted whole after the hook (`after_hook`).
 """
 
 from __future__ import annotations
@@ -176,7 +176,8 @@ Built = Union[BuiltOk, BuiltError]
 
 
 def build_turn(input: object, captured_at: str, context: Context, hook: bool) -> Built:
-    """A turn from `capture()`. With a hook pending, only cut strings are redacted yet."""
+    """A turn from `capture()`. With a hook pending, only cut strings and what's under secret key names
+    are redacted yet."""
     redactor = Redactor(context.patterns, context.redact_keys)
     state = new_state(secret_keys=redactor.secret_key_matcher())
     shaped = shape_turn(input, state, metadata_budget=context.max_event_bytes)

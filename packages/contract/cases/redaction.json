@@ -1054,5 +1054,6328 @@
         "question"
       ]
     }
+  },
+  {
+    "name": "JSON in a string: a text block and its structured twin get one number",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"db_password\":\"hunter2\",\"plan\":\"pro\"}"
+          }
+        ],
+        "structuredContent": {
+          "db_password": "hunter2",
+          "plan": "pro"
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"db_password\":\"[SECRET_1]\",\"plan\":\"pro\"}"
+          }
+        ],
+        "structuredContent": {
+          "db_password": "[SECRET_1]",
+          "plan": "pro"
+        }
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: everything but the value stays as it was",
+    "turn": {
+      "question": "{\n  \"token\" : \"abc\",\n  \"user\": \"bob\",\n  \"n\": 1.50\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\n  \"token\" : \"[SECRET_1]\",\n  \"user\": \"bob\",\n  \"n\": 1.50\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: inside prose and a code fence",
+    "turn": {
+      "question": "Here it is:\n```json\n{\"api_key\": \"abc\"}\n```\nDone"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Here it is:\n```json\n{\"api_key\": \"[SECRET_1]\"}\n```\nDone",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a stray quote before it",
+    "turn": {
+      "question": "5\" wide {\"password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "5\" wide {\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key starting with a colon",
+    "turn": {
+      "question": "{\"a\":\"x\",\":password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\":\"x\",\":password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a string value holding quotes and colons isn't a key",
+    "turn": {
+      "question": "{\"note\":\"say \\\"hi\\\": ok\",\"password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"note\":\"say \\\"hi\\\": ok\",\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: an escaped key",
+    "turn": {
+      "question": "{\"pass\\u0077ord\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"pass\\u0077ord\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in an escaped backslash",
+    "turn": {
+      "question": "{\"password\\\\\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\\\\\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: the value is numbered decoded: escaped quotes, a backslash at its end, escaped characters",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"a\\\"b\\\\\",\"token\":\"caf\\u00e9\",\"auth\":\"\\ud83d\\ude00\"}"
+          }
+        ],
+        "structuredContent": {
+          "password": "a\"b\\",
+          "token": "caf\u00e9",
+          "auth": "\ud83d\ude00"
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"[SECRET_1]\",\"token\":\"[SECRET_2]\",\"auth\":\"[SECRET_3]\"}"
+          }
+        ],
+        "structuredContent": {
+          "password": "[SECRET_1]",
+          "token": "[SECRET_2]",
+          "auth": "[SECRET_3]"
+        }
+      },
+      "redactions": {
+        "secret": 6
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: encoded once",
+    "turn": {
+      "question": "{\"result\":\"{\\\"token\\\":\\\"abc\\\",\\\"n\\\":1}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"result\":\"{\\\"token\\\":\\\"[SECRET_1]\\\",\\\"n\\\":1}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: encoded twice",
+    "turn": {
+      "question": "{\"a\":\"{\\\"b\\\":\\\"{\\\\\\\"token\\\\\\\":\\\\\\\"abc\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\":\"{\\\"b\\\":\\\"{\\\\\\\"token\\\\\\\":\\\\\\\"[SECRET_1]\\\\\\\"}\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: encoded whitespace around the colon",
+    "turn": {
+      "question": "{\"result\":\"{\\\"password\\\"\\n:\\n\\\"hunter2\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"result\":\"{\\\"password\\\"\\n:\\n\\\"[SECRET_1]\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: quotes written as \\u0022",
+    "turn": {
+      "question": "{\"result\":\"{\\u0022password\\u0022:\\u0022hunter2\\u0022}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"result\":\"{\\u0022password\\u0022:\\u0022[SECRET_1]\\u0022}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a fragment with no opening quote in sight",
+    "turn": {
+      "question": "data: {\\\"token\\\":\\\"abc\\\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "data: {\\\"token\\\":\\\"[SECRET_1]\\\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a number when encoded gets a quote of its level",
+    "turn": {
+      "question": "{\"r\":\"{\\\"token\\\":123}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"r\":\"{\\\"token\\\":\\\"[SECRET_1]\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: encoded five times, past the limit, its string is replaced whole",
+    "turn": {
+      "question": "{\"a\":\"{\\\"a\\\":\\\"{\\\\\\\"a\\\\\\\":\\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"token\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\":1}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\":\"{\\\"a\\\":\\\"{\\\\\\\"a\\\\\\\":\\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\":\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: an object, an array and brackets inside strings are replaced whole",
+    "turn": {
+      "question": "{\"credentials\":{\"user\":\"a\",\"pass\":\"b}\"},\"x\":1,\"cookies\":[\"c\",[\"d\"]],\"y\":2}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"credentials\":\"[SECRET_1]\",\"x\":1,\"cookies\":\"[SECRET_2]\",\"y\":2}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: what can't hold a secret stays",
+    "turn": {
+      "question": "{\"token\":null,\"secret\":true,\"password\":false,\"auth\":\"\",\"cookie\":{},\"cookies\":[ ],\"apiKey\":\"[SECRET_7]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":null,\"secret\":true,\"password\":false,\"auth\":\"\",\"cookie\":{},\"cookies\":[ ],\"apiKey\":\"[SECRET_7]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a word that only starts like a literal is replaced",
+    "turn": {
+      "question": "{\"token\":nullhunter2,\"auth\":true1}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":\"[SECRET_1]\",\"auth\":\"[SECRET_2]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a number is replaced",
+    "turn": {
+      "question": "{\"token\":12345}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON runs to the end of its line",
+    "turn": {
+      "question": "\"password\": correct horse battery staple \nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\" \nnext line",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON keeps its backslashes inside",
+    "turn": {
+      "question": "\"password\": hunter2\\backup"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: mismatched brackets run to the end",
+    "turn": {
+      "question": "\"password\": [}hunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a container that never closes runs to the end",
+    "turn": {
+      "question": "{\"credentials\":{\"user\":\"a\",\"pass\":\"b\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"credentials\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a string that never closes runs to the end",
+    "turn": {
+      "question": "{\"password\":\"hunt"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a colon with nothing after it",
+    "turn": {
+      "question": "{\"password\":"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder that's only encoded is a value",
+    "turn": {
+      "question": "{\"password\":\"\\u005bSECRET_1]\",\"token\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\",\"token\":\"[SECRET_2]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: redactKeys apply",
+    "turn": {
+      "question": "{\"shippingAddress\":\"1 Main St\",\"city\":\"Rome\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"shippingAddress\":\"[SECRET_1]\",\"city\":\"Rome\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "options": {
+      "redactKeys": [
+        "address"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: the secret pattern off leaves it",
+    "turn": {
+      "question": "{\"password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"hunter2\"}",
+      "status": "completed"
+    },
+    "options": {
+      "redact": {
+        "secret": false
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value found by a key and by a pattern gets one number",
+    "turn": {
+      "question": "{\"password\":\"sk-abcdefghijklmnopqrstuvwxyz\"} sk-abcdefghijklmnopqrstuvwxyz"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"} [SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in every free string of a turn, but not its keys",
+    "turn": {
+      "question": "{\"token\":\"a\"}",
+      "answer": "{\"token\":\"b\"}",
+      "status": "error",
+      "error": {
+        "message": "{\"token\":\"c\"}"
+      },
+      "toolCalls": [
+        {
+          "name": "t",
+          "input": {
+            "body": "{\"token\":\"d\"}"
+          },
+          "errorMessage": "{\"token\":\"e\"}"
+        }
+      ],
+      "metadata": {
+        "body": "{\"token\":\"f\"}",
+        "{\"token\":\"g\"}": 1
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":\"[SECRET_1]\"}",
+      "answer": "{\"token\":\"[SECRET_2]\"}",
+      "status": "error",
+      "error": {
+        "message": "{\"token\":\"[SECRET_3]\"}"
+      },
+      "toolCalls": [
+        {
+          "name": "t",
+          "input": {
+            "body": "{\"token\":\"[SECRET_4]\"}"
+          },
+          "errorMessage": "{\"token\":\"[SECRET_5]\"}"
+        }
+      ],
+      "metadata": {
+        "body": "{\"token\":\"[SECRET_6]\"}",
+        "{\"token\":\"g\"}": 1
+      },
+      "redactions": {
+        "secret": 6
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in a call's input, resource text and intent",
+    "call": {
+      "input": {
+        "body": "{\"token\":\"a\"}"
+      },
+      "intent": "{\"token\":\"b\"}",
+      "result": {
+        "content": [
+          {
+            "type": "resource",
+            "resource": {
+              "uri": "file:///a",
+              "text": "{\"token\":\"c\"}"
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "resource",
+            "uri": "file:///a",
+            "text": "{\"token\":\"[SECRET_2]\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 3
+      },
+      "input": {
+        "body": "{\"token\":\"[SECRET_1]\"}"
+      },
+      "intent": "{\"token\":\"[SECRET_3]\"}"
+    }
+  },
+  {
+    "name": "JSON in a string: a value before the cut moves it, and a value past the cut stays out",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    1000
+                  ]
+                },
+                "\"}\n",
+                {
+                  "$repeat": [
+                    " ",
+                    3084
+                  ]
+                },
+                "{\"token\":\"hunter2\"}",
+                {
+                  "$repeat": [
+                    " ",
+                    500
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"[SECRET_1]\"}\n",
+                {
+                  "$repeat": [
+                    " ",
+                    2984
+                  ]
+                },
+                "\u2026[+619 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a value before the cut moves it, and a later value before the cut is still found",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    1000
+                  ]
+                },
+                "\"}\n",
+                {
+                  "$repeat": [
+                    " ",
+                    2884
+                  ]
+                },
+                "{\"token\":\"hunter2\"}",
+                {
+                  "$repeat": [
+                    " ",
+                    1100
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"[SECRET_1]\"}\n",
+                {
+                  "$repeat": [
+                    " ",
+                    2884
+                  ]
+                },
+                "{\"token\":\"[SECRET_2]\"}",
+                {
+                  "$repeat": [
+                    " ",
+                    81
+                  ]
+                },
+                "\u2026[+1019 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 2
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a value crossing the cut is replaced, and its placeholder ends what's kept",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    50
+                  ]
+                },
+                "\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"[SECRET_1]",
+                "\u2026[+45 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a value crossing the cut after astral characters, which count as one each",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "\ud83d\ude00",
+                    3980
+                  ]
+                },
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    50
+                  ]
+                },
+                "\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "\ud83d\ude00",
+                    3980
+                  ]
+                },
+                "{\"password\":\"[SECRET_1]",
+                "\u2026[+45 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a value running past what's read is replaced, with a number of its own",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    20000
+                  ]
+                },
+                "\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"[SECRET_1]",
+                "\u2026[+19995 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a value past the cut is neither replaced nor counted",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    4005
+                  ]
+                },
+                "{\"password\":\"x\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    4000
+                  ]
+                },
+                "\u2026[+21 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a hook never sees the value, and it is counted once",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"hunter2\"}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"[SECRET_1]\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {
+      "seen": {
+        "result": {
+          "content": [
+            {
+              "type": "text",
+              "text": "{\"password\":\"[SECRET_1]\"}"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing doesn't shorten a string its placeholders made longer than the limit",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$repeat": [
+                "{\"token\":0}\n",
+                300
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$repeat": [
+                "{\"token\":\"[SECRET_1]\"}\n",
+                300
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 300
+      }
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing keeps a placeholder ending a cut string, and its number",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"",
+                {
+                  "$repeat": [
+                    "h",
+                    50
+                  ]
+                },
+                "\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    " ",
+                    3980
+                  ]
+                },
+                "{\"password\":\"[SECRET_1]",
+                "\u2026[+45 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      },
+      "truncated": [
+        "result"
+      ]
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a colon written as \\u003a",
+    "turn": {
+      "question": "\"{\\\"password\\\"\\u003a\\\"hunter2\\\"}\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"{\\\"password\\\"\\u003a\\\"[SECRET_1]\\\"}\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a colon written as \\u003a, encoded once more",
+    "turn": {
+      "question": "{\"body\":\"\\\"{\\\\\\\"password\\\\\\\"\\\\u003a\\\\\\\"hunter2\\\\\\\"}\\\"\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"body\":\"\\\"{\\\\\\\"password\\\\\\\"\\\\u003a\\\\\\\"[SECRET_1]\\\\\\\"}\\\"\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a hook doesn't see a value whose colon is encoded",
+    "turn": {
+      "question": "\"{\\\"password\\\"\\u003a\\\"hunter2\\\"}\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"{\\\"password\\\"\\u003a\\\"[SECRET_1]\\\"}\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {
+      "seen": {
+        "question": "\"{\\\"password\\\"\\u003a\\\"[SECRET_1]\\\"}\""
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting like a literal is a value",
+    "turn": {
+      "question": "\"password\": true story hunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting with null, and a tab after it",
+    "turn": {
+      "question": "\"token\": null\thunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"token\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting with an empty container",
+    "turn": {
+      "question": "\"password\": [] horse"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting with a container",
+    "turn": {
+      "question": "\"password\": [1] horse\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a literal before a line end, a closing bracket or the end stays",
+    "turn": {
+      "question": "{\n  \"password\": null,\n  \"token\": true\n}\n\"auth\": false"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\n  \"password\": null,\n  \"token\": true\n}\n\"auth\": false",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: an empty container before a closing bracket stays",
+    "turn": {
+      "question": "[{\"cookies\": []},{\"auth\":{ }}]"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "[{\"cookies\": []},{\"auth\":{ }}]",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a closing bracket ends a value that isn't JSON",
+    "turn": {
+      "question": "[\"x\",{\"password\": abc}]\n[\"y\",\"token\": def]"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "[\"x\",{\"password\": \"[SECRET_1]\"}]\n[\"y\",\"token\": \"[SECRET_2]\"]",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a carriage return ends a value that isn't JSON",
+    "turn": {
+      "question": "\"password\": abc\r\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"\r\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote left unescaped in a value is read with it",
+    "turn": {
+      "question": "{\"password\":\"hun\"ter2\",\"user\":\"bob\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\",\"user\":\"bob\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: text after a closing quote is read with the value",
+    "turn": {
+      "question": "Set \"password\": \"abc\" and try"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Set \"password\": \"[SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote left unescaped in a container, whose brackets then don't match",
+    "turn": {
+      "question": "{\"auth\":{\"a\":\"b\"c}\",\"d\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"auth\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote left unescaped in a container that closes",
+    "turn": {
+      "question": "{\"auth\":{\"a\":\"b\"c\",\"d\":\"hunter2\"},\"plan\":\"pro\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"auth\":\"[SECRET_1]\",\"plan\":\"pro\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: an escaped quote in a value",
+    "turn": {
+      "question": "'{\"token\":\"hun\\\\\"ter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"token\":\"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: JSON in a string under a secret key",
+    "turn": {
+      "question": "HTTP 401: b'{\"credentials\":\"{\\\\\"user\\\\\":\\\\\"bob\\\\\",\\\\\"pw\\\\\":\\\\\"hunter2\\\\\",\\\\\"pin\\\\\":12345}\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "HTTP 401: b'{\"credentials\":\"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: JSON in a string, a comma in its value",
+    "turn": {
+      "question": "'{\"config\":\"{\\\\\"password\\\\\":\\\\\"hun,ter2\\\\\"}\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"config\":\"{\\\\\"password\\\\\":\"[SECRET_1]\"\\\\\"}\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a doubled backslash ending a value isn't read as printed JSON",
+    "turn": {
+      "question": "{\"password\":\"a\\\\\",\"user\":\"bob\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\",\"user\":\"bob\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a string starting inside a key",
+    "turn": {
+      "question": "password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: an escape before a key's opening quote, after a value",
+    "turn": {
+      "question": "{\"token\":[1],\\\"password\":\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":\"[SECRET_1]\",\\\"password\":\"[SECRET_2]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a backslash before a key's opening quote",
+    "turn": {
+      "question": "C:\\\"password\":\"hunter2\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "C:\\\"password\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: quotes written as \\u0022, encoded again",
+    "turn": {
+      "question": "{\\\\u0022password\\\\u0022:\\\\u0022hunter2\\\\u0022}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\\\\u0022password\\\\u0022:\\\\u0022[SECRET_1]\\\\u0022}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: quotes written as \\u0022 in a value, encoded again",
+    "turn": {
+      "question": "{\"data\":\"{\\\\u0022password\\\\u0022:\\\\u0022hunter2\\\\u0022}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"data\":\"{\\\\u0022password\\\\u0022:\\\\u0022[SECRET_1]\\\\u0022}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a tab and a carriage return around the colon",
+    "turn": {
+      "question": "{\"password\"\t:\r\"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\"\t:\r\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a Windows path stays",
+    "turn": {
+      "question": "Why is C:\\Users\\me slow?"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Why is C:\\Users\\me slow?",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a Windows path in JSON stays",
+    "turn": {
+      "question": "{\"path\":\"C:\\\\Users\\\\me\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"path\":\"C:\\\\Users\\\\me\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a stray backslash stays",
+    "turn": {
+      "question": "LaTeX: \\frac{a}{b} and \\alpha; grep \"foo\\|bar\" file"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "LaTeX: \\frac{a}{b} and \\alpha; grep \"foo\\|bar\" file",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: an escape encoded past the limit stays, since it holds no key",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"line\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\nbreak\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"line\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\nbreak\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a number encoded twice gets a quote of its level",
+    "turn": {
+      "question": "{\"a\":\"{\\\"r\\\":\\\"{\\\\\\\"token\\\\\\\":123}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\":\"{\\\"r\\\":\\\"{\\\\\\\"token\\\\\\\":\\\\\\\"[SECRET_1]\\\\\\\"}\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder spelled out when encoded stays",
+    "turn": {
+      "question": "{\"r\":\"{\\\"password\\\":\\\"[SECRET_3]\\\",\\\"token\\\":\\\"a\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"r\":\"{\\\"password\\\":\\\"[SECRET_3]\\\",\\\"token\\\":\\\"[SECRET_1]\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder written with an escape, encoded, is a value",
+    "turn": {
+      "question": "{\"r\":\"{\\\"password\\\":\\\"\\\\u005bSECRET_1]\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"r\":\"{\\\"password\\\":\\\"[SECRET_1]\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: each escape is decoded for numbering",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"a\\/b\",\"token\":\"c\\fd\",\"auth\":\"e\\bf\",\"cookie\":\"g\\rh\",\"secret\":\"i\\tj\",\"apiKey\":\"k\\nl\"}"
+          }
+        ],
+        "structuredContent": {
+          "password": "a/b",
+          "token": "c\fd",
+          "auth": "e\bf",
+          "cookie": "g\rh",
+          "secret": "i\tj",
+          "apiKey": "k\nl"
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"password\":\"[SECRET_1]\",\"token\":\"[SECRET_2]\",\"auth\":\"[SECRET_3]\",\"cookie\":\"[SECRET_4]\",\"secret\":\"[SECRET_5]\",\"apiKey\":\"[SECRET_6]\"}"
+          }
+        ],
+        "structuredContent": {
+          "password": "[SECRET_1]",
+          "token": "[SECRET_2]",
+          "auth": "[SECRET_3]",
+          "cookie": "[SECRET_4]",
+          "secret": "[SECRET_5]",
+          "apiKey": "[SECRET_6]"
+        }
+      },
+      "redactions": {
+        "secret": 12
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: two that never close, the same text, get a number each",
+    "turn": {
+      "question": "{\"password\":\"same",
+      "answer": "{\"password\":\"same"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]",
+      "answer": "{\"password\":\"[SECRET_2]",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: the secret pattern off leaves it in a cut string too",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"hunter2\"}",
+                {
+                  "$repeat": [
+                    " ",
+                    4100
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                "{\"password\":\"hunter2\"}",
+                {
+                  "$repeat": [
+                    " ",
+                    3978
+                  ]
+                },
+                "\u2026[+122 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "truncated": [
+        "result"
+      ]
+    },
+    "options": {
+      "redact": {
+        "secret": false
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing doesn't read a cut string again without what was past the cut",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3987
+                  ]
+                },
+                "{\"cookie\": true}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3987
+                  ]
+                },
+                "{\"cookie\": tr",
+                "\u2026[+3 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "truncated": [
+        "result"
+      ]
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing doesn't take a string ending with a marker for one this SDK cut",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"token\":\"abc\"}\u2026[+5 chars]"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"token\":\"[SECRET_1]\"}\u2026[+5 chars]"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: printed by repr: a quote and a comma in a value",
+    "turn": {
+      "question": "{\"password\": \"pa\\\\\",ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a quote and a closing brace in a value",
+    "turn": {
+      "question": "{\"password\": \"pa\\\\\"}ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a quote and a closing bracket in a value",
+    "turn": {
+      "question": "{\"password\": \"pa\\\\\"]ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a quote, a comma and a number in a value",
+    "turn": {
+      "question": "{\"password\": \"pa\\\\\",7x\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: the same in a container",
+    "turn": {
+      "question": "{\"password\": [\"pa\\\\\"]\", \"ss\"]}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a value holding a quote",
+    "turn": {
+      "question": "{\"password\": \"a\\\\\"b\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a line's end before the colon",
+    "turn": {
+      "question": "{\"password\"\\n: \"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\"\\n: \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a tab before the colon",
+    "turn": {
+      "question": "{\"password\"\\t: \"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\"\\t: \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: an escape in a key, its name read through it",
+    "turn": {
+      "question": "'{\"to\\\\u006ben\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"to\\\\u006ben\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a key whose name ends before escapes",
+    "turn": {
+      "question": "'{\"password\\\\uff08\\\\u5bc6\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\\\uff08\\\\u5bc6\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a key ending in a line's end",
+    "turn": {
+      "question": "'{\"password\\\\n\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\\\n\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: indented, only the value goes",
+    "turn": {
+      "question": "{\\n \"a\": {\\n  \"password\": \"abc\"\\n },\\n \"b\": \"public\"\\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\\n \"a\": {\\n  \"password\": \"[SECRET_1]\"\\n },\\n \"b\": \"public\"\\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: indented, a comma at a line's end",
+    "turn": {
+      "question": "[\\n  {\\n    \"password\": \"x\",\\n    \"note\": \"keep\"\\n  }\\n]"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "[\\n  {\\n    \"password\": \"[SECRET_1]\",\\n    \"note\": \"keep\"\\n  }\\n]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a value only the second reading finds has a plain quote",
+    "turn": {
+      "question": "{\"token\": [\"\\\\\"]\", 1], \"x\": \"y\\\\\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\": \"[SECRET_1]\", \"x\": \"y\\\\\"z\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: another value holding a quote doesn't change the result",
+    "turn": {
+      "question": "{\"password\": \"a\\\\\",b\", \"note\": \"c\\\\\" d\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"note\": \"c\\\\\" d\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: longer runs of backslashes",
+    "turn": {
+      "question": "{\"a\": \"x\\\\\\\\\"y\", \"token\": \"v\\\\\",w\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": \"x\\\\\\\\\"y\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: values found out of order",
+    "turn": {
+      "question": "{\"auth\":\"a\\\\\",\\\\\"hunter2\",\"token\":123}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"auth\":\"[SECRET_1]\",\"token\":\"[SECRET_2]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr inside JSON: a quote and a comma in its value",
+    "turn": {
+      "question": "{\"error\": \"upstream said '{\\\"password\\\": \\\"pa\\\\\\\\\\\",ss\\\"}'\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"error\": \"upstream said '{\\\"password\\\": \\\"[SECRET_1]\\\"}'\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr inside JSON: JSON in it, a comma in its value",
+    "turn": {
+      "question": "{\"error\": \"upstream said '{\\\"data\\\": \\\"{\\\\\\\\\\\"password\\\\\\\\\\\": \\\\\\\\\\\"pa,ss\\\\\\\\\\\"}\\\"}'\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"error\": \"upstream said '{\\\"data\\\": \\\"{\\\\\\\\\\\"password\\\\\\\\\\\": \\\"[SECRET_1]\\\"\\\\\\\\\\\"}\\\"}'\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: half encoded: a comma in its value",
+    "turn": {
+      "question": "{\"password\": \\\"abc, def\\\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"\\\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a doubled backslash ends a value",
+    "turn": {
+      "question": "{\"password\":\"x\\\\\",\"b\":\"y\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\",\"b\":\"y\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a doubled backslash ends a value and a key",
+    "turn": {
+      "question": "{\"token\":\"a\\\\\",\"\\\\\":1}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\":\"[SECRET_1]\",\"\\\\\":1}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: spaces before a closing bracket",
+    "turn": {
+      "question": "{ \"password\": \"x\" }"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{ \"password\": \"[SECRET_1]\" }",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a tab before a closing bracket",
+    "turn": {
+      "question": "{\"password\":\"x\"\t}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"\t}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a space before a closing bracket, a literal stays",
+    "turn": {
+      "question": "{ \"password\": null }"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{ \"password\": null }",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: carriage returns",
+    "turn": {
+      "question": "{\r\n  \"password\": \"x\"\r\n}\r\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\r\n  \"password\": \"[SECRET_1]\"\r\n}\r\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: JSON in a key ending in a secret name",
+    "turn": {
+      "question": "{\"{\\\"password\\\": \\\"hunter2\\\", \\\"kind\\\": \\\"auth\\\"}\": 1}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"{\\\"password\\\": \\\"[SECRET_1]\\\", \\\"kind\\\": \\\"auth\\\"}\": \"[SECRET_2]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: JSON in a key",
+    "turn": {
+      "question": "{\"{\\\"password\\\": \\\"hunter2\\\", \\\"kind\\\": \\\"x\\\"}\": 1}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"{\\\"password\\\": \\\"[SECRET_1]\\\", \\\"kind\\\": \\\"x\\\"}\": 1}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: hiding a value can make two keys the same",
+    "turn": {
+      "question": "{\"{\\\"password\\\": 12}\": \"first\", \"{\\\"password\\\": \\\"12\\\"}\": \"second\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"{\\\"password\\\": \\\"[SECRET_1]\\\"}\": \"first\", \"{\\\"password\\\": \\\"[SECRET_1]\\\"}\": \"second\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote and a comma in a value",
+    "turn": {
+      "question": "{\"password\":\"pa\",ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote and a closing brace in a value",
+    "turn": {
+      "question": "{\"password\":\"pa\"}ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote and a closing bracket in a value",
+    "turn": {
+      "question": "{\"password\":\"pa\"]ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting with a quote and a comma",
+    "turn": {
+      "question": "{\"password\":\"\",ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote and a colon in a value",
+    "turn": {
+      "question": "{\"password\":\"p4ss\":word\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote at a line's end ends the value",
+    "turn": {
+      "question": "{\"password\":\"pa\"\nss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"\nss\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a closing bracket and a space end the value",
+    "turn": {
+      "question": "{\"password\":\"pa\"} ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\"} ss\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a comma before a closing bracket ends the value",
+    "turn": {
+      "question": "{ \"password\": \"x\", }"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{ \"password\": \"[SECRET_1]\", }",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a comma at a line's end ends the value",
+    "turn": {
+      "question": "\"password\": \"abc\",\nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\",\nnext line",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a comma and prose are read with the value",
+    "turn": {
+      "question": "\"password\": \"abc\", and more"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a literal, a comma and prose stay",
+    "turn": {
+      "question": "\"token\": null, see the docs"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"token\": null, see the docs",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a colon after a literal is read with it",
+    "turn": {
+      "question": "\"password\": null: hunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a colon after a container is read with it",
+    "turn": {
+      "question": "\"password\":{\"a\":1}: hunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a container, a comma and prose",
+    "turn": {
+      "question": "\"password\": {\"a\":1}, see the docs"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\", see the docs",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a carriage return alone ends a value that isn't JSON",
+    "turn": {
+      "question": "\"password\": abc\rnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"\rnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: mismatched brackets take what follows",
+    "turn": {
+      "question": "{\"password\": [1, 2}, \"pin\": 1234}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: encoded four times, a string with a quote and a colon but no key stays",
+    "turn": {
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"he said \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hi\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\" at 10:30\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"id\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": 7}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"he said \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hi\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\" at 10:30\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"id\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": 7}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: encoded four times, a URL holding quotes stays",
+    "turn": {
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"url\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"https://x.y:8/?q=\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"url\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"https://x.y:8/?q=\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: encoded four times, a value holding a quote and a colon stays",
+    "turn": {
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"see: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"manual\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"n\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": 1}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": \"{\\\"a\\\": \\\"{\\\\\\\"a\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"note\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"see: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"manual\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\", \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"n\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": 1}\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a Windows path stays",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"C:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\tmp\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"C:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\tmp\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, quotes written as \\u0022",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0022password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0022:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0022hunter2\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0022\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a colon written as \\u003a",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u003a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hunter2\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a colon written as \\u003A",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u003A\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hunter2\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a space before the colon written as \\u0020",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0020:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hunter2\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a line's end before the colon, encoded",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\n:\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"hunter2\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a colon written as \\u003A",
+    "turn": {
+      "question": "\"{\\\"password\\\"\\u003A\\\"hunter2\\\"}\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"{\\\"password\\\"\\u003A\\\"[SECRET_1]\\\"}\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder written with escapes throughout is a value",
+    "turn": {
+      "question": "\"{\\\"password\\\":\\\"\\u005bSECRET_1\\u005d\\\"}\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"{\\\"password\\\":\\\"[SECRET_1]\\\"}\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: the longest placeholder stays",
+    "turn": {
+      "question": "{\"password\":\"[SECRET_123456789]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_123456789]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed, the same value gets one number",
+    "turn": {
+      "question": "{\"auth\":\"\\\\\"x\"}",
+      "answer": "{\"auth\":\"\\\\\"x\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"auth\":\"[SECRET_1]\"}",
+      "answer": "{\"auth\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value read in two parts gets a number each time",
+    "turn": {
+      "question": "\"apikey\\\\\":\\\\\"A}",
+      "answer": "\"apikey\\\\\":\\\\\"A}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"apikey\\\\\":\"[SECRET_1]\"",
+      "answer": "\"apikey\\\\\":\"[SECRET_2]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a string replaced past the limit gets a number each time",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"token\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\":1}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "answer": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"token\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\":1}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "answer": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_2]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that is also an email is a secret",
+    "turn": {
+      "question": "{\"token\": \"bob@example.com\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value holding an email is one secret",
+    "turn": {
+      "question": "{\"token\": \"bob@example.com:hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value starting exactly at the cut is neither replaced nor counted",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3990
+                  ]
+                },
+                "{\"token\":\"abc\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3990
+                  ]
+                },
+                "{\"token\":\"\u2026[+5 chars]"
+              ]
+            }
+          }
+        ]
+      },
+      "truncated": [
+        "result"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing keeps a string of exactly the limit whole",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3987
+                  ]
+                },
+                "{\"token\":\"a\"}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "x",
+                    3987
+                  ]
+                },
+                "{\"token\":\"[SECRET_1]\"}"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing counts astral characters as one each",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "\ud83d\ude00",
+                    3989
+                  ]
+                },
+                "{\"token\":0}"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$repeat": [
+                    "\ud83d\ude00",
+                    3989
+                  ]
+                },
+                "{\"token\":\"[SECRET_1]\"}"
+              ]
+            }
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a hook that changes nothing keeps a placeholder a comma and prose follow",
+    "turn": {
+      "question": "\"password\": hunter2, more text"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\", more text",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    },
+    "hook": {}
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON, a comma and prose",
+    "turn": {
+      "question": "\"password\": hunter2, more text"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\", more text",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value spelled as a placeholder ends there",
+    "turn": {
+      "question": "{\"password\":\"[SECRET_7]\",ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_7]\",ss\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: words before a colon in quotes",
+    "turn": {
+      "question": "PHP Parse error:  syntax error, unexpected token \":\", expecting \";\" in /var/www/html/index.php on line 14"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "PHP Parse error:  syntax error, unexpected token \":\", expecting \";\" in /var/www/html/index.php on line 14",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: the same message in JSON",
+    "turn": {
+      "question": "{\"error\": \"syntax error, unexpected token \\\":\\\", expecting \\\";\\\" in /var/www/html/index.php on line 14\", \"status\": 500}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"error\": \"syntax error, unexpected token \\\":\\\", expecting \\\";\\\" in /var/www/html/index.php on line 14\", \"status\": 500}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: a comparison with a colon",
+    "turn": {
+      "question": "if token == \":\":\n    parse_annotation(tokens, pos)\nelif token == \"=\":\n    parse_default(tokens, pos)\nreturn node\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "if token == \":\":\n    parse_annotation(tokens, pos)\nelif token == \"=\":\n    parse_default(tokens, pos)\nreturn node\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: an assignment of a colon",
+    "turn": {
+      "question": "secret = \":\".join(parts)\nreturn base64.b64encode(secret.encode()).decode()\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "secret = \":\".join(parts)\nreturn base64.b64encode(secret.encode()).decode()\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: a sentence about a colon",
+    "turn": {
+      "question": "The token \":\" separates the name from the value, and \",\" separates pairs."
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "The token \":\" separates the name from the value, and \",\" separates pairs.",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: an opening parenthesis before a colon",
+    "turn": {
+      "question": "colon: createToken(\":\", { beforeExpr }),\n  question: createToken(\"?\", { beforeExpr }),\n  dot: createToken(\".\"),\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "colon: createToken(\":\", { beforeExpr }),\n  question: createToken(\"?\", { beforeExpr }),\n  dot: createToken(\".\"),\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: a ternary around a colon",
+    "turn": {
+      "question": "(password ? \":\" + encodeURIComponent(password) : \"\")"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "(password ? \":\" + encodeURIComponent(password) : \"\")",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: other punctuation before a colon",
+    "turn": {
+      "question": "token=\":\", x[token[\":\"]], f(token,\":\"), token+\":\", $token.\":\", cout<<token<<\":\", token||\":\", token&&\":\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "token=\":\", x[token[\":\"]], f(token,\":\"), token+\":\", $token.\":\", cout<<token<<\":\", token||\":\", token&&\":\"",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a comparison, the next line",
+    "turn": {
+      "question": "if field == \"password\":\n    check_strength(value)\nelse:\n    store(field, value)\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "if field == \"password\":\n    check_strength(value)\nelse:\n    store(field, value)\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a return type, the next line",
+    "turn": {
+      "question": "def token(self) -> \"Token\":\n    return self._token\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "def token(self) -> \"Token\":\n    return self._token\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a case, the next line",
+    "turn": {
+      "question": "switch (field) {\n  case \"password\":\n    return hash(value);\n  default:\n    return value;\n}\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "switch (field) {\n  case \"password\":\n    return hash(value);\n  default:\n    return value;\n}\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a case on one line",
+    "turn": {
+      "question": "case \"cookie\": value = getCookie(c);"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "case \"cookie\": value = getCookie(c);",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a case and its block",
+    "turn": {
+      "question": "switch (kind) {\n  case \"auth\": {\n    const user = await load(req);\n    if (!user) throw new Error(\"no user\");\n    res.json({ id: user.id, plan: user.plan });\n    break;\n  }\n  case \"other\": {\n    res.json({ ok: true });\n    break;\n  }\n}\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "switch (kind) {\n  case \"auth\": {\n    const user = await load(req);\n    if (!user) throw new Error(\"no user\");\n    res.json({ id: user.id, plan: user.plan });\n    break;\n  }\n  case \"other\": {\n    res.json({ ok: true });\n    break;\n  }\n}\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: an attribute, then a bound one",
+    "turn": {
+      "question": "<input type=\"password\" :value=\"pw\" :disabled=\"busy\" @input=\"onInput\" class=\"field\" />"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "<input type=\"password\" :value=\"pw\" :disabled=\"busy\" @input=\"onInput\" class=\"field\" />",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a SQL cast",
+    "turn": {
+      "question": "SELECT \"users\".\"id\", \"users\".\"auth_token\"::text AS tok, \"users\".\"name\" FROM \"users\" WHERE \"users\".\"id\" = $1"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "SELECT \"users\".\"id\", \"users\".\"auth_token\"::text AS tok, \"users\".\"name\" FROM \"users\" WHERE \"users\".\"id\" = $1",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: an error quoting a URL",
+    "turn": {
+      "question": "Post \"https://login.example.io/oauth2/token\": net/http: TLS handshake timeout"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Post \"https://login.example.io/oauth2/token\": net/http: TLS handshake timeout",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: an error quoting a path",
+    "turn": {
+      "question": "open \"/run/secrets/db_password\": permission denied"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "open \"/run/secrets/db_password\": permission denied",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a space before the colon",
+    "turn": {
+      "question": "MountVolume.SetUp failed for volume \"aws-iam-token\" : failed to fetch token: serviceaccounts \"default\" is forbidden"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "MountVolume.SetUp failed for volume \"aws-iam-token\" : failed to fetch token: serviceaccounts \"default\" is forbidden",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: an error in a log line",
+    "turn": {
+      "question": "time=\"2026-11-05T10:00:00Z\" level=error msg=\"load failed\" err=\"open \\\"/etc/app/token\\\": no such file or directory\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "time=\"2026-11-05T10:00:00Z\" level=error msg=\"load failed\" err=\"open \\\"/etc/app/token\\\": no such file or directory\"",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a word before the key",
+    "turn": {
+      "question": "with \"password\": hunter2"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "with \"password\": hunter2",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a word before the key, a number",
+    "turn": {
+      "question": "with \"token\": 12345"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "with \"token\": 12345",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: a word before the key, a container",
+    "turn": {
+      "question": "with \"token\": {a: 1}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "with \"token\": {a: 1}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: a ternary's first branch",
+    "turn": {
+      "question": "<input type={hidden ? \"password\" : \"text\"} name=\"pw\" />"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "<input type={hidden ? \"password\" : \"text\"} name=\"pw\" />",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: ternaries on several lines",
+    "turn": {
+      "question": "const label = isLoggedIn ? \"auth\" : \"anon\";\nconst next = mode === \"a\" ? \"b\" : \"c\";\nconst title = kind === \"a\" ? \"Enter\" : \"Leave\";\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "const label = isLoggedIn ? \"auth\" : \"anon\";\nconst next = mode === \"a\" ? \"b\" : \"c\";\nconst title = kind === \"a\" ? \"Enter\" : \"Leave\";\n",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a key ending in a space",
+    "turn": {
+      "question": "{\"password \": \"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password \": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a key ending in a question mark",
+    "turn": {
+      "question": "{\"password?\": \"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password?\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a key ending in a period",
+    "turn": {
+      "question": "{\"Your password.\": \"hunter2\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"Your password.\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a key ending in a space, inside JSON",
+    "turn": {
+      "question": "{\"a\": \"{\\\"password \\\": \\\"hunter2\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": \"{\\\"password \\\": \\\"[SECRET_1]\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a backslash and a b in a key are text",
+    "turn": {
+      "question": "{\"\\\\bpassword\\\\b\":\"VALUE\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"\\\\bpassword\\\\b\":\"VALUE\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a regular expression as a key",
+    "turn": {
+      "question": "{\"rules\":{\"\\\\bapi[_-]?key\\\\b\":\"mask\",\"\\\\d+\":\"keep\"}}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"rules\":{\"\\\\bapi[_-]?key\\\\b\":\"mask\",\"\\\\d+\":\"keep\"}}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a backslash and an n in a key are text",
+    "turn": {
+      "question": "{\"Enter your password\\\\n\":\"VALUE\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"Enter your password\\\\n\":\"VALUE\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a key ending in a bracket",
+    "turn": {
+      "question": "Result: {\"user[password]\": \"hunter2\"} ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Result: {\"user[password]\": \"[SECRET_1]\"} ok",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a word before a quoted value",
+    "turn": {
+      "question": "Login with \"password\": \"hunter2\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Login with \"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a value that isn't JSON after an opening bracket",
+    "turn": {
+      "question": "{\"password\": hunter2}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a value that isn't JSON after a comma",
+    "turn": {
+      "question": "{\"a\": 1, \"password\": hunter2}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\": 1, \"password\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a value that isn't JSON at a line's start",
+    "turn": {
+      "question": "first\n  \"password\": correct horse\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "first\n  \"password\": \"[SECRET_1]\"\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: in prose: a value that isn't JSON after a parenthesis",
+    "turn": {
+      "question": "dict((\"password\": hunter2))"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "dict((\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a string cut in its key: a value that isn't JSON",
+    "turn": {
+      "question": "token\": abc, \"keep\": \"x\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "token\": \"[SECRET_1]\", \"keep\": \"x\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value's first line may be empty, its quote not yet seen",
+    "turn": {
+      "question": "\"password\": \"\nabc\", \"keep\": \"x\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\", \"keep\": \"x\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a container in code, a call in it",
+    "turn": {
+      "question": "\"auth\": {\n  a: f(\"x\");\n  b: 2\n}\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"auth\": \"[SECRET_1]\"\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: null before a line's end",
+    "turn": {
+      "question": "'{\\n  \"password\": null\\n}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\\n  \"password\": null\\n}'",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: true before a line's end",
+    "turn": {
+      "question": "'{\\n  \"password\": true\\n}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\\n  \"password\": true\\n}'",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: an empty array before a line's end",
+    "turn": {
+      "question": "'{\\n  \"password\": []\\n}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\\n  \"password\": []\\n}'",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a number before a line's end",
+    "turn": {
+      "question": "'{\\n  \"password\": 12345\\n}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\\n  \"password\": \"[SECRET_1]\"\\n}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a container before a line's end",
+    "turn": {
+      "question": "'{\\n  \"password\": {\"a\": 1}\\n}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\\n  \"password\": \"[SECRET_1]\"\\n}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr, in valid JSON: null before a line's end",
+    "turn": {
+      "question": "{\"log\":\"'{\\\\n  \\\"password\\\": null\\\\n}'\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"log\":\"'{\\\\n  \\\"password\\\": null\\\\n}'\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a key ending in \\xHH",
+    "turn": {
+      "question": "'{\"password\\xa0\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\xa0\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by ascii: a key ending in \\UHHHHHHHH",
+    "turn": {
+      "question": "'{\"password\\U0001f642\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\U0001f642\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by util.inspect: a key ending in \\xHH in capitals",
+    "turn": {
+      "question": "'{\"password\\x7F\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\x7F\": \"[SECRET_1]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed: \\U past the last code point isn't an escape",
+    "turn": {
+      "question": "'{\"password\\U00110000\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"password\\U00110000\": \"hunter2\"}'",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed: \\x without two digits isn't an escape",
+    "turn": {
+      "question": "'{\"passwordx\\xg\": \"hunter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'{\"passwordx\\xg\": \"hunter2\"}'",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: folded between a key and its colon",
+    "turn": {
+      "question": "status: 200\nresponse: \"{\\n  \\\"password\\\"\\\n  : \\\"CANARY-pw\\\",\\n  \\\"keep\\\": 1}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "status: 200\nresponse: \"{\\n  \\\"password\\\"\\\n  : \\\"[SECRET_1]\\\",\\n  \\\"keep\\\": 1}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: folded after a colon, the next line's space escaped",
+    "turn": {
+      "question": "status: 200\nresponse: \"{\\\"client_secret\\\":\\\n  \\ \\\"CANARY\\\", \\\"keep\\\": 1}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "status: 200\nresponse: \"{\\\"client_secret\\\":\\\n  \\ \\\"[SECRET_1]\\\", \\\"keep\\\": 1}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: folded after a value",
+    "turn": {
+      "question": "r: \"{\\\"refresh_token\\\": \\\"CANARY\\\"\\\n  , \\\"keep\\\": \\\"x\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"refresh_token\\\": \\\"[SECRET_1]\\\"\\\n  , \\\"keep\\\": \\\"x\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: folded with a carriage return and a line feed",
+    "turn": {
+      "question": "r: \"{\\\"token\\\"\\\r\n  : \\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"token\\\"\\\r\n  : \\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr inside JSON three times over: a comma in its value",
+    "turn": {
+      "question": "{\"x\": \"{\\\"x\\\": \\\"{\\\\\\\"x\\\\\\\": \\\\\\\"'{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a,b\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\"}'\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"x\": \"{\\\"x\\\": \\\"{\\\\\\\"x\\\\\\\": \\\\\\\"'{\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\"}'\\\\\\\"}\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr inside JSON four times over: a comma in its value",
+    "turn": {
+      "question": "{\"x\": \"{\\\"x\\\": \\\"{\\\\\\\"x\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"'{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a,b\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}'\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"x\": \"{\\\"x\\\": \\\"{\\\\\\\"x\\\\\\\": \\\\\\\"{\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\"'{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"a\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\",b\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}'\\\\\\\\\\\\\\\"}\\\\\\\"}\\\"}\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed twice: read decoded once only, so part of the value stays",
+    "turn": {
+      "question": "'\\'{\"a\": \"{\\\\\\\\\"password\\\\\\\\\": \\\\\\\\\"a,b\\\\\\\\\"}\"}\\''"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "'\\'{\"a\": \"{\\\\\\\\\"password\\\\\\\\\": \"[SECRET_1]\",b\\\\\\\\\"}\"}\\''",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed, in JSON, printed: read decoded once per chain",
+    "turn": {
+      "question": "'{\"a\": \"\\'{\\\\\"b\\\\\": \\\\\"{\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\": \\\\\\\\\\\\\\\\\\\\\"a,b\\\\\\\\\\\\\\\\\\\\\"}\\\\\"}\\'\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "'{\"a\": \"\\'{\\\\\"b\\\\\": \\\\\"{\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\": \"[SECRET_1]\",b\\\\\\\\\\\\\\\\\\\\\"}\\\\\"}\\'\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr inside JSON: a container only the second reading finds has a quote of its level",
+    "turn": {
+      "question": "{\"a\": \"'{\\\"password\\\": {\\\"b\\\": \\\"c\\\\\\\\\\\",}\\\"}}'\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"a\": \"'{\\\"password\\\": \\\"[SECRET_1]\\\"}'\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string holding a value that isn't JSON",
+    "turn": {
+      "question": "\"\\\"password\\\": abc\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"password\\\": \\\"[SECRET_1]\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: an array holding a value that isn't JSON",
+    "turn": {
+      "question": "[\"\\\"password\\\": abc\"]"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "[\"\\\"password\\\": \\\"[SECRET_1]\\\"\"]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: whitespace before it, a doubled backslash ends a value",
+    "turn": {
+      "question": "\n{\"token\": \"back\\\\\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\n{\"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: NaN isn't JSON, in either language",
+    "turn": {
+      "question": "{\"n\": NaN, \"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"n\": NaN, \"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a very long integer is JSON, in either language",
+    "turn": {
+      "question": {
+        "$concat": [
+          "{\"n\":",
+          {
+            "$repeat": [
+              "1",
+              5000
+            ]
+          },
+          ",\"password\":\"y\\\\\",\"b\":\"z\"}"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": {
+        "$concat": [
+          "{\"n\":",
+          {
+            "$repeat": [
+              "1",
+              5000
+            ]
+          },
+          ",\"password\":\"[SECRET_1]\",\"b\":\"z\"}"
+        ]
+      },
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a line feed in a string isn't JSON, in either language",
+    "turn": {
+      "question": "{\"n\": \"a\nb\", \"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"n\": \"a\nb\", \"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: brackets nested too deep for Python's parser aren't an error",
+    "turn": {
+      "question": {
+        "$concat": [
+          {
+            "$repeat": [
+              "[",
+              20000
+            ]
+          },
+          "\"a\":\"\\\\\""
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": {
+        "$concat": [
+          {
+            "$repeat": [
+              "[",
+              16000
+            ]
+          },
+          "\u2026[+4008 chars]"
+        ]
+      },
+      "status": "completed",
+      "truncated": [
+        "question"
+      ]
+    }
+  },
+  {
+    "name": "JSON in a string: a key is read decoded, not as written",
+    "turn": {
+      "question": "{\"toke\\n\":\"v\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"toke\\n\":\"v\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a space before the colon",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\" : \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a tab before the colon",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\t: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a carriage return before the colon",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\r: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a line feed before the colon",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\n: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a line's end before the colon, encoded twice",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\n: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a carriage return before the colon, encoded",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\r: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a tab before the colon, encoded",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\t: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a space before the colon written as \\u0020, encoded twice",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0020: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a tab before the colon written as \\u0009",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u0009: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a line feed before the colon written as \\u000a",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u000a: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a line feed before the colon written as \\u000A",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u000A: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a carriage return before the colon written as \\u000d",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u000d: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a carriage return before the colon written as \\u000D",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u000D: \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, two spaces before the colon",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"  : \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: past the limit, a colon written as \\u003a, encoded twice",
+    "turn": {
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"{\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"password\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\u003a \\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"x\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"}\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"\\\"\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"[SECRET_1]\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"\\\\\\\\\\\\\\\"\\\\\\\"\\\"\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a comma at the string's end ends the value",
+    "turn": {
+      "question": "{\"password\":\"abc\","
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]\",",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a comma before a closing square bracket ends a string in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",\"b\",]}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string before a negative number in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",-1],\"note\":\"keep\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\",\"note\":\"keep\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string before 0 in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",0],\"note\":\"keep\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\",\"note\":\"keep\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string before 9 in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",9],\"note\":\"keep\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\",\"note\":\"keep\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string before true in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",true],\"note\":\"keep\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\",\"note\":\"keep\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: valid JSON: a string before null in a container",
+    "turn": {
+      "question": "{\"passwords\":[\"a\",null],\"note\":\"keep\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"passwords\":\"[SECRET_1]\",\"note\":\"keep\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: lines ending in a carriage return and a line feed",
+    "turn": {
+      "question": "{\\r\\n  \"password\": \"abc\"\\r\\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\\r\\n  \"password\": \"[SECRET_1]\"\\r\\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a quote and a closing bracket before a digit or letter, at each end of the ranges, are read with the value",
+    "turn": {
+      "question": "{\"password\":\"pa\"}0x\"}9x\"}Ax\"}Zx\"}ax\"}zx\"]1y\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a closing bracket before an underscore ends the value",
+    "turn": {
+      "question": "{\"password\":\"pa\"}_ss\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]\"}_ss\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a line of JSON, its printed line's end after the closing bracket",
+    "turn": {
+      "question": "'{\"password\": \"x\"}\\n'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "'{\"password\": \"[SECRET_1]\"}\\n'",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a literal before a carriage return stays",
+    "turn": {
+      "question": "{\"password\": true\r\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\": true\r\n}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a literal before a closing square bracket stays",
+    "turn": {
+      "question": "[\"password\": null]"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "[\"password\": null]",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a value holding a quote and a closing brace, before another",
+    "turn": {
+      "question": "'{\"password\": \"pa\\\\\"}\", \"token\": \"y\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "'{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_2]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: half encoded: of two readings from one place, the longer gives the quote",
+    "turn": {
+      "question": "{\"password\\\" : [1 , \"x\"]}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\\\" : \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: half encoded: two readings that only touch stay two values",
+    "turn": {
+      "question": "\"token\": \\\", "
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "\"token\": \"[SECRET_1]\"[SECRET_2]",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a value read in two parts doesn't share a number with the same text elsewhere",
+    "turn": {
+      "question": "'{\"config\": \"{\\\\\"password\\\\\": \\\\\"hun,ter2\\\\\"}\", \"token\": \"hun,ter2\"}'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "'{\"config\": \"{\\\\\"password\\\\\": \"[SECRET_1]\"\\\\\"}\", \"token\": \"[SECRET_2]\"}'",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: printed by repr: a tab after a closing quote isn't a line's end",
+    "turn": {
+      "question": "{\"password\":\"a\"\\t}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value spelled as an email placeholder stays",
+    "turn": {
+      "question": "{\"password\":\"[EMAIL_7]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[EMAIL_7]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a value spelled as a phone placeholder stays",
+    "turn": {
+      "question": "{\"password\":\"[PHONE_7]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[PHONE_7]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a value spelled as a card placeholder stays",
+    "turn": {
+      "question": "{\"password\":\"[CARD_7]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[CARD_7]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a value spelled as an IP placeholder stays",
+    "turn": {
+      "question": "{\"password\":\"[IP_7]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[IP_7]\"}",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder with ten digits is a value",
+    "turn": {
+      "question": "{\"password\":\"[IP_1234567890]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder with no digits is a value",
+    "turn": {
+      "question": "{\"password\":\"[SECRET_]\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "kind": "turn",
+      "source": "live",
+      "question": "{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a number with an exponent is JSON",
+    "turn": {
+      "question": "{\"n\": -1.5e+3, \"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"n\": -1.5e+3, \"password\":\"[SECRET_1]\",\"b\":\"z\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a leading zero isn't JSON",
+    "turn": {
+      "question": "{\"n\": 01, \"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"n\": 01, \"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a lone surrogate escape is JSON",
+    "turn": {
+      "question": "{\"n\": \"\\ud800\", \"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"n\": \"\\ud800\", \"password\":\"[SECRET_1]\",\"b\":\"z\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a form feed outside a string isn't JSON",
+    "turn": {
+      "question": "\f{\"password\":\"y\\\\\",\"b\":\"z\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\f{\"password\":\"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a trailing comma isn't JSON",
+    "turn": {
+      "question": "{\"password\":\"y\\\\\",\"b\":\"z\",}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\":\"[SECRET_1]\",}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: util.inspect's lines: a number",
+    "turn": {
+      "question": "{\n  body: '{\\n' +\n    '  \"apiKey\": 1234.5,\\n' +\n    '  \"n\": 1\\n' +\n    '}'\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\n  body: '{\\n' +\n    '  \"apiKey\": \"[SECRET_1]\",\\n' +\n    '  \"n\": 1\\n' +\n    '}'\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON after an elision",
+    "turn": {
+      "question": "Unexpected token 'Q', ...\"password\":Qabc\"... is not valid JSON"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Unexpected token 'Q', ...\"password\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON in a list",
+    "turn": {
+      "question": "- \"token\": 1234.5\n- \"x\": 1\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "- \"token\": \"[SECRET_1]\"\n- \"x\": 1\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON in a table",
+    "turn": {
+      "question": "| \"token\": 1234.5 | x |"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "| \"token\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON after a log's prefix",
+    "turn": {
+      "question": "ERROR app: \"password\": hunter2\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "ERROR app: \"password\": \"[SECRET_1]\"\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON after a diff's plus",
+    "turn": {
+      "question": "+  \"token\": 12345,\n-  \"token\": 54321,\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "+  \"token\": \"[SECRET_1]\",\n-  \"token\": \"[SECRET_2]\",\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key wrapped at its end",
+    "turn": {
+      "question": "{\"a\":\"b\",\"client_secret\n\":\"hunter2\",\"c\":\"d\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"a\":\"b\",\"client_secret\n\":\"[SECRET_1]\",\"c\":\"d\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value that isn't JSON on a quoted line",
+    "turn": {
+      "question": "> \"token\": 1234.5\n> next"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "> \"token\": \"[SECRET_1]\"\n> next",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a placeholder that ended a value at its line stays, as a hook's event is read again",
+    "turn": {
+      "question": "\"password\": \"[SECRET_1]\nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\nnext line",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a value holding a quote stops at a line starting with a quote",
+    "turn": {
+      "question": "\"password\": \"a\" foo\n  \"token\": \"b\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\n  \"token\": \"[SECRET_2]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value holding a quote stops at a line starting with a closing bracket",
+    "turn": {
+      "question": "{\"password\": \"a\" foo\r\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\r\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value holding a quote runs on through other lines",
+    "turn": {
+      "question": "\"password\": \"x\" and more\nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a multi-line value holding a quote, built by hand",
+    "turn": {
+      "question": "{\"user\": \"bob\", \"secret\": \"DB_USER=bob\nDB_PASS=\"QZ\" # main\nAPI_KEY=QZ2\n\", \"plan\": \"pro\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"user\": \"bob\", \"secret\": \"[SECRET_1]\n\", \"plan\": \"pro\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a printed line's end doesn't stop a value holding a quote",
+    "turn": {
+      "question": "\"password\": \"a\"b\\nc\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value in inline code",
+    "turn": {
+      "question": "Set `\"password\": \"hunter2x\"` in your config, then restart.\nThe rest stays."
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Set `\"password\": \"[SECRET_1]\"` in your config, then restart.\nThe rest stays.",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value before a period",
+    "turn": {
+      "question": "Rejected field \"password\": \"hunter2x\".\nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Rejected field \"password\": \"[SECRET_1]\".\nnext line",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value in parentheses",
+    "turn": {
+      "question": "Bad pair (\"password\": \"x\") in request 77"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Bad pair (\"password\": \"[SECRET_1]\") in request 77",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value before a semicolon",
+    "turn": {
+      "question": "\"password\": \"x\"; next"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"; next",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value before a single quote",
+    "turn": {
+      "question": "'\"password\": \"x\"' ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "'\"password\": \"[SECRET_1]\"' ok",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a value before several of those",
+    "turn": {
+      "question": "f(\"password\": \"x\");\nnext"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "f(\"password\": \"[SECRET_1]\");\nnext",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a period with a word straight after it doesn't end a value",
+    "turn": {
+      "question": "\"password\": \"a\".b\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a space, in a string cut",
+    "turn": {
+      "question": "{\"password \": \"CANARY\", \"note\": \"xxxx"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password \": \"[SECRET_1]\", \"note\": \"xxxx",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a space, in prose",
+    "turn": {
+      "question": "see {\"password \": \"x\"} ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see {\"password \": \"[SECRET_1]\"} ok",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a question mark, after a comma, in prose",
+    "turn": {
+      "question": "see {\"a\": 1, \"password?\": \"x\"} ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see {\"a\": 1, \"password?\": \"[SECRET_1]\"} ok",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a period, on its own line, in prose",
+    "turn": {
+      "question": "see {\n  \"password.\": \"x\"\n} ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see {\n  \"password.\": \"[SECRET_1]\"\n} ok",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in a space",
+    "turn": {
+      "question": "see password \": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password \": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in a tab",
+    "turn": {
+      "question": "see password\t\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password\t\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in =",
+    "turn": {
+      "question": "see password=\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password=\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in (",
+    "turn": {
+      "question": "see password(\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password(\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in [",
+    "turn": {
+      "question": "see password[\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password[\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in +",
+    "turn": {
+      "question": "see password+\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password+\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in ?",
+    "turn": {
+      "question": "see password?\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password?\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in a comma",
+    "turn": {
+      "question": "see password,\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password,\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in a period",
+    "turn": {
+      "question": "see password.\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password.\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in <",
+    "turn": {
+      "question": "see password<\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password<\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in |",
+    "turn": {
+      "question": "see password|\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password|\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: text ending in &",
+    "turn": {
+      "question": "see password&\": \"x\" ok"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see password&\": \"x\" ok",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in other punctuation",
+    "turn": {
+      "question": "see \"password:\": \"a\", \"password)\": \"b\", \"password]\": \"c\", \"password_\": \"d\", \"password-\": \"e\", \"password>\": \"f\", \"password*\": \"g\", \"password;\": \"h\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "see \"password:\": \"[SECRET_1]\", \"password)\": \"[SECRET_2]\", \"password]\": \"[SECRET_3]\", \"password_\": \"[SECRET_4]\", \"password-\": \"[SECRET_5]\", \"password>\": \"[SECRET_6]\", \"password*\": \"[SECRET_7]\", \"password;\": \"[SECRET_8]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 8
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key after a sentence's question mark",
+    "turn": {
+      "question": "Why does this fail? \"password\": \"hunter2\", \"user\": \"bob\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Why does this fail? \"password\": \"[SECRET_1]\", \"user\": \"bob\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: not a key: a ternary touching its quote",
+    "turn": {
+      "question": "a?\"token\":\"x\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "a?\"token\":\"x\"",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a line number before a key",
+    "turn": {
+      "question": "     2\t  \"cookies\": [\n     3\t    \"a\"\n     4\t  ],\n     5\t  \"n\": 1\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "     2\t  \"cookies\": \"[SECRET_1]\",\n     5\t  \"n\": 1\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a line number before a key, a number",
+    "turn": {
+      "question": "     3\t  \"token\": 7370737,\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "     3\t  \"token\": \"[SECRET_1]\",\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a timestamp before a key",
+    "turn": {
+      "question": "2026-11-05T12:00:00.1234567Z   \"token\": 7370737,\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "2026-11-05T12:00:00.1234567Z   \"token\": \"[SECRET_1]\",\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a colour code before a key",
+    "turn": {
+      "question": "\u001b[32m  \"token\": 7370737,\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\u001b[32m  \"token\": \"[SECRET_1]\",\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a numbered list before a key",
+    "turn": {
+      "question": "1. \"token\": 7370737\n2. \"a\": 1\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "1. \"token\": \"[SECRET_1]\"\n2. \"a\": 1\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: dots for line ends before a key",
+    "turn": {
+      "question": "0000: {.  \"token\": 7370737,.  \"b\": 1"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "0000: {.  \"token\": \"[SECRET_1]\",.  \"b\": 1",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a bytes key",
+    "turn": {
+      "question": "{b\"token\": 7370737}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{b\"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: an elision of two dots before a key",
+    "turn": {
+      "question": "a.. \"password\":abc"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "a.. \"password\":\"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: straight after =>",
+    "turn": {
+      "question": "x => \"token\": y"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "x => \"token\": y",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: straight after a sentence's period",
+    "turn": {
+      "question": "Failed. \"token\": y"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "Failed. \"token\": y",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: straight after a tab and a word",
+    "turn": {
+      "question": "word\t\"password\": 5"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "word\t\"password\": 5",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: not a value: straight after a word and backslashes",
+    "turn": {
+      "question": "word \\\\\\\\\"password\": 5"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "word \\\\\\\\\"password\": 5",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: no opening quote before a key, after another",
+    "turn": {
+      "question": "\"password\": 12, token\": 5"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": \"[SECRET_1]\", token\": \"[SECRET_2]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a number before a printed line's end",
+    "turn": {
+      "question": "{\"password\": 5\\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"\\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a decimal before a printed line's end",
+    "turn": {
+      "question": "{\"password\": 1.5\\n}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\"\\n}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a literal before a real line's end",
+    "turn": {
+      "question": "\"password\": true\nnext line"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password\": true\nnext line",
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\N",
+    "turn": {
+      "question": "---\nresponse: \"{\\\"password\\N\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "---\nresponse: \"{\\\"password\\N\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\_",
+    "turn": {
+      "question": "r: \"{\\\"password\\_\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\_\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\L",
+    "turn": {
+      "question": "r: \"{\\\"password\\L\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\L\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\P",
+    "turn": {
+      "question": "r: \"{\\\"password\\P\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\P\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\e",
+    "turn": {
+      "question": "r: \"{\\\"password\\e\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\e\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\a",
+    "turn": {
+      "question": "r: \"{\\\"password\\a\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\a\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\v",
+    "turn": {
+      "question": "r: \"{\\\"password\\v\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\v\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: YAML: a key ending in \\0",
+    "turn": {
+      "question": "r: \"{\\\"password\\0\\\":\\\"CANARY\\\"}\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "r: \"{\\\"password\\0\\\":\\\"[SECRET_1]\\\"}\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: \\ and a space",
+    "turn": {
+      "question": "{\"password\": \"a\\ b\", \"token\": \"a b\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: a folded line",
+    "turn": {
+      "question": "{\"password\": \"a\\\nb\", \"token\": \"ab\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: a folded line, with a carriage return",
+    "turn": {
+      "question": "{\"password\": \"a\\\r\nb\", \"token\": \"ab\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: a folded line's indentation",
+    "turn": {
+      "question": "{\"password\": \"a\\\n \t b\", \"token\": \"ab\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: \\U",
+    "turn": {
+      "question": "{\"password\": \"\\U0001F600\", \"token\": \"\ud83d\ude00\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: numbered as decoded: \\x",
+    "turn": {
+      "question": "{\"password\": \"\\x41\", \"token\": \"A\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\": \"[SECRET_1]\", \"token\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in the last code point",
+    "turn": {
+      "question": "{\"password\\U0010FFFF\": \"x\"}"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "{\"password\\U0010FFFF\": \"[SECRET_1]\"}",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a long key's end is read",
+    "turn": {
+      "question": {
+        "$concat": [
+          "{\"",
+          {
+            "$repeat": [
+              "x",
+              300
+            ]
+          },
+          "password\": \"v\"}"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": {
+        "$concat": [
+          "{\"",
+          {
+            "$repeat": [
+              "x",
+              300
+            ]
+          },
+          "password\": \"[SECRET_1]\"}"
+        ]
+      },
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key's name further than that from its end isn't read",
+    "turn": {
+      "question": {
+        "$concat": [
+          "{\"password",
+          {
+            "$repeat": [
+              "-",
+              300
+            ]
+          },
+          "\": \"v\"}"
+        ]
+      }
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": {
+        "$concat": [
+          "{\"password",
+          {
+            "$repeat": [
+              "-",
+              300
+            ]
+          },
+          "\": \"v\"}"
+        ]
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a space, at the string's start",
+    "turn": {
+      "question": "\"password \": \"CANARY\"\n"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"password \": \"[SECRET_1]\"\n",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a question mark, at the string's start, after a space",
+    "turn": {
+      "question": " \"password?\": \"CANARY\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": " \"password?\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "JSON in a string: a key ending in a period, on a later line",
+    "turn": {
+      "question": "\"a\": 1\n\"password.\": \"CANARY\""
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "\"a\": 1\n\"password.\": \"[SECRET_1]\"",
+      "status": "completed",
+      "redactions": {
+        "secret": 1
+      }
+    }
   }
 ]

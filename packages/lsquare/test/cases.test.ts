@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { validateEvent } from '../../contract/src/validate.js'
-import { buildCall, buildTurn, type CallRecord, type Context } from '../src/event.js'
+import { afterHook, buildCall, buildTurn, type Built, type CallRecord, type Context } from '../src/event.js'
 import { resolveKeys, resolvePatterns } from '../src/redact.js'
 
 const dir = fileURLToPath(new URL('../../contract/cases/', import.meta.url))
@@ -15,6 +15,7 @@ interface Case {
   turn?: Record<string, unknown>
   call?: Record<string, unknown>
   options?: { redact?: false | Record<string, boolean>; redactKeys?: unknown }
+  hook?: { seen?: Record<string, unknown> }
   event?: Record<string, unknown>
   error?: string
 }
@@ -35,14 +36,22 @@ function expand(value: unknown): unknown {
   return Object.fromEntries(Object.entries(object).map(([key, item]) => [key, expand(item)]))
 }
 
-function build(test: Case) {
+function build(test: Case): Built {
   const context: Context = {
     sdk: { name: 'lsquare', version: '0.2.0', language: 'js' },
     patterns: resolvePatterns(test.options?.redact),
     redactKeys: resolveKeys(test.options?.redactKeys),
     maxEventBytes: 256 * 1024,
   }
-  if (test.turn) return buildTurn(expand(test.turn), CAPTURED_AT, context, false)
+  const withHook = (built: Built): Built => {
+    if (test.hook === undefined || !built.ok) return built
+    const seen = expand(test.hook.seen ?? {}) as Record<string, unknown>
+    const given = structuredClone(built.draft.event) as unknown as Record<string, unknown>
+    for (const [field, value] of Object.entries(seen)) expect(given[field]).toEqual(value)
+    return afterHook(given, built.draft, context)
+  }
+  const hook = test.hook !== undefined
+  if (test.turn) return withHook(buildTurn(expand(test.turn), CAPTURED_AT, context, hook))
   const { input, result, ...rest } = expand(test.call) as Record<string, unknown>
   const record = {
     callId: 'case-call',
@@ -56,7 +65,7 @@ function build(test: Case) {
     ...(input === undefined ? {} : { input: { value: input } }),
     ...(result === undefined ? {} : { result: { value: result } }),
   } as CallRecord
-  return buildCall(record, context, false)
+  return withHook(buildCall(record, context, hook))
 }
 
 const files = readdirSync(dir).filter((name) => name.endsWith('.json')).sort()
