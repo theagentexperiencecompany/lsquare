@@ -9,7 +9,7 @@ cache and the token, which files a release publishes, and which pull requests sk
 - No checkout keeps the token.
 - Every job that takes the Python package takes python-build's artifact by its ID, checked first,
   and its files by the SHA-256s python-build recorded once its pinned build and checks were done.
-- The `changes` step, run on scratch repositories: only a pull request into sdk-v0 that changes
+- The `changes` step, run on scratch repositories: only a pull request into main that changes
   Markdown alone, and not packages/contract/REDACTION.md, skips the test suites.
 - Every job that runs the workspaces' code builds packages/contract first, and a pull request that
   changes it must raise its version, by which LSquare's ingestion takes it: checked in a job
@@ -211,17 +211,17 @@ TREE = {"README.md": "x\n", "a.ts": "x\n", "packages/contract/REDACTION.md": "x\
 @pytest.mark.parametrize(
     ("event", "base_ref", "change", "code"),
     [
-        pytest.param("pull_request", "sdk-v0", "echo more >> README.md", "false", id="a README alone, into sdk-v0"),
-        pytest.param("pull_request", "sdk-v0", "echo more >> README.md && echo more >> a.ts", "true", id="code too, into sdk-v0"),
-        pytest.param("pull_request", "sdk-v0", "echo more >> packages/contract/REDACTION.md", "true", id="the redaction spec, which the tests read"),
-        pytest.param("pull_request", "sdk-v0", "git rm -q packages/contract/REDACTION.md", "true", id="the redaction spec deleted"),
-        pytest.param("pull_request", "sdk-v0", "git mv packages/contract/REDACTION.md docs/REDACTION.md", "true", id="the redaction spec moved"),
-        pytest.param("pull_request", "sdk-v0", "echo more >> docs/packages/contract/REDACTION.md", "false", id="another file of that name"),
+        pytest.param("pull_request", "main", "echo more >> README.md", "false", id="a README alone, into main"),
+        pytest.param("pull_request", "main", "echo more >> README.md && echo more >> a.ts", "true", id="code too, into main"),
+        pytest.param("pull_request", "main", "echo more >> packages/contract/REDACTION.md", "true", id="the redaction spec, which the tests read"),
+        pytest.param("pull_request", "main", "git rm -q packages/contract/REDACTION.md", "true", id="the redaction spec deleted"),
+        pytest.param("pull_request", "main", "git mv packages/contract/REDACTION.md docs/REDACTION.md", "true", id="the redaction spec moved"),
+        pytest.param("pull_request", "main", "echo more >> docs/packages/contract/REDACTION.md", "false", id="another file of that name"),
         pytest.param("pull_request", "feature", "echo more >> README.md", "true", id="a README alone, into another branch"),
         pytest.param("pull_request", "", "echo more >> README.md", "true", id="a README alone, no base branch"),
         pytest.param("push", "", "echo more >> README.md", "true", id="a push"),
         pytest.param("release", "", "echo more >> README.md", "true", id="a release"),
-        pytest.param("unknown base", "sdk-v0", "echo more >> README.md", "true", id="a base the checkout doesn't have"),
+        pytest.param("unknown base", "main", "echo more >> README.md", "true", id="a base the checkout doesn't have"),
     ],
 )
 def test_which_pull_requests_skip_the_test_suites(tmp_path: Path, event: str, base_ref: str, change: str, code: str) -> None:

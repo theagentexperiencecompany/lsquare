@@ -37,7 +37,7 @@ def run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "INDEX": "pypi",
         "RECOVER": "false",
         "COMMIT": "",
-        "GITHUB_REF": "refs/heads/sdk-v0",
+        "GITHUB_REF": "refs/heads/main",
         "GITHUB_SHA": SHA,
         "GITHUB_REPOSITORY": "owner/repo",
         "GH_TOKEN": "token",
@@ -188,9 +188,9 @@ class TestPreflight:
 
     def test_refuses_another_branch_and_a_version_that_isnt_the_sources(self, monkeypatch: pytest.MonkeyPatch) -> None:
         answering(monkeypatch, {index_url(): (404, None), TAG_URL: (404, None)})
-        monkeypatch.setenv("GITHUB_REF", "refs/heads/sdk-v0.2")
+        monkeypatch.setenv("GITHUB_REF", "refs/heads/main.2")
         fails(release_check.preflight)
-        monkeypatch.setenv("GITHUB_REF", "refs/heads/sdk-v0")
+        monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
         monkeypatch.setattr(release_check, "source_version", lambda: "0.2.0b2.dev0")
         fails(release_check.preflight)
 

@@ -3,7 +3,7 @@
 # calls stop being recorded; and the Python wrapper's, against the newest mcp 1.x and 2.x and
 # fastmcp 3.x and 4.x on PyPI (Python spec, section 8), one job per line. A failure, or a run that
 # hangs and is cancelled, posts to the maintainers' alerts channel through the LSQUARE_ALERTS_WEBHOOK secret. Both
-# jobs run releases nobody has vetted, and whatever they install, on sdk-v0: their checkouts keep no
+# jobs run releases nobody has vetted, and whatever they install, on main: their checkouts keep no
 # token, and they get no cache access, so nothing run here can write a cache that pull requests and
 # pushes restore. Code there can still reach each job's own GITHUB_TOKEN, read-only, while the job
 # runs (by rewriting a later step's action files).

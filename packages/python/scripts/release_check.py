@@ -36,7 +36,7 @@ from typing import Any, NoReturn
 NAME = "lsquare"
 #: The only versions released until launch: 0.2.0's betas, written as PEP 440 normalizes them.
 RELEASABLE = re.compile(r"0\.2\.0b[1-9][0-9]*")
-BRANCH = "refs/heads/sdk-v0"
+BRANCH = "refs/heads/main"
 #: Each index's JSON API and the simple index pip reads.
 INDEXES = {
     "testpypi": ("https://test.pypi.org/pypi", "https://test.pypi.org/simple/"),
@@ -219,12 +219,12 @@ def preflight() -> None:
     version, index, recover = inputs()
     ref = os.environ.get("GITHUB_REF", "")
     if ref != BRANCH:
-        fail(f"run this workflow from sdk-v0, not {ref or 'an unknown ref'}")
+        fail(f"run this workflow from main, not {ref or 'an unknown ref'}")
     commit, sha = os.environ.get("COMMIT", ""), os.environ.get("GITHUB_SHA", "")
     if recover and commit != sha:
         # The files already up are that commit's build: what's missing must be too.
         fail(
-            f"recovering builds the release's own commit, {commit or '(none given)'}, and sdk-v0 is at {sha}: "
+            f"recovering builds the release's own commit, {commit or '(none given)'}, and main is at {sha}: "
             "if it has moved on since, release the next beta instead (RELEASING.md)"
         )
     if not recover and commit:

@@ -42,7 +42,7 @@ The other lines are `mcp2`, `fastmcp3` and `fastmcp4`. Add `--group frameworks` 
 
 ## Pull requests
 
-Pull requests go into `sdk-v0`. CI runs the checks above, on the Node and Python versions each
+Pull requests go into `main`. CI runs the checks above, on the Node and Python versions each
 package supports. A change to what the SDKs send changes both of them, and the shared cases in
 `packages/contract/cases`. A change under `packages/contract`, other than `REDACTION.md` and its
 tests, raises its version in `packages/contract/package.json`.

@@ -3,14 +3,14 @@
 `lsquare` goes to PyPI from GitHub, through [trusted publishing](https://docs.pypi.org/trusted-publishers/):
 no token is stored anywhere. PyPI accepts an upload of `lsquare` only from the workflow
 `pypi-release.yml` in `theagentexperiencecompany/lsquare`, which you run by hand from
-`sdk-v0`. Until launch, every release is a beta of 0.2.0 (`0.2.0b1`, `0.2.0b2`, …). PyPI has no
+`main`. Until launch, every release is a beta of 0.2.0 (`0.2.0b1`, `0.2.0b2`, …). PyPI has no
 stable release of `lsquare`, so a plain `pip install lsquare` installs the newest beta.
 
 ## Who can release
 
 Anyone with write access to the repository: PyPI checks the repository and the workflow's file
 name, not the branch, the person, or what the file says, so a workflow of that name run from any
-branch, edited or not, can publish. The workflow's own checks (from `sdk-v0` only, and the rest
+branch, edited or not, can publish. The workflow's own checks (from `main` only, and the rest
 below) stop mistakes, not someone with write access who means to get round them. Today that's the
 org's admins; the org's members get read access by default, which can't.
 
@@ -49,12 +49,12 @@ own account and two-factor login.
 ## Each release
 
 1. **The version:** a pull request sets `src/lsquare/_version.py` to the release's version
-   (`0.2.0b1`), merged into `sdk-v0` with CI green.
-2. **The rehearsal:** GitHub → Actions → PyPI release → Run workflow, from `sdk-v0`, with the
+   (`0.2.0b1`), merged into `main` with CI green.
+2. **The rehearsal:** GitHub → Actions → PyPI release → Run workflow, from `main`, with the
    version and `testpypi`. Or:
 
    ```bash
-   gh workflow run pypi-release.yml --ref sdk-v0 -f version=0.2.0b1 -f index=testpypi
+   gh workflow run pypi-release.yml --ref main -f version=0.2.0b1 -f index=testpypi
    ```
 
 3. **The release:** the same, with `pypi`.
@@ -63,7 +63,7 @@ own account and two-factor login.
 
 A run, in order:
 
-- **preflight:** started from `sdk-v0`; the version is a beta of 0.2.0 and the one `_version.py`
+- **preflight:** started from `main`; the version is a beta of 0.2.0 and the one `_version.py`
   says; the index doesn't have it yet (only its "not found" counts: an index that doesn't answer
   stops the release); and on PyPI, its tag `python-v<version>` isn't on another commit.
 - **CI:** the whole of `ci.yml` on that commit: every Node and Python job, the built wheel tested
@@ -85,7 +85,7 @@ No job of a run restores or saves anything in GitHub's cache, `ci.yml`'s include
 sets `cache-mode: none`, which GitHub's cache service enforces whatever a step runs. Caches are
 written by runs a release doesn't vouch for, and restoring one unpacks an archive over the
 runner's files; the weekly job (`mcp-sdk-releases.yml`), which runs SDK releases nobody has vetted
-on `sdk-v0`, gets no cache access either. So a release's CI downloads its dependencies afresh, and
+on `main`, gets no cache access either. So a release's CI downloads its dependencies afresh, and
 takes a little longer than a pull request's.
 
 Only one release runs at a time.
@@ -100,11 +100,11 @@ beta follows it.
 - **`publish` failed before uploading anything** (its log shows no file sent, and the index has no
   such version): run again.
 - **`publish` failed partway** (the index has one file, the wheel or the sdist, but not both): before
-  anything else is merged into `sdk-v0`, run again with **recover** ticked and **commit** set to
+  anything else is merged into `main`, run again with **recover** ticked and **commit** set to
   the commit the release ran on (the first line of its run's summary). The run builds that commit
   again (the build is reproducible: the same commit, with the same pinned backend), checks the
   files the index has are byte for byte this build's, and uploads only what's missing. It refuses
-  if `sdk-v0` has moved on since, since the missing file must come from the same commit as the one
+  if `main` has moved on since, since the missing file must come from the same commit as the one
   already up, and stops if the files differ: in either case, release the next beta instead.
 - **After `publish`** (`tag` or the index checks failed): the release is out, and the version can't
   be published again. Don't run it again. A failed `tag` can be re-run (Re-run failed jobs keeps

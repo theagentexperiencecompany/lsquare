@@ -1,13 +1,13 @@
-# On every pull request, and every push to sdk-v0 (spec section 10): the packed package on each Node
+# On every pull request, and every push to main (spec section 10): the packed package on each Node
 # version it supports (and @lsquare/node 0.1's smoke checks, and from Node 20 the contract's, each
 # packed), its types under each module resolution, the wrapper on each MCP SDK's, every workspace's
 # tests, the frameworks in workerd and Node, and Bun; and the Python package (Python spec, sections
 # 7 and 8): the built wheel on each Python version, the wrapper and the frameworks on each MCP SDK
 # line, its types, and clean installs. A pull request that changes packages/contract raises its
-# version (LSquare's ingestion takes it by its version). A pull request into sdk-v0 that
+# version (LSquare's ingestion takes it by its version). A pull request into main that
 # changes Markdown alone builds and checks the two packages (the READMEs are packed, and the Python
 # one rendered as PyPI will) and skips the test suites, unless it changes
-# packages/contract/REDACTION.md, which the TypeScript packages' tests read; every push to sdk-v0
+# packages/contract/REDACTION.md, which the TypeScript packages' tests read; every push to main
 # runs them all. The regular tests stay on the pinned MCP SDKs; the weekly job tries new ones. And
 # as the gate of a Python release (pypi-release.yml), whose upload is the wheel and sdist built here
 # (python-build's artifact, by the ID and SHA-256s this workflow outputs): everything, always,
@@ -17,7 +17,7 @@ name: CI
 # A branch's pushes are checked through its pull request, so each change runs once.
 on:
   push:
-    branches: [sdk-v0]
+    branches: [main]
   pull_request:
   workflow_call:
     inputs:
@@ -42,20 +42,20 @@ permissions:
 # starts). The setup steps are told the same: in a release, enable-cache and cache turn caching off,
 # and package-manager-cache keeps setup-node from turning it on by itself.
 
-# A release's run has its own group, never cancelled: a push to sdk-v0 meanwhile doesn't stop it.
+# A release's run has its own group, never cancelled: a push to main meanwhile doesn't stop it.
 concurrency:
   group: ${{ inputs.release && format('ci-release-{0}', github.run_id) || format('ci-{0}', github.ref) }}
   cancel-in-progress: ${{ !inputs.release }}
 
 jobs:
-  # Whether a pull request into sdk-v0 touches anything but Markdown: the test suites run only then.
+  # Whether a pull request into main touches anything but Markdown: the test suites run only then.
   # packages/contract/REDACTION.md counts as code: both TypeScript packages' spec tests read it. It
   # compares the whole pull request with its base, so a later push can't hide an earlier one's code.
-  # sdk-v0 is the only base it skips for: retargeting a pull request starts no run (GitHub sends
-  # `edited`), so a skip decided against another branch would stand once it targets sdk-v0.
+  # main is the only base it skips for: retargeting a pull request starts no run (GitHub sends
+  # `edited`), so a skip decided against another branch would stand once it targets main.
   # Re-running a run reuses its event, the old base included; reopening the pull request or pushing
   # to it compares again. Everything else runs them: a pull request into another branch, a push to
-  # sdk-v0 (a newer push there can cancel a run it would rely on), a release, a commit it doesn't
+  # main (a newer push there can cancel a run it would rely on), a release, a commit it doesn't
   # have, no files.
   changes:
     name: what changed
@@ -76,7 +76,7 @@ jobs:
           RELEASE: ${{ inputs.release }}
         run: |
           from=""
-          if [ "$EVENT" = "pull_request" ] && [ "$BASE_REF" = "sdk-v0" ]; then from="$BASE"; fi
+          if [ "$EVENT" = "pull_request" ] && [ "$BASE_REF" = "main" ]; then from="$BASE"; fi
           code=true
           if [ "$RELEASE" != "true" ] && [ -n "$from" ] && ! [[ "$from" =~ ^0+$ ]] && git cat-file -e "$from^{commit}" 2>/dev/null; then
             # Without renames, a file moved to a .md name, or a .md file moved away, still shows its

@@ -1,4 +1,4 @@
-// An npm release publishes the tarball CI built and tested on sdk-v0 (RELEASING.md), never this
+// An npm release publishes the tarball CI built and tested on main (RELEASING.md), never this
 // folder: `npm publish` here stops at prepublishOnly, which npm runs for a folder, not a tarball.
 import { spawnSync } from 'node:child_process'
 import { dirname, join } from 'node:path'

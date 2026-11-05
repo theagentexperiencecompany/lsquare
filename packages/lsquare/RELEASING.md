@@ -1,7 +1,7 @@
 # Releasing `lsquare` for npm
 
 `lsquare` goes to npm by hand, and only as the tarball CI built and tested for a commit of
-`sdk-v0`: the `lsquare-package` artifact of that commit's push run, the file its core, wrapper and
+`main`: the `lsquare-package` artifact of that commit's push run, the file its core, wrapper and
 types jobs installed and tested. Never a folder: `npm publish` in `packages/lsquare` (or with
 `-w lsquare`) stops at `prepublishOnly`, which refuses, while a tarball's publish doesn't run it.
 The refusal stops mistakes, not intent: `--ignore-scripts` gets past it.
@@ -15,15 +15,15 @@ out, by hand (step 7). Both have pointed at 0.2.0 since 2 November 2026. An owne
 From a checkout of the repository, with `gh` signed in:
 
 1. **The version:** a pull request sets `version` in `packages/lsquare/package.json`, merged into
-   `sdk-v0` with CI green.
-2. **The commit's CI:** the push run of `ci.yml` for that exact commit of `sdk-v0`, finished and
+   `main` with CI green.
+2. **The commit's CI:** the push run of `ci.yml` for that exact commit of `main`, finished and
    green. A pull request's run doesn't count: its tarball is built from a merge commit, and one
    that changes Markdown alone skips the tests.
 
    ```bash
-   git fetch origin sdk-v0
-   commit=$(git rev-parse origin/sdk-v0)
-   gh run list --workflow ci.yml --branch sdk-v0 --event push --commit "$commit" --json databaseId,status,conclusion
+   git fetch origin main
+   commit=$(git rev-parse origin/main)
+   gh run list --workflow ci.yml --branch main --event push --commit "$commit" --json databaseId,status,conclusion
    ```
 
    Its `status` is `completed` and its `conclusion` `success`; `databaseId` is the run's ID.
@@ -38,7 +38,7 @@ From a checkout of the repository, with `gh` signed in:
    It holds `lsquare-<version>.tgz` and nothing else. CI keeps the artifact for 7 days
    (`retention-days` in `ci.yml`): after that, re-run the whole run (`gh run rerun <run ID>`,
    which GitHub allows for 30 days after it) and download again, or, later still, merge a change
-   into `sdk-v0` and take that commit's push run.
+   into `main` and take that commit's push run.
 4. **What it holds:**
 
    ```bash

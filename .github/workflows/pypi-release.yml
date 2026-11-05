@@ -1,10 +1,10 @@
-# Releases lsquare (packages/python) to TestPyPI or PyPI, run by hand from sdk-v0
+# Releases lsquare (packages/python) to TestPyPI or PyPI, run by hand from main
 # (packages/python/RELEASING.md). The whole CI runs on the commit first, and the wheel and sdist it
 # built and tested are the files uploaded (python-build's artifact, by the ID ci.yml outputs, and
 # only the bytes whose SHA-256s it recorded), through trusted publishing: no token, PyPI trusts this
 # workflow's file name in this repository. The checks are scripts/release_check.py's. No job here,
 # ci.yml's included, restores or saves a cache: caches are written by runs the release doesn't
-# vouch for, the weekly job's on sdk-v0 among them, and restoring one unpacks an archive over the
+# vouch for, the weekly job's on main among them, and restoring one unpacks an archive over the
 # runner's files.
 name: PyPI release
 run-name: lsquare ${{ inputs.version }} to ${{ inputs.index }}${{ inputs.recover && ' (recovering)' || '' }}
@@ -68,7 +68,7 @@ jobs:
         with:
           version: '0.13.1'
           enable-cache: false
-      # From sdk-v0, the version _version.py says, a beta, not on the index yet (or, recovering,
+      # From main, the version _version.py says, a beta, not on the index yet (or, recovering,
       # partly, and from that release's own commit), and its tag nowhere but here: before CI
       # spends its time.
       - run: uv run --no-project --python 3.12 python scripts/release_check.py preflight
