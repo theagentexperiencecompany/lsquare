@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { hasOwn, put, readSettings, silence } from './json.js'
-import { Binary, Cut, plain, Secret, type Shaped, TooDeep } from './shape.js'
+import { mayHoldKey, SCAN_WORK, type ScanWork, type SecretSpan, secretSpans } from './secret-spans.js'
+import { advance, Binary, Cut, isMarked, plain, Secret, type Shaped, TooDeep } from './shape.js'
 import type { Json, PatternName } from './types.js'
 
 /**
@@ -179,7 +180,7 @@ export function luhn(text: string): boolean {
 
 /** How a field is finalised. */
 export interface Scope {
-  /** Redact every string and key. Without it, only the strings that were cut are redacted. */
+  /** Redact every string and key. Without it, only the strings that were cut are, and what's under secret key names in JSON a string holds. */
   all: boolean
   /** Keys come from the app's data: secret key names apply. */
   freeForm: boolean
@@ -200,8 +201,10 @@ export class Redactor {
   /** No prototype: a polluted Object.prototype must not start a count. */
   readonly counts: Partial<Record<PatternName, number>> = Object.create(null)
   /**
-   * The strings cuts became, as `beforeSend` got them, each with the limit it was cut at: after the
-   * hook, those keep their marker. Only what is still in the event, after `prune`.
+   * What this SDK made of strings before `beforeSend`, as the hook got them, each with the tightest
+   * limit it keeps its form under after the hook: a cut, the limit it was cut at; a string whose
+   * secret values were replaced, its length before that, since placeholders may have made it longer
+   * than the limit it fitted. Only what is still in the event, after `prune`.
    */
   readonly cuts = new Map<string, number>()
   private readonly used = new Map<PatternName, Set<number>>()
@@ -209,6 +212,8 @@ export class Redactor {
   private readonly assigned = new Map<string, number>()
   private readonly secretKeys: boolean
   private readonly keyNames: readonly string[]
+
+  private readonly scanWork: ScanWork = { left: SCAN_WORK }
 
   constructor(
     private readonly patterns: PatternName[],
@@ -250,11 +255,11 @@ export class Redactor {
 
   /**
    * Shaped JSON to JSON: cuts redacted and closed, secrets replaced, files and deep containers as
-   * markers. Secret key names apply in free-form fields even before the hook.
+   * markers. Secret key names apply in free-form fields and in JSON held in a string even before the hook.
    */
   finalize(value: Shaped, scope: Scope): Json {
     if (value instanceof Cut) {
-      const text = this.cutText(value.window, value.cut) + value.mark
+      const text = this.cutText(value.window, value.cut, value.scanned) + value.mark
       this.cuts.set(text, Math.min(this.cuts.get(text) ?? value.limit, value.limit))
       return text
     }
@@ -262,7 +267,7 @@ export class Redactor {
     if (value instanceof Secret) return this.placeholder('secret', value.identity ?? '', value.identity === undefined)
     if (value instanceof Binary) return scope.text ? `[binary, ${value.bytes} bytes]` : { omitted: 'binary', bytes: value.bytes }
     if (value instanceof TooDeep) return { omitted: 'depth' }
-    if (typeof value === 'string') return scope.all ? this.text(value) : value
+    if (typeof value === 'string') return scope.all ? this.string(value) : this.beforeHook(value)
     if (typeof value === 'number') return scope.all && scope.cards ? this.number(value) : value
     if (value === null || typeof value === 'boolean') return value
     if (Array.isArray(value)) return value.map((item) => this.finalize(item, scope))
@@ -351,6 +356,53 @@ export class Redactor {
     return this.placeholder('secret', typeof value === 'string' ? value : JSON.stringify(value), false)
   }
 
+  /** A string value: what's under secret key names in JSON it holds, then the patterns. */
+  string(input: string): string {
+    return this.text(this.withoutSecretValues(input))
+  }
+
+  /** A string value before the hook: only what's under secret key names, which the hook never sees. */
+  private beforeHook(input: string): string {
+    const out = this.withoutSecretValues(input)
+    // One ending with a marker is read as any other marked string after the hook.
+    if (out !== input && !isMarked(out)) {
+      const [, length] = advance(input, 0, input.length)
+      this.cuts.set(out, Math.min(this.cuts.get(out) ?? length, length))
+    }
+    return out
+  }
+
+  private withoutSecretValues(input: string): string {
+    return this.windowWithoutSecretValues(input, input.length)[0]
+  }
+
+  /**
+   * Replaces what's under secret key names in JSON held in `window`, which reads past the cut at
+   * `cut`: the rewritten window and where the cut now is. A value starting past the cut is neither
+   * replaced nor counted. One running past it is replaced whole, and its placeholder ends what's kept.
+   */
+  private windowWithoutSecretValues(window: string, cut: number): [string, number] {
+    if (!this.secretKeys || !mayHoldKey(window)) return [window, cut]
+    const spans = secretSpans(window, (key) => this.isSecretKey(key), this.scanWork)
+    if (spans.length === 0) return [window, cut]
+    let out = ''
+    let from = 0
+    let at = cut
+    for (const span of spans) {
+      if (span.start >= cut) break
+      const placeholder = this.spanPlaceholder(span)
+      out += window.slice(from, span.start) + placeholder
+      from = span.end
+      if (span.end > cut) return [out + window.slice(from), out.length]
+      at += placeholder.length - (span.end - span.start)
+    }
+    return [out + window.slice(from), at]
+  }
+
+  private spanPlaceholder(span: SecretSpan): string {
+    return span.quote + this.placeholder('secret', span.identity ?? '', span.identity === undefined) + span.quote
+  }
+
   text(input: string, fresh = false): string {
     let out = input
     for (const pattern of this.patterns) {
@@ -364,14 +416,14 @@ export class Redactor {
   }
 
   /**
-   * Redacts what's kept of a cut string, reading `window` past the cut at `cut`. A match that runs
+   * Redacts what's kept of a cut string, reading `window` past the cut at `cut`: values under secret
+   * key names in JSON it holds, then the patterns. A match that runs
    * past the cut is masked whole: its placeholder ends what's kept. Matches entirely past the cut
    * are neither replaced nor counted. Then a secret that starts like one and runs into the cut, or
    * past the window, is masked too.
    */
-  cutText(window: string, cut: number): string {
-    let out = window
-    let at = cut
+  cutText(window: string, cut: number, scanned = false): string {
+    let [out, at] = scanned ? [window, cut] : this.windowWithoutSecretValues(window, cut)
     for (const pattern of this.patterns) {
       if (skip(pattern, out)) continue
       let shift = 0

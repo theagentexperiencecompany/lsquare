@@ -14,11 +14,13 @@ and rewrites the phone and ip patterns to match the same strings.
 4. Apply built-in redaction.
 5. Enforce the size limit.
 
-Running the checks and redaction after the hook means nothing the hook adds can skip them.
+Running the checks and redaction after the hook means nothing the hook adds to a redacted field can
+skip them.
 
 Built-in redaction applies to every string value and every object key in the event, except at
-these exact paths: `conversationId`, `turnId`, `orgId`, `apiKeyId`, `toolName`, `surface`,
-`client`, `toolCalls[n].name`, and the fields the SDK adds. Numbers inside `toolCalls[n].input`
+these exact paths: `conversationId`, `turnId`, `orgId`, `userId`, `sessionId`, `apiKeyId`,
+`toolName`, `surface`, `client`, `server`, `protocolVersion`, `toolCalls[n].name`, the same fields in
+a call's `agent`, and the fields the SDK adds. Numbers inside `toolCalls[n].input`
 are also checked against the card rule. Numbers anywhere else (`usage`, `latency`, timestamps,
 counts) are never changed.
 
@@ -63,17 +65,63 @@ const SECRET_KEYS = [
 - The key stays, so LSquare still sees which field held a secret: `{ dbPassword: "…" }` becomes
   `{ dbPassword: "[SECRET_1]" }`.
 - A secret found both under a key and by a pattern gets one number, like any repeated value.
-- It is part of the `secret` pattern: `redact: { secret: false }` turns it off too. Names specific
-  to an app are left to `beforeSend`.
+- It is part of the `secret` pattern: `redact: { secret: false }` turns it off too. In `lsquare` and
+  the Python SDK, `redactKeys` / `redact_keys` add names specific to an app. In `@lsquare/node` those
+  are left to `beforeSend`.
 
-Key rules apply to fields in structured objects. JSON encoded inside a string is not parsed, so
-neither secret key names nor custom `redactKeys` / `redact_keys` inspect its fields. For example,
-`'{"password":"plain-value"}'` can remain unchanged in an input string or an MCP
-`result.content[].text` block. Known-format patterns still run on these strings. If a result has
-both `structuredContent` and a text copy, masking the structured object does not mask the same
-fields in the text copy. Use `beforeSend` / `before_send` to remove or sanitize those strings, or
-disable collection of the affected inputs or results with the wrapper's `inputs` / `results`
-options.
+The same rule applies to JSON held in a string, in every string value of an event: a text block, an
+input, an error message, a question or an answer. `{"password":"hunter2"}` in a text block becomes
+`{"password":"[SECRET_1]"}`, and the rest of the string stays exactly as it was. It is part of the
+`secret` pattern as well. In `lsquare` and the Python SDK, `redactKeys` / `redact_keys` names apply
+too, and `beforeSend` / `before_send` never sees these values. `@lsquare/node` has no such option,
+and runs its hook first.
+
+- Values are found by scanning the string, which is never parsed and rewritten: a key is text before
+  a quote that a colon follows. So this also works in JSON inside prose or a code fence, in most
+  malformed JSON, in JSON printed once by Python's `repr` or Node's `util.inspect`, in YAML's
+  double-quoted strings, and in a string cut at its end. JSON printed twice, or printed inside four
+  levels of encoding, can keep part of a value. A string cut before its key's end keeps what shows of
+  the value.
+- JSON encoded inside a string is read too, up to four times over. Past that, a string still holding
+  a key (a quote, then a colon) is replaced whole.
+- The same values are replaced and kept as in structured data. Only a value spelled exactly as a
+  placeholder, with no escapes, counts as already replaced; it ends there, whatever follows.
+- A quoted value ends at a quote followed by the string's end, a line's end, a comma that a value or
+  a line's end follows, a closing bracket with no letter or digit straight after it, or one or more of
+  `. ; ) ' `` ` `` and then a space or a line's end. Any other quote is read with it, and so is text
+  after it, up to a line that starts with a quote or a closing bracket: `"password": "abc" and more`,
+  `"password": "pa",ss"`. So a quote in a value followed by one of those ends it early, and what's
+  after that stays: `"password": "pa"} ss"`. In text that isn't valid JSON, a value ending in a
+  backslash can take what follows it.
+- Any other value is replaced unless its key comes straight after a word (two ASCII letters), `=`,
+  `->`, `=>`, or a period after a letter or a quote, where it is code or a sentence quoting something.
+  So `"password": correct horse` is replaced, up to the end of its line or the next `,`, `}` or `]`,
+  but `Post "https://x/token": timeout`, `case "token": return x` and `x == "token": y` stay. A string
+  or container that never closes, or whose brackets don't match, is replaced up to the end of the
+  string.
+- A string is numbered by its decoded value, so a text block and its `structuredContent` copy share
+  a number when both were read whole. A number or container in a string may get a number of its own,
+  as may a printed value holding any escape.
+- Keys in JSON held in a string are read as text, as parsing would read them, and only the last 256
+  characters of a long one. So JSON used as a key has its values replaced, which can make two keys the
+  same. A printed key is read through its escapes (`'{"password\\n": "x"}'`). Text that ends in a
+  space, a tab or one of `= ( [ + ? , . < | &` is taken for code or a sentence and isn't a key, unless
+  it opens with a quote straight after `{` or `,` or at the start of a line or the string, as an
+  object's keys do: `token == ":"` and `createToken(":", a)` stay. Nor is text after a `?` touching
+  its quote, or with a space before its colon: `cond ? "token" : "x"`. Other text that ends in a secret
+  key name and comes before a quote and a colon can still be read as a key, and what follows it
+  replaced. A `redactKeys` name that a number, `true`, `false` or `null` ends with can also match the
+  text between two strings. The event's own object keys get the patterns only, as do `error.type` and
+  `error.code` in `lsquare` and the Python SDK.
+- A placeholder can be longer than what it replaces, so an event dense with short values can grow
+  past its size limit, and then loses parts or is dropped, as any event over it does.
+- Other syntax isn't covered: `password=hunter2`, `password: hunter2`, an unquoted key
+  (`{password: "x"}`) or Python's `{'password': 'x'}`, which is how pydantic's validation errors quote
+  an input. Nor are quotes written another way (CSV's `""`, HTML's `&quot;`, URL encoding, `\x22`),
+  colours between a key and its colon, a key and its value split across two strings or lines with a
+  border or prefix between them, a name and its value as separate strings
+  (`{"name": "DB_PASSWORD", "value": "x"}`), or a copy of the value that isn't under a secret key
+  name. `beforeSend` / `before_send` handles those, as do the wrapper's `inputs` / `results` options.
 
 Placeholders are numbered per event:
 
@@ -97,15 +145,25 @@ Other rules:
   reliably, and a model is too slow for an SDK. An app handles them in `beforeSend`.
 - Also not detected: phone numbers without a `+` or US punctuation (`555 123 4567`, `07700 900123`),
   which bare-digit rules would confuse with counts; secrets in text without a known format, such as
-  `password=hunter2` in a question (in structured data, their key name gives them away); IBANs and
-  national ID numbers. An IBAN rule needs a new pattern name, which the ingestion must accept in
+  `password=hunter2` in a question (in structured data and JSON, their key name gives them away);
+  IBANs and national ID numbers. An IBAN rule needs a new pattern name, which the ingestion must accept in
   `redactions` before an SDK can send it.
 
-Redaction runs on the app's event loop, so every pattern matches in linear time: emails, JWTs and
-IPv6 addresses may only start at a token boundary, so there is one attempt per run of token
-characters; a PEM body can't run past the next `-----`, a URL's credentials past the next `/` or
-`@`, and the `Basic` check looks at most 512 characters ahead. Secrets are not length-bounded, so
-long credentials (a 9 KB JWT, a 12 KB key) are still caught. Placeholder numbers come from a
-running counter per pattern, so 10,000 distinct emails are numbered in linear time. The slowest
-case is 0.1's phone pattern on crafted input (`+` followed by long digit runs): about 50 ms for a
-256 KB event, against under 1 ms for ordinary text.
+Redaction runs on the app's event loop, so every pattern matches in linear time, as does finding
+values in JSON held in a string: emails, JWTs and IPv6 addresses may only start at a token boundary,
+so there is one attempt per run of token characters; a PEM body can't run past the next `-----`, a
+URL's credentials past the next `/` or `@`, and the `Basic` check looks at most 512 characters ahead.
+Secrets are not length-bounded, so long credentials (a 9 KB JWT, a 12 KB key) are still caught.
+Placeholder numbers come from a running counter per pattern, so 10,000 distinct emails are numbered
+in linear time. Finding values in JSON held in a string has a limit per event, covering both passes
+when there is a hook: 1,000,000 units, a unit being roughly one quote or bracket read, one backslash
+decoded, one JSON value checked, or 16 characters decoded. Ordinary text in an event that fits the
+size limit doesn't reach it (256 KB of JSON in JSON in JSON takes about 550,000), though about 1 MB
+of it can, as can crafted text in an event of any size. Past it, a string holding a quote and a
+colon is replaced whole and counted as a secret, so nothing unread is sent. That bounds the slowest
+event found, on crafted text, to about 800 ms in Python and 140 ms in TypeScript, of which about 400
+ms and 30 ms is everything but this step. One string read to its 24,000-character window takes at
+most about 110 ms and 20 ms, and 256 KB of ordinary JSON about 20 to 75 ms and 2 to 7 ms, depending
+on how many escapes it holds.
+In `@lsquare/node`, 0.1's phone pattern on crafted input (`+` followed by long digit runs) takes
+about 50 ms for a 256 KB event, and ordinary text without JSON under 1 ms.

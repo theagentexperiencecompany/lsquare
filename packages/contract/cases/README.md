@@ -13,6 +13,8 @@ A case has a `name`, an input, and either the `event` it gives or the `error` co
   `durationMs` 1, no IDs, and not diagnostics. `input` is the call's arguments and `result` MCP's
   result, as the client got them.
 - `options`, optional: `redact` and `redactKeys`, as the client options.
+- `hook`, optional: a `beforeSend` that returns the event as it got it, and `seen`, the fields it
+  must get, each compared whole.
 
 Every event is built with `capturedAt` `"2026-10-28T00:00:00.000Z"` and `sdk` left out of the
 comparison, since its `language` and `runtime` differ. `"$uuid"` as an `eventId` means a random

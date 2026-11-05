@@ -107,7 +107,7 @@ export interface Draft {
 
 export type Built = { ok: true; draft: Draft } | { ok: false; code: 'invalid_input' | 'invalid_id' | 'too_large'; paths: string[] }
 
-/** A turn from `capture()`. With a hook pending, only cut strings are redacted yet. */
+/** A turn from `capture()`. With a hook pending, only cut strings and what's under secret key names are redacted yet. */
 export function buildTurn(input: unknown, capturedAt: string, context: Context, hook: boolean): Built {
   const redactor = new Redactor(context.patterns, context.redactKeys)
   const state = newState({ secretKeys: redactor.secretKeyMatcher() })

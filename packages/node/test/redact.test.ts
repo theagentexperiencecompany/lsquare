@@ -313,3 +313,71 @@ describe('performance', () => {
     }
   })
 })
+
+describe('JSON in a string', () => {
+  it('numbers a value by what it decodes to, and a value under a key is a secret before it is anything else', () => {
+    const { value, counts } = redact({ question: '{"token":"a\\u0062c","auth":"abc"}', answer: '{"token": "bob@example.com"}' })
+    expect(value).toEqual({ question: '{"token":"[SECRET_1]","auth":"[SECRET_1]"}', answer: '{"token": "[SECRET_2]"}' })
+    expect(counts).toEqual({ secret: 3 })
+  })
+
+  it('replaces a string whole once the event has used its work', () => {
+    const crafted = `":"{\\{${'\\'.repeat(7)}`.repeat(20_000)
+    const { value, counts } = redact({ question: crafted, answer: '{"note":"not a secret"}', intent: 'no quote and colon here' })
+    expect(value).toEqual({ question: '[SECRET_1]', answer: '[SECRET_2]', intent: 'no quote and colon here' })
+    expect(counts).toEqual({ secret: 2 })
+  })
+
+  it('reads JSON printed by repr or util.inspect again, decoded', () => {
+    const { value } = redact({ question: '{"password": "pa\\\\",ss"}', answer: '{"password"\\n: "hunter2"}' })
+    expect(value).toEqual({ question: '{"password": "[SECRET_1]"}', answer: '{"password"\\n: "[SECRET_2]"}' })
+  })
+
+  it('replaces what is under a secret key name, in every string but the fields it skips', () => {
+    const { value, counts } = redact({
+      question: '{"password":"a"}',
+      answer: 'Result: {"token": "b", "plan": "pro"}',
+      toolCalls: [{ name: 't', input: { body: '{"apiKey":"c"}' }, errorMessage: '{"auth":"d"}' }],
+      metadata: { body: '{"cookie":"e"}' },
+      toolName: '{"password":"f"}',
+    })
+    expect(value).toEqual({
+      question: '{"password":"[SECRET_1]"}',
+      answer: 'Result: {"token": "[SECRET_2]", "plan": "pro"}',
+      toolCalls: [{ name: 't', input: { body: '{"apiKey":"[SECRET_3]"}' }, errorMessage: '{"auth":"[SECRET_4]"}' }],
+      metadata: { body: '{"cookie":"[SECRET_5]"}' },
+      toolName: '{"password":"f"}',
+    })
+    expect(counts).toEqual({ secret: 5 })
+  })
+
+  it('reads JSON encoded in a string', () => {
+    expect(redact({ answer: '{"result":"{\\"token\\":\\"abc\\"}"}' }).value).toEqual({ answer: '{"result":"{\\"token\\":\\"[SECRET_1]\\"}"}' })
+  })
+
+  it('reads JSON whose colon is encoded', () => {
+    expect(redact({ answer: '"{\\"password\\"\\u003a\\"hunter2\\"}"' }).value).toEqual({ answer: '"{\\"password\\"\\u003a\\"[SECRET_1]\\"}"' })
+  })
+
+  it('gives a value one number, also when a pattern finds it', () => {
+    const key = 'sk-abcdefghijklmnopqrstuvwxyz'
+    expect(redact({ answer: `{"password":"${key}"} ${key}` }).value).toEqual({ answer: '{"password":"[SECRET_1]"} [SECRET_1]' })
+  })
+
+  it('leaves object keys to the patterns', () => {
+    expect(redact({ metadata: { '{"token":"a"}': 1 } }).value).toEqual({ metadata: { '{"token":"a"}': 1 } })
+  })
+
+  it('gives a number its quotes, so the JSON stays valid', () => {
+    expect(redact({ answer: '{"token":123}' }).value).toEqual({ answer: '{"token":"[SECRET_1]"}' })
+  })
+
+  it('gives two values that never close a number each', () => {
+    expect(redact({ question: '{"token":"same', answer: '{"token":"same' }).value).toEqual({ question: '{"token":"[SECRET_1]', answer: '{"token":"[SECRET_2]' })
+  })
+
+  it('is off with the secret pattern', () => {
+    const text = '{"password":"a"}'
+    expect(redact({ answer: text }, resolvePatterns({ secret: false })).value).toEqual({ answer: text })
+  })
+})

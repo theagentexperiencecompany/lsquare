@@ -1,4 +1,5 @@
 import { hasOwn, readSettings } from './json.js'
+import { mayHoldKey, SCAN_WORK, type ScanWork, secretSpans } from './secret-spans.js'
 import type { Json, PatternName, ToolCall } from './types.js'
 
 /**
@@ -43,7 +44,7 @@ const SKIPPED_FIELDS = new Set([
   'eventId', 'capturedAt', 'source', 'schemaVersion', 'sdk', 'redactions', 'dropped',
 ])
 
-/** Fields whose keys come from the app's data, like tool inputs. Secret key names apply only there. */
+/** Fields whose keys come from the app's data, like tool inputs. Secret key names apply there, and to JSON held in any string. */
 const FREE_FORM_FIELDS = new Set(['latency', 'verification', 'metadata'])
 
 function isSecretKey(key: string): boolean {
@@ -99,6 +100,7 @@ class Redactor {
   private readonly next = new Map<PatternName, number>()
   private readonly assigned = new Map<string, number>()
   private readonly secretKeys: boolean
+  private readonly scanWork: ScanWork = { left: SCAN_WORK }
 
   constructor(private readonly patterns: PatternName[]) {
     this.secretKeys = patterns.includes('secret')
@@ -125,12 +127,12 @@ class Redactor {
     const out: ToolCall = { ...call }
     // Its own fields only: a polluted Object.prototype's would be added to every call without one.
     if (hasOwn(call, 'input') && call.input !== undefined) out.input = this.walk(call.input, true, true)
-    if (hasOwn(call, 'errorMessage') && call.errorMessage !== undefined) out.errorMessage = this.text(call.errorMessage)
+    if (hasOwn(call, 'errorMessage') && call.errorMessage !== undefined) out.errorMessage = this.string(call.errorMessage)
     return out
   }
 
   walk(value: Json, inToolInput: boolean, freeForm: boolean): Json {
-    if (typeof value === 'string') return this.text(value)
+    if (typeof value === 'string') return this.string(value)
     if (typeof value === 'number') return inToolInput ? this.number(value) : value
     if (value === null || typeof value === 'boolean') return value
     if (Array.isArray(value)) return value.map((item) => this.walk(item, inToolInput, freeForm))
@@ -154,6 +156,23 @@ class Redactor {
     if (typeof value === 'string' && WHOLE_PLACEHOLDER.test(value)) return value
     if (typeof value === 'object' && Object.keys(value).length === 0) return value
     return this.placeholder('secret', typeof value === 'string' ? value : JSON.stringify(value), false)
+  }
+
+  /** A string value: what's under secret key names in JSON it holds, then the patterns. */
+  private string(input: string): string {
+    return this.text(this.withoutSecretValues(input))
+  }
+
+  private withoutSecretValues(input: string): string {
+    if (!this.secretKeys || !mayHoldKey(input)) return input
+    let out = ''
+    let from = 0
+    for (const span of secretSpans(input, isSecretKey, this.scanWork)) {
+      const placeholder = this.placeholder('secret', span.identity ?? '', span.identity === undefined)
+      out += input.slice(from, span.start) + span.quote + placeholder + span.quote
+      from = span.end
+    }
+    return from === 0 ? input : out + input.slice(from)
   }
 
   text(input: string, fresh = false): string {

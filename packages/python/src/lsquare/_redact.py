@@ -16,7 +16,8 @@ from dataclasses import dataclass, replace
 from typing import Any, Final, cast
 
 from ._jsjson import dumps, number
-from ._shape import Binary, Cut, Secret, Shaped, TooDeep, plain
+from ._secret_spans import ScanWork, SecretSpan, may_hold_key, secret_spans
+from ._shape import Binary, Cut, Secret, Shaped, TooDeep, is_marked, plain
 from ._types import Json, PatternName
 from ._values import join, to_units, utf16_length
 
@@ -187,7 +188,8 @@ def luhn(value: str) -> bool:
 class Scope:
     """How a field is finalised."""
 
-    #: Redact every string and key. Without it, only the strings that were cut are redacted.
+    #: Redact every string and key. Without it, only the strings that were cut are, and what's under
+    #: secret key names in JSON a string holds.
     all: bool
     #: Keys come from the app's data: secret key names apply.
     free_form: bool
@@ -210,12 +212,15 @@ class Redactor:
     def __init__(self, patterns: Sequence[PatternName], extra_keys: Sequence[str] = ()) -> None:
         self.patterns: list[PatternName] = list(patterns)
         self.counts: dict[PatternName, int] = {}
-        #: The strings cuts became, as `before_send` got them, each with the limit it was cut at:
-        #: after the hook, those keep their marker. Only what is still in the event, after `prune`.
+        #: What this SDK made of strings before `before_send`, as the hook got them, each with the
+        #: tightest limit it keeps its form under after the hook: a cut, the limit it was cut at; a
+        #: string whose secret values were replaced, its length before that, since placeholders may
+        #: have made it longer than the limit it fitted. Only what is still in the event, after `prune`.
         self.cuts: dict[str, int] = {}
         self._used: dict[PatternName, set[int]] = {}
         self._next: dict[PatternName, int] = {}
         self._assigned: dict[str, int] = {}
+        self._scan_work = ScanWork()
         self._secret_keys = "secret" in self.patterns
         self._key_names = SECRET_KEYS + tuple(extra_keys)
         #: A key with fewer characters can't end with any name: stripping it never adds one.
@@ -257,15 +262,16 @@ class Redactor:
 
     def finalize(self, value: Shaped, scope: Scope) -> Json:
         """Shaped JSON to JSON: cuts redacted and closed, secrets replaced, files and deep containers
-        as markers. Secret key names apply in free-form fields even before the hook."""
+        as markers. Secret key names apply in free-form fields and in JSON held in a string even before
+        the hook."""
         kind = type(value)
         # The commonest first, by exact type: what each would be found as below.
         if kind is str:
-            return self.text(value) if scope.all else value  # type: ignore[arg-type,return-value]
+            return self.string(value) if scope.all else self._before_hook(value)  # type: ignore[arg-type]
         if kind is int or kind is float:
             return self._number(value) if scope.all and scope.cards else value  # type: ignore[arg-type,return-value]
         if isinstance(value, Cut):
-            closed = self.cut_text(value.window, value.cut) + value.mark
+            closed = self.cut_text(value.window, value.cut, value.scanned) + value.mark
             earlier = self.cuts.get(closed)
             self.cuts[closed] = min(value.limit if earlier is None else earlier, value.limit)
             return closed
@@ -277,7 +283,7 @@ class Redactor:
         if isinstance(value, TooDeep):
             return {"omitted": "depth"}
         if isinstance(value, str):
-            return self.text(value) if scope.all else value
+            return self.string(value) if scope.all else self._before_hook(value)
         if value is None or isinstance(value, bool):
             return value
         if isinstance(value, (int, float)):
@@ -366,6 +372,59 @@ class Redactor:
             return value
         return self._placeholder("secret", value if isinstance(value, str) else dumps(value), False)
 
+    def string(self, value: str) -> str:
+        """A string value: what's under secret key names in JSON it holds, then the patterns."""
+        return self.text(self._without_secret_values(value))
+
+    def _before_hook(self, value: str) -> str:
+        """A string value before the hook: only what's under secret key names, which the hook never
+        sees."""
+        out = self._without_secret_values(value)
+        # One ending with a marker is read as any other marked string after the hook.
+        if out is not value and not is_marked(out):
+            length = len(value)
+            earlier = self.cuts.get(out)
+            self.cuts[out] = min(length if earlier is None else earlier, length)
+        return out
+
+    def _without_secret_values(self, value: str) -> str:
+        if not self._secret_keys or not may_hold_key(value):
+            return value
+        units = to_units(value)
+        out, _ = self._window_without_secret_values(units, len(units))
+        return value if out is units else join(out)
+
+    def _window_without_secret_values(self, window: str, cut: int) -> tuple[str, int]:
+        """Replaces what's under secret key names in JSON held in `window`, in UTF-16 code units, which
+        reads past the cut at `cut`: the rewritten window and where the cut now is. A value starting
+        past the cut is neither replaced nor counted. One running past it is replaced whole, and its
+        placeholder ends what's kept."""
+        if not self._secret_keys or not may_hold_key(window):
+            return window, cut
+        spans = secret_spans(window, self.is_secret_key, self._scan_work)
+        if not spans:
+            return window, cut
+        parts: list[str] = []
+        start = 0
+        at = cut
+        straddled: int | None = None
+        for span in spans:
+            if span.start >= cut:
+                break
+            placeholder = self._span_placeholder(span)
+            parts += (window[start : span.start], placeholder)
+            start = span.end
+            if span.end > cut:
+                straddled = sum(map(len, parts))
+                break
+            at += len(placeholder) - (span.end - span.start)
+        parts.append(window[start:])
+        return "".join(parts), at if straddled is None else straddled
+
+    def _span_placeholder(self, span: SecretSpan) -> str:
+        identity = "" if span.identity is None else span.identity
+        return span.quote + self._placeholder("secret", identity, span.identity is None) + span.quote
+
     def text(self, value: str, fresh: bool = False) -> str:
         units = to_units(value)
         out = units
@@ -382,15 +441,18 @@ class Redactor:
             out = PATTERNS[pattern].sub(replace_match, out)
         return out if units is value else join(out)
 
-    def cut_text(self, window: str, cut: int) -> str:
+    def cut_text(self, window: str, cut: int, scanned: bool = False) -> str:
         """Redacts what's kept of a cut string, reading `window` past the cut at `cut` (a code point
-        index). A match that runs past the cut is masked whole: its placeholder ends what's kept.
+        index): values under secret key names in JSON it holds, unless `scanned`, then the patterns. A
+        match that runs past the cut is masked whole: its placeholder ends what's kept.
         Matches entirely past the cut are neither replaced nor counted. Then a secret that starts
         like one and runs into the cut, or past the window, is masked too."""
         out = to_units(window)
         split = out is not window
         # Where the cut is, in UTF-16 units, as the patterns' offsets count.
         at = utf16_length(window[:cut]) if split else cut
+        if not scanned:
+            out, at = self._window_without_secret_values(out, at)
         for pattern in self.patterns:
             if _skip(pattern, out):
                 continue

@@ -8,6 +8,7 @@ through tsx from the repo's node_modules. Only that check is skipped when node i
 
 from __future__ import annotations
 
+import copy
 import json
 import math
 import re
@@ -19,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from lsquare._event import BuiltOk, Context, build_call, build_turn
+from lsquare._event import BuiltOk, Context, after_hook, build_call, build_turn
 from lsquare._jsjson import dumps
 from lsquare._redact import resolve_keys, resolve_patterns
 from lsquare._values import join, js_order
@@ -83,9 +84,19 @@ def context(case: dict[str, Any]) -> Context:
     )
 
 
+def with_hook(case: dict[str, Any], built: Any) -> Any:
+    if "hook" not in case or not isinstance(built, BuiltOk):
+        return built
+    given = copy.deepcopy(built.draft.event)
+    for field, value in expand(case["hook"].get("seen", {})).items():
+        assert difference(given.get(field), value) is None
+    return after_hook(given, built.draft, context(case))
+
+
 def build(case: dict[str, Any]) -> Any:
+    hook = "hook" in case
     if "turn" in case:
-        return build_turn(expand(case["turn"]), CAPTURED_AT, context(case), False)
+        return with_hook(case, build_turn(expand(case["turn"]), CAPTURED_AT, context(case), hook))
     call = expand(case["call"])
     record: dict[str, Any] = {
         "callId": "case-call",
@@ -101,7 +112,7 @@ def build(case: dict[str, Any]) -> Any:
         record["input"] = {"value": call["input"]}
     if "result" in call:
         record["result"] = {"value": call["result"]}
-    return build_call(record, context(case), False)
+    return with_hook(case, build_call(record, context(case), hook))
 
 
 # Comparing as JavaScript's toEqual does.
@@ -256,7 +267,7 @@ def test_the_ingestion_accepts_each_event(file: str) -> None:
 _TYPESCRIPT = """
 import { readFileSync } from 'node:fs'
 const [src, file, sdk] = process.argv.slice(1)
-const { buildCall, buildTurn } = await import(`${src}/event.ts`)
+const { afterHook, buildCall, buildTurn } = await import(`${src}/event.ts`)
 const { resolveKeys, resolvePatterns } = await import(`${src}/redact.ts`)
 const CAPTURED_AT = '2026-10-28T00:00:00.000Z'
 // As cases.test.ts expands and builds them.
@@ -272,14 +283,16 @@ function expand(value) {
 }
 const written = JSON.parse(readFileSync(file, 'utf8')).map((test) => {
   const context = { sdk: JSON.parse(sdk), patterns: resolvePatterns(test.options?.redact), redactKeys: resolveKeys(test.options?.redactKeys), maxEventBytes: 256 * 1024 }
+  const hook = test.hook !== undefined
   let built
-  if (test.turn) built = buildTurn(expand(test.turn), CAPTURED_AT, context, false)
+  if (test.turn) built = buildTurn(expand(test.turn), CAPTURED_AT, context, hook)
   else {
     const { input, result, ...rest } = expand(test.call)
     const record = { callId: 'case-call', capturedAt: CAPTURED_AT, toolName: 'search_orders', status: 'completed', durationMs: 1, ids: {}, diagnostics: false, ...rest,
       ...(input === undefined ? {} : { input: { value: input } }), ...(result === undefined ? {} : { result: { value: result } }) }
-    built = buildCall(record, context, false)
+    built = buildCall(record, context, hook)
   }
+  if (hook && built.ok) built = afterHook(structuredClone(built.draft.event), built.draft, context)
   if (!built.ok) return built.code
   const event = built.draft.event
   if (test.event?.eventId === '$uuid') event.eventId = '$uuid'
