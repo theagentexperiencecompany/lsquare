@@ -156,14 +156,14 @@ URL's credentials past the next `/` or `@`, and the `Basic` check looks at most 
 Secrets are not length-bounded, so long credentials (a 9 KB JWT, a 12 KB key) are still caught.
 Placeholder numbers come from a running counter per pattern, so 10,000 distinct emails are numbered
 in linear time. Finding values in JSON held in a string has a limit per event, covering both passes
-when there is a hook: 1,000,000, counted as one for each quote, backslash or bracket read, each JSON
-value checked, and each 16 characters decoded. Ordinary text in an event that fits the size limit
-doesn't reach it (256 KB of JSON in JSON in JSON takes about 550,000), though about 1 MB of it can, as
-can crafted text in an event of any size. Past it, a string holding a quote and a colon is replaced
-whole and counted as a secret, so nothing unread is sent. That bounds the slowest event found, on
-crafted text, to about 800 ms in Python and 140 ms in TypeScript, of which about 400 ms and 30 ms is
-everything but this step. One string read to its 24,000-character window takes at most about 110 ms
-and 20 ms, and 256 KB of ordinary JSON about 20 to 75 ms and 2 to 7 ms, depending on how many escapes
-it holds.
+when there is a hook: 1,000,000 units, a unit being roughly one quote or bracket read, one backslash
+decoded, one JSON value checked, or 16 characters decoded. Ordinary text in an event that fits the
+size limit doesn't reach it (256 KB of JSON in JSON in JSON takes about 550,000), though about 1 MB
+of it can, as can crafted text in an event of any size. Past it, a string holding a quote and a
+colon is replaced whole and counted as a secret, so nothing unread is sent. That bounds the slowest
+event found, on crafted text, to about 800 ms in Python and 140 ms in TypeScript, of which about 400
+ms and 30 ms is everything but this step. One string read to its 24,000-character window takes at
+most about 110 ms and 20 ms, and 256 KB of ordinary JSON about 20 to 75 ms and 2 to 7 ms, depending
+on how many escapes it holds.
 In `@lsquare/node`, 0.1's phone pattern on crafted input (`+` followed by long digit runs) takes
 about 50 ms for a 256 KB event, and ordinary text without JSON under 1 ms.

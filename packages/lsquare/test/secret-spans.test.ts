@@ -36,6 +36,9 @@ const WORK_SAMPLES: [string, number][] = [
   ['"password":["a",{"b":1}]', 9],
   ['\\\\"x":\\\\"x":\\\\"x":', 39],
   ['"a\\q":1', 10],
+  ['{"password":["xxxx"]}', 6],
+  ['{"password":["\\\\\\\\"]}', 9],
+  ['{"password":["' + '\\'.repeat(100) + '"]}', 9],
 ]
 
 const JSON_SAMPLES = [
