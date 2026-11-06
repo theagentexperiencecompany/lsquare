@@ -144,6 +144,72 @@ async def test_records_no_inputs_or_results_where_told_not_to() -> None:
     assert "input" not in event and "result" not in event
 
 
+@pytest.mark.parametrize(("inputs", "results"), [(True, False), (False, True)])
+async def test_records_how_a_call_failed_but_none_of_its_text_unless_both_are_on(inputs: bool, results: bool) -> None:
+    lsquare, events = client()
+    app = high()
+    tool(app, boom)
+    instrument(app, lsquare, extras=OFF, inputs=inputs, results=results)
+    async with connect(app) as connection:
+        await connection.call("boom", {"x": 1})
+    await flush(lsquare)
+    [raised] = events.calls()
+    assert raised["status"] == "error" and raised["error"] == {"type": "ValueError", "category": "thrown"}
+    assert "result" not in raised and "it broke" not in json.dumps(raised)
+
+    # A low-level handler's own error result.
+    async def call(name: str, arguments: dict[str, Any]) -> Any:
+        return {"content": [{"type": "text", "text": "it broke"}], "isError": True}
+
+    lsquare, events = client()
+    server = low("plain", [{"name": "fails", "inputSchema": {"type": "object"}}], call)
+    instrument(server, lsquare, inputs=inputs, results=results)
+    async with connect(server) as connection:
+        await connection.call("fails", {})
+    await flush(lsquare)
+    [returned] = events.calls()
+    assert returned["status"] == "error" and returned["error"] == {"category": "tool_error"}
+    assert "result" not in returned and "it broke" not in json.dumps(returned)
+
+
+async def test_records_a_failed_call_in_full_with_both_on() -> None:
+    lsquare, events = client()
+    app = high()
+    tool(app, boom)
+    instrument(app, lsquare, extras=OFF)
+    async with connect(app) as connection:
+        await connection.call("boom", {"x": 1})
+    await flush(lsquare)
+    [event] = events.calls()
+    assert event["error"]["message"] == "it broke" and "result" in event
+
+
+async def test_keeps_none_of_a_refusals_text_which_quotes_what_was_sent_with_inputs_off() -> None:
+    lsquare, events = client()
+    app = high()
+    tool(app, boom)
+    instrument(app, lsquare, extras=OFF, inputs=False)
+    async with connect(app) as connection:
+        reply = await connection.call("boom", {"x": PRIVATE})
+    await flush(lsquare)
+    assert reply.is_error and PRIVATE in reply.texts[0]
+    [event] = events.calls()
+    assert event["error"]["category"] == "protocol" and "message" not in event["error"] and "result" not in event
+    assert PRIVATE not in json.dumps(event)
+
+
+async def test_keeps_none_of_a_low_level_servers_input_check_with_inputs_off() -> None:
+    lsquare, events = client()
+    app = low("plain", [{"name": "search", "inputSchema": {"type": "object", "properties": {"q": {"type": "integer"}}}}], _ok)
+    instrument(app, lsquare, inputs=False)
+    async with connect(app, "legacy") if MAJOR == 2 else connect(app) as connection:
+        await connection.tools()
+        await connection.call("search", {"q": PRIVATE})
+    await flush(lsquare)
+    [event] = events.calls()
+    assert PRIVATE not in json.dumps(event)
+
+
 async def test_records_no_inputs_or_results_for_a_call_its_function_raises_on_or_is_async_and_says_so_once() -> None:
     recorder = Recorder()
     lsquare, events = client(logger=recorder, on_error=recorder.on_error)
@@ -187,8 +253,9 @@ async def _ok(name: str, arguments: dict[str, Any]) -> Any:
 # request parameters": pydantic's text quotes the values it refused, which inputs=False keeps out.
 # (fastmcp 4.x's own check refuses a 2026-07-28 request without _meta before the chain: no event.)
 @only("mcp2", "fastmcp4")
+@pytest.mark.parametrize(("inputs", "results"), [(True, True), (False, True), (True, False)])
 @pytest.mark.parametrize(("server", "mode"), [("high", "legacy"), ("high", "2026-07-28"), ("low", "legacy"), ("low", "2026-07-28")])
-async def test_params_that_dont_validate_record_the_message_the_client_got(server: str, mode: str) -> None:
+async def test_params_that_dont_validate_record_the_message_the_client_got(server: str, mode: str, inputs: bool, results: bool) -> None:
     if LINE == "fastmcp4" and server == "high" and mode == "2026-07-28":
         pytest.skip("fastmcp 4.x refuses it before the middleware chain")
     lsquare, events = client()
@@ -197,18 +264,21 @@ async def test_params_that_dont_validate_record_the_message_the_client_got(serve
         tool(app, search)
     else:
         app = low("plain", [{"name": "search", "inputSchema": {"type": "object"}}], _ok)
-    instrument(app, lsquare, extras=OFF, inputs=False, results=False)
+    instrument(app, lsquare, extras=OFF, inputs=inputs, results=results)
     async with connect(app, mode) as connection:
         with pytest.raises(Exception, match="^Invalid request parameters$"):
             await connection.session.session._dispatcher.send_raw_request("tools/call", {"name": "search", "arguments": PRIVATE})
     await flush(lsquare)
     [event] = events.calls()
-    assert event["error"] == {"message": "Invalid request parameters", "type": "ValidationError", "code": -32602, "category": "protocol"}
-    assert "input" not in event and PRIVATE not in json.dumps(event)
+    text = {"message": "Invalid request parameters"} if inputs and results else {}
+    assert event["error"] == {**text, "type": "ValidationError", "code": -32602, "category": "protocol"}
+    assert PRIVATE not in json.dumps(event["error"])
+    assert inputs or ("input" not in event and PRIVATE not in json.dumps(event))
 
 
 @only("mcp2", "fastmcp4")
-async def test_a_low_level_handlers_own_pydantic_error_records_the_message_the_client_got() -> None:
+@pytest.mark.parametrize(("inputs", "results"), [(True, True), (False, True), (True, False)])
+async def test_a_low_level_handlers_own_pydantic_error_records_the_message_the_client_got(inputs: bool, results: bool) -> None:
     import pydantic
 
     class Order(pydantic.BaseModel):
@@ -220,14 +290,15 @@ async def test_a_low_level_handlers_own_pydantic_error_records_the_message_the_c
 
     lsquare, events = client()
     app = low("plain", [{"name": "search", "inputSchema": {"type": "object"}}], call)
-    instrument(app, lsquare, inputs=False, results=False)
+    instrument(app, lsquare, inputs=inputs, results=results)
     async with connect(app, "legacy") as connection:
         with pytest.raises(Exception, match="^Invalid request parameters$"):
             await connection.call("search", {"q": PRIVATE})
     await flush(lsquare)
     [event] = events.calls()
-    assert event["error"]["message"] == "Invalid request parameters" and event["error"]["code"] == -32602
-    assert PRIVATE not in json.dumps(event)
+    assert event["error"].get("message") == ("Invalid request parameters" if inputs and results else None) and event["error"]["code"] == -32602
+    assert PRIVATE not in json.dumps(event["error"])
+    assert inputs or PRIVATE not in json.dumps(event)
 
 
 async def test_covers_tools_registered_later_and_a_second_instrument_changes_nothing() -> None:
@@ -312,6 +383,36 @@ async def test_says_in_dry_run_what_it_records_and_what_the_extras_can_change() 
     assert recorder.wait_for(lambda: any('"records":"every tools/call"' in line for _, line in recorder.lines))
     line = next(line for _, line in recorder.lines if "every tools/call" in line)
     assert '"server":"shop"' in line and '"level":"high"' in line and "1 of the 1 tools registered so far" in line
+    assert "added while the server has an enabled tool of its own" in line
+
+
+async def test_doesnt_ask_an_inputs_function_in_dry_run_which_runs_outside_any_request() -> None:
+    recorder = Recorder()
+    lsquare = LSquare(dry_run=True, logger=recorder)
+    app = high("shop")
+    tool(app, search)
+    asked: list[str] = []
+
+    def inputs(name: str) -> bool:
+        asked.append(name)
+        return True
+
+    instrument(app, lsquare, inputs=inputs)
+    assert recorder.wait_for(lambda: any("every tools/call" in line for _, line in recorder.lines))
+    line = next(line for _, line in recorder.lines if "every tools/call" in line)
+    assert "added while the server has an enabled tool of its own, and the inputs function answers true for it" in line
+    assert asked == []
+
+
+async def test_says_in_dry_run_that_it_wont_add_get_more_tools_with_inputs_off() -> None:
+    recorder = Recorder()
+    lsquare = LSquare(dry_run=True, logger=recorder)
+    app = high("shop")
+    tool(app, search)
+    instrument(app, lsquare, inputs=False)
+    assert recorder.wait_for(lambda: any("every tools/call" in line for _, line in recorder.lines))
+    line = next(line for _, line in recorder.lines if "every tools/call" in line)
+    assert "not added: its input wouldn't be recorded" in line
 
 
 @only("mcp1", "fastmcp3")

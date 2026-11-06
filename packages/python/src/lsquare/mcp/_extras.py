@@ -40,7 +40,7 @@ _MISSING_TOOLS_DESCRIPTION: Final = (
     "tools: it tells the server's developers what to add."
 )
 _NEED_DESCRIPTION: Final = "What you needed to do and couldn't, in one or two sentences. No personal data or secrets."
-_REPLY: Final = "Noted. No other tools are available right now, and your request was passed on to the server's developers."
+_REPLY: Final = "Noted. No other tools are available right now."
 _NO_NEED: Final = (
     "Invalid arguments for tool get_more_tools: need is required, as a string saying what you needed to do and couldn't."
 )
@@ -72,7 +72,8 @@ def id_block(id: str) -> dict[str, str]:
 
 
 def missing_tools_tool(sessions: bool) -> dict[str, Any]:
-    """get_more_tools as listed: it takes `need`, and `session_id` when sessions are on, and only reads."""
+    """get_more_tools as listed: it takes `need`, and `session_id` when sessions are on. It changes
+    nothing on the server, but its `need` leaves it."""
     properties: dict[str, Any] = {"need": {"type": "string", "description": _NEED_DESCRIPTION}}
     if sessions:
         properties[SESSION_ID] = {"type": "string", "description": _DESCRIPTIONS[SESSION_ID]}
@@ -80,7 +81,7 @@ def missing_tools_tool(sessions: bool) -> dict[str, Any]:
         "name": MISSING_TOOLS,
         "description": _MISSING_TOOLS_DESCRIPTION,
         "inputSchema": {"type": "object", "properties": properties, "required": ["need"]},
-        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
     }
 
 

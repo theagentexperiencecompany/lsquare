@@ -131,7 +131,10 @@ name, its arguments (`input`), its result, how it ended (`status`, and an `error
 `category`: `thrown`, `tool_error`, `protocol` or `timeout`), how long it took, the calling app and
 protocol version, and the IDs below. Results are recorded as the SDK sends them, each string cut at
 4,000 characters; turn inputs or results off everywhere, or for chosen tools, with `inputs` and
-`results`. A call the client cancelled is a `timeout`, also when your tool caught the cancellation
+`results`. A failed call's text, in `error.message` and in an `isError` result, can quote what the
+tool was sent and what it would have returned, so it's recorded only with both on. The event still
+says how the call failed: `category`, `type` and `code`. A cancelled call's fixed sentence stays.
+A call the client cancelled is a `timeout`, also when your tool caught the cancellation
 and returned. fastmcp's `call_tool()`, called from your own Python code, never reaches the dispatch
 and makes no event; called inside a call (from a tool or a task it started, from middleware, or
 from a fastmcp 4.x extension's interceptor), it leaves that call's record alone too.
@@ -168,8 +171,8 @@ they're off ([in the reference](REFERENCE.md#low-level-servers)), whose
 | Option | Default | |
 |---|---|---|
 | `identify` | | `(call) -> {"orgId", "userId", "conversationId", "metadata"}` or `None`, sync or async ([how it works](REFERENCE.md#who-the-call-is-for-identify)) |
-| `inputs` | `True` | `False`, or `(tool_name) -> bool` |
-| `results` | `True` | `False`, or `(tool_name) -> bool`. An `isError` result's text is result text too |
+| `inputs` | `True` | `False`, or `(tool_name) -> bool`. Off for `get_more_tools`, the server doesn't get that tool |
+| `results` | `True` | `False`, or `(tool_name) -> bool` |
 | `extras` | all on (high-level), off (low-level) | `{"sessions", "intent", "missing_tools"}` to booleans; one left out keeps its default. `False`: all off. On a low-level server only `True` turns one on ([in the reference](REFERENCE.md#low-level-servers)) |
 | `wait_until` | | A callable taking an awaitable: each call's sending is handed to it ([serverless hosts](REFERENCE.md#serverless-hosts-and-shutting-down)) |
 | `flush_before_reply` | `False` | Wait for each call's event to be sent, up to `flush_timeout_ms`, before replying |
@@ -215,7 +218,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - **`get_more_tools`**: both called it in every run where no tool fitted, or one fitted only in
   part (8 of 8 each). Claude Code never called it otherwise. Codex did in 3 of the 18 runs where the
   tools fitted: each time, after confirming a customer had been charged twice and before answering,
-  it asked for the payment-processor logs that would explain why.
+  it asked for the payment-processor logs that would explain why. These runs were before the tool
+  stopped being marked read-only, which a client may treat differently.
 
 ## What leaves your process
 
@@ -265,8 +269,11 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - The wrapper never records HTTP headers, auth info, environment variables or anything else from the
   request context by itself, with three exceptions: the calling app, MCP's own
   `MCP-Protocol-Version` header, as the call's protocol version, and, for a client on a protocol
-  version before 2026-07-28, a stateful HTTP server's `Mcp-Session-Id`, as `sessionId`. That ID
-  groups a task's calls and is sent unchanged, not hashed; `extras={"sessions": False}` stops it.
+  version before 2026-07-28, a SHA-256 hash of a stateful HTTP server's `Mcp-Session-Id`, as
+  `sessionId`. The hash groups a task's calls, and `extras={"sessions": False}` stops it. The wrapper
+  doesn't record the ID itself, but what an agent or a tool writes can hold it: an argument under `inputs`,
+  `intent`, or a result or error text under `results` (with `inputs`, for a failed call). So can an ID an
+  agent sends on another connection, if your IDs have the SDK's own `ses_` format.
   `identify` can read the rest; only what it returns is sent, its IDs and `metadata`, shaped and
   redacted like the rest.
 - IDs (`orgId`, `userId`, `conversationId`, `turnId`, `sessionId`, `toolName`) are never redacted.
@@ -284,9 +291,6 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   address or phone number is still sent as given, since masking it would stop deletion, and the SDK
   warns once. Return it from [`identify`](REFERENCE.md#who-the-call-is-for-identify), or pass it to
   `capture()`.
-- On a stateful HTTP server, check that a session ID alone gives no access: LSquare stores it as
-  sent. If it does give access, turn it off with `extras={"sessions": False}`, which also removes
-  `session_id` and the task ID line.
 - Keep retention short. It's set per project: ask for a short one, especially if you handle personal
   data, since events without a `userId`, and names written inside results, go only with retention.
 

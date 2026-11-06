@@ -367,7 +367,7 @@ describe("ts-mcp-14: SDK 2.x's serveStdio(), with a client on a protocol version
     expect(await wire.call(2, 'find', { q: 'b' })).toEqual(text('ok'))
     await lsquare.client.flush()
     const [one, two] = lsquare.calls()
-    expect(one).toMatchObject({ protocolVersion: '2025-11-25', sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/) })
+    expect(one).toMatchObject({ protocolVersion: '2025-11-25', sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
     expect(two!.sessionId).toBe(one!.sessionId)
     flush.mockClear()
     wire.stdin.end()

@@ -3,7 +3,7 @@
 // again, the tap on each tool's own function, reading the client's info, detecting multi-round
 // calls, and taking the extras' inputs out of a call.
 import type { AsyncLocalStorage } from 'node:async_hooks'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { types } from 'node:util'
 import type { CallScope, Internal, LSquare } from '../client.js'
 import type { CallIds, CallRecord } from '../event.js'
@@ -129,6 +129,10 @@ interface Instrumented {
 interface Settings {
   identify: InstrumentOptions['identify']
   inputs: (toolName: string) => boolean
+  /** The same, asked when listing get_more_tools, with a warning of its own: a function may only know the app's tools. */
+  listingInputs: (toolName: string) => boolean
+  /** How `inputs` was given, for dry run, which runs outside any request and so doesn't ask a function. */
+  inputsMode: 'off' | 'asked' | 'on'
   results: (toolName: string) => boolean
   waitUntil: InstrumentOptions['waitUntil']
   flushBeforeReply: boolean
@@ -324,7 +328,8 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
   const option = (key: keyof InstrumentOptions): unknown => declared(options, key)
   // A function that throws, or answers with a promise (which can't be waited for), records nothing
   // for that call: the field stays out of its event, and one warning per option says so.
-  const choice = (key: 'inputs' | 'results', value: unknown) => (toolName: string) => {
+  const unanswered = (key: 'inputs' | 'results') => `[lsquare] The ${key} function threw or returned a promise: ${key} aren't recorded for the calls it answered that way.`
+  const choice = (key: 'inputs' | 'results', value: unknown, warnKey = `${key}-unanswered`, warning = unanswered(key)) => (toolName: string) => {
     if (typeof value !== 'function') return value !== false
     try {
       const answer = (value as (name: string) => unknown)(toolName)
@@ -339,9 +344,10 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
     } catch {
       // Below.
     }
-    internal.warnOnce(`${key}-unanswered`, `[lsquare] The ${key} function threw or returned a promise: ${key} aren't recorded for the calls it answered that way.`)
+    internal.warnOnce(warnKey, warning)
     return false
   }
+  const inputs = option('inputs')
   const identify = option('identify')
   const waitUntil = option('waitUntil')
   const flushBeforeReply = option('flushBeforeReply') === true
@@ -360,7 +366,9 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
   const explicit = (key: keyof Extras) => declared(given, key) === true
   return {
     identify: typeof identify === 'function' ? (identify as Settings['identify']) : undefined,
-    inputs: choice('inputs', option('inputs')),
+    inputs: choice('inputs', inputs),
+    listingInputs: choice('inputs', inputs, `inputs-unanswered/${MISSING_TOOLS}`, `[lsquare] The inputs function threw or returned a promise when asked about ${MISSING_TOOLS}: it isn't listed.`),
+    inputsMode: inputs === false ? 'off' : typeof inputs === 'function' ? 'asked' : 'on',
     results: choice('results', option('results')),
     waitUntil: typeof waitUntil === 'function' ? (waitUntil as Settings['waitUntil']) : undefined,
     flushBeforeReply: flushBeforeReply && typeof waitUntil !== 'function',
@@ -677,6 +685,16 @@ function ownershipOf(state: Instrumented, toolName: string): Ownership | undefin
   return owner
 }
 
+/**
+ * Whether to list get_more_tools, once all else says yes: only where its `need` would be recorded,
+ * since what it tells agents isn't true otherwise.
+ */
+function recordsNeed(state: Instrumented): boolean {
+  if (state.options.listingInputs(MISSING_TOOLS)) return true
+  state.internal.warnOnce(`extras-no-inputs/${MISSING_TOOLS}`, `[lsquare] ${MISSING_TOOLS} isn't offered: inputs are off for it, so what an agent asks for wouldn't be recorded.`)
+  return false
+}
+
 /** get_more_tools is offered while the server has an enabled tool of its own, and none of that name. */
 function offersMissingTools(state: Instrumented): boolean {
   const tools = declared(state.high, '_registeredTools')
@@ -736,7 +754,7 @@ function withExtras(state: Instrumented, listed: unknown): unknown {
       return copy
     })
     // Added to the last page only, and never next to a tool of that name.
-    if (extras.missingTools && own(listed, 'nextCursor') == null && offersMissingTools(state) && !named) {
+    if (extras.missingTools && own(listed, 'nextCursor') == null && offersMissingTools(state) && !named && recordsNeed(state)) {
       shown.push(missingToolsTool(extras.sessions))
       changed = true
     }
@@ -823,7 +841,7 @@ function withLowExtras(state: Instrumented, page: unknown, snapshot: Snapshot | 
     if (first && last && (names.size !== snapshot.tools.size || [...snapshot.tools.keys()].some((name) => !names.has(name)))) disagrees = true
     if (disagrees) mark(state.lists, false)
     if (snapshot.ownMissingTools && extras.missingTools) ownMissingTools(state)
-    if (extras.missingTools && last && !disagrees && snapshot.tools.size > 0 && !snapshot.ownMissingTools && !names.has(MISSING_TOOLS)) {
+    if (extras.missingTools && last && !disagrees && snapshot.tools.size > 0 && !snapshot.ownMissingTools && !names.has(MISSING_TOOLS) && recordsNeed(state)) {
       shown.push(missingToolsTool(extras.sessions))
       changed = true
     }
@@ -848,6 +866,8 @@ interface Prepared {
   answer: boolean
   /** The handler is the tool (a low-level server): its result is the tool's own. */
   own: boolean
+  /** What the `inputs` option answered, if it was asked here: a call asks it once, so the wrapper never answers without recording the need. */
+  inputs: boolean | undefined
 }
 
 /**
@@ -856,7 +876,7 @@ interface Prepared {
  * that declares one of them, or whose schema can't be read, keeps its arguments as sent.
  */
 function prepare(state: Instrumented, request: unknown): Prepared {
-  const none: Prepared = { request, grouping: false, sessions: false, sent: undefined, intent: undefined, answer: false, own: false }
+  const none: Prepared = { request, grouping: false, sessions: false, sent: undefined, intent: undefined, answer: false, own: false, inputs: undefined }
   try {
     if (!highOn(state)) return none
     const extras = state.highExtras
@@ -864,7 +884,10 @@ function prepare(state: Instrumented, request: unknown): Prepared {
     none.grouping = extras.sessions
     const toolName = read(read(request, 'params'), 'name')
     if (typeof toolName !== 'string') return none
-    if (extras.missingTools && toolName === MISSING_TOOLS && offersMissingTools(state)) return strip(none, extras, undefined)
+    if (extras.missingTools && toolName === MISSING_TOOLS && offersMissingTools(state)) {
+      none.inputs = state.options.inputs(toolName)
+      if (none.inputs) return strip(none, extras, undefined)
+    }
     const owner = ownershipOf(state, toolName)
     return owner?.readable ? strip(none, extras, owner) : none
   } catch {
@@ -878,13 +901,16 @@ function prepare(state: Instrumented, request: unknown): Prepared {
  */
 function prepareLow(state: Instrumented, request: unknown, snapshot: Snapshot | undefined): Prepared {
   const extras = state.lowExtras
-  const none: Prepared = { request, grouping: extras.sessions, sessions: false, sent: undefined, intent: undefined, answer: false, own: true }
+  const none: Prepared = { request, grouping: extras.sessions, sessions: false, sent: undefined, intent: undefined, answer: false, own: true, inputs: undefined }
   try {
     if (!lowOn(state) || !snapshot) return none
     const toolName = read(read(request, 'params'), 'name')
     if (typeof toolName !== 'string') return none
     if (snapshot.ownMissingTools && extras.missingTools) ownMissingTools(state)
-    if (extras.missingTools && toolName === MISSING_TOOLS && snapshot.tools.size > 0 && !snapshot.ownMissingTools) return strip(none, extras, undefined)
+    if (extras.missingTools && toolName === MISSING_TOOLS && snapshot.tools.size > 0 && !snapshot.ownMissingTools) {
+      none.inputs = state.options.inputs(toolName)
+      if (none.inputs) return strip(none, extras, undefined)
+    }
     const owner = snapshot.tools.get(toolName)
     if (owner) note(state, extras, toolName, owner)
     return owner?.readable ? strip(none, extras, owner) : none
@@ -938,14 +964,15 @@ function strip(none: Prepared, extras: Extras, owner: (Ownership & { readable: t
 function group(call: Running, outcome: Outcome, result: unknown): unknown {
   const { extras, scope } = call
   if (!extras.grouping) return result
-  if (extras.sent !== undefined) {
+  // The transport's own ID, sent back, is still that session: it never leaves as it is.
+  if (extras.sent !== undefined && extras.sent !== call.protocolSession) {
     call.session = { id: extras.sent, source: 'sent' }
     return result
   }
   const conversationId = scope.agent?.conversationId
   if (typeof conversationId === 'string' && conversationId !== '') return result
   if (call.protocolSession !== undefined) {
-    call.session = { id: call.protocolSession, source: 'protocol' }
+    call.session = { id: sessionHash(call.protocolSession), source: 'protocol' }
     return result
   }
   if (!extras.sessions) return result
@@ -966,6 +993,11 @@ function group(call: Running, outcome: Outcome, result: unknown): unknown {
     // A result that can't be copied goes as it is, without an ID.
     return result
   }
+}
+
+/** A protocol session's ID as events carry it: the ID itself can be a live handle to the session, and grouping only needs the same value each time. */
+function sessionHash(id: string): string {
+  return createHash('sha256').update(id).digest('hex')
 }
 
 /**
@@ -1004,11 +1036,12 @@ function dryRun(state: Instrumented): Record<string, unknown> {
         'off on a low-level server; extras: { sessions: true, intent: true, missingTools: true } turns them on, for a server whose instances list and serve their own tools, the same to every request'
       return line
     }
-    const on = [extras.sessions && SESSION_ID, extras.intent && INTENT, extras.missingTools && MISSING_TOOLS].filter((name): name is string => typeof name === 'string')
+    const on = [extras.sessions && SESSION_ID, extras.intent && INTENT, extras.missingTools && state.options.inputsMode !== 'off' && MISSING_TOOLS].filter((name): name is string => typeof name === 'string')
     line.extras = {
       on,
       from: "the server's own tool list: every page, read before anything changes and again after it changes; a call waits at most 1 second for it",
       for: 'instances that list the same tools to every request they serve',
+      ...(on.includes(MISSING_TOOLS) && state.options.inputsMode === 'asked' ? { get_more_tools: 'only where the inputs function answers true for it' } : {}),
     }
     return line
   }
@@ -1026,7 +1059,13 @@ function dryRun(state: Instrumented): Record<string, unknown> {
   if (extras.intent) described.intent = can(INTENT)
   if (extras.sessions || extras.intent) described.later = "tools registered later follow the same rules, and a tool whose listed schema can't take an input is listed as it is"
   if (extras.missingTools) {
-    described.get_more_tools = names.includes(MISSING_TOOLS) ? 'not added: the server has its own' : 'added while the server has an enabled tool of its own'
+    described.get_more_tools = names.includes(MISSING_TOOLS)
+      ? 'not added: the server has its own'
+      : state.options.inputsMode === 'off'
+        ? "not added: its input wouldn't be recorded"
+        : state.options.inputsMode === 'asked'
+          ? 'added while the server has an enabled tool of its own, and the inputs function answers true for it'
+          : 'added while the server has an enabled tool of its own'
   }
   if (extras.sessions) described.idLine = "added to a task's first result when its call can't be grouped by its protocol session or a conversationId"
   line.extras = described
@@ -1252,7 +1291,7 @@ function start(state: Instrumented, prepared: Prepared, extra: unknown, arrived:
     toolName,
     // What the client sent, never a polluted Object.prototype's (see strip()).
     args: own(params, 'arguments'),
-    inputs: state.options.inputs(toolName),
+    inputs: prepared.inputs ?? state.options.inputs(toolName),
     results: state.options.results(toolName),
     client: clientInfo(state.low, request, extra),
     protocolVersion: version,
@@ -1783,7 +1822,8 @@ function buildRecord(
  * `thrown` when the tool's own function threw (the SDK turned it into the result), `protocol` when
  * the SDK made it (the tool never ran, or its output failed the SDK's checks), and `tool_error`
  * when the tool returned it. A request cancelled before the end is `timeout`. An isError result's
- * message is its first text block, which is result text: left out when results aren't recorded.
+ * message is its first text block. A failed call's text, in the error and an isError result, is kept
+ * only under errorText(); its category, type and code always are.
  */
 function outcomeOf(state: Instrumented, call: Running, result: unknown, thrown: { error: unknown } | undefined, extra: unknown): Outcome {
   const { scope } = call
@@ -1804,7 +1844,7 @@ function outcomeOf(state: Instrumented, call: Running, result: unknown, thrown: 
     outcome.status = 'error'
     // Read as the SDK reads it for its JSON-RPC error reply, inherited or not (see errorOf()).
     const code = read(thrown.error, 'code')
-    outcome.error = errorOf(thrown.error, Number.isSafeInteger(code) ? 'protocol' : 'thrown', true)
+    outcome.error = errorOf(thrown.error, Number.isSafeInteger(code) ? 'protocol' : 'thrown', true, errorText(call))
     return outcome
   }
   if (!fields) return outcome
@@ -1816,15 +1856,16 @@ function outcomeOf(state: Instrumented, call: Running, result: unknown, thrown: 
 
   if (field('isError') === true) {
     outcome.status = 'error'
+    outcome.result &&= errorText(call)
     if (scope.thrown) {
-      outcome.error = errorOf(scope.thrown.error, 'thrown', false)
+      outcome.error = errorOf(scope.thrown.error, 'thrown', false, errorText(call))
     } else {
       const highLevel = state.high !== undefined && !state.replaced
       const returned = read(scope.toolResult?.value, 'isError') === true
       // The wrapper's own get_more_tools refuses arguments as the SDKs do, at either level.
       const category: ErrorCategory = call.extras.answer || (highLevel && (!scope.invoked || !returned)) ? 'protocol' : 'tool_error'
       const error: NonNullable<CallRecord['error']> = blank({ category })
-      if (call.results) {
+      if (errorText(call)) {
         const text = firstText(field('content'))
         if (text !== undefined) error.message = text
       }
@@ -1835,7 +1876,15 @@ function outcomeOf(state: Instrumented, call: Running, result: unknown, thrown: 
 }
 
 /**
- * A thrown error's details. `escaped`: it escaped the handler, and the SDK answered with a
+ * Whether a failed call's text is recorded. It can quote what the tool would have returned, and what
+ * it was sent: a validator's message does, and it can't always be told from the tool's own.
+ */
+function errorText(call: Running): boolean {
+  return call.results && call.inputs
+}
+
+/**
+ * A thrown error's details, its text only with `text`. `escaped`: it escaped the handler, and the SDK answered with a
  * JSON-RPC error, whose code and message both SDKs read as `error.code` and `error.message`,
  * inherited ones included: they are read the same way, so the event has what the client got, a
  * polluted Object.prototype's too. Otherwise the tool's own function threw, and the SDK made an
@@ -1844,20 +1893,25 @@ function outcomeOf(state: Instrumented, call: Running, result: unknown, thrown: 
  * string, as the SDK writes it then. The type (`name`) goes to no client: always the error's own
  * or its class's.
  */
-function errorOf(error: unknown, category: ErrorCategory, escaped: boolean): NonNullable<CallRecord['error']> {
+/** An error's own `name`, as a class has one: anything else could hold what the tool was sent. */
+const ERROR_NAME = /^[A-Za-z_$][\w$.]{0,127}$/
+
+function errorOf(error: unknown, category: ErrorCategory, escaped: boolean, text: boolean): NonNullable<CallRecord['error']> {
   // No prototype, as the record it goes in: its fields are added by assignment.
   const details: NonNullable<CallRecord['error']> = blank({ category })
   if ((typeof error === 'object' || typeof error === 'function') && error !== null) {
-    const message = escaped ? read(error, 'message') : declared(error, 'message')
+    if (text) {
+      const message = escaped ? read(error, 'message') : declared(error, 'message')
+      details.message = typeof message === 'string' ? message : escaped ? 'Unknown error' : asText(error)
+    }
     const name = declared(error, 'name')
-    details.message = typeof message === 'string' ? message : escaped ? 'Unknown error' : asText(error)
-    if (typeof name === 'string' && name !== '') details.type = name
+    if (typeof name === 'string' && ERROR_NAME.test(name)) details.type = name
     // Only an error that escaped is `protocol`, by the code its reply carries.
     if (category === 'protocol') {
       const code = read(error, 'code')
       if (typeof code === 'number' || typeof code === 'string') details.code = code
     }
-  } else {
+  } else if (text) {
     details.message = asText(error)
   }
   return details

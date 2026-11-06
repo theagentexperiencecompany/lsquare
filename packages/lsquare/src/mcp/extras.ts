@@ -25,7 +25,7 @@ const DESCRIPTIONS: Record<string, string> = {
 const MISSING_TOOLS_DESCRIPTION =
   "Call this when none of the available tools fits what you need, or one fits only in part. It doesn't return new tools: it tells the server's developers what to add."
 const NEED_DESCRIPTION = "What you needed to do and couldn't, in one or two sentences. No personal data or secrets."
-const REPLY = "Noted. No other tools are available right now, and your request was passed on to the server's developers."
+const REPLY = "Noted. No other tools are available right now."
 const NO_NEED = "Invalid arguments for tool get_more_tools: need is required, as a string saying what you needed to do and couldn't."
 
 /** A new session ID: `ses_` and 22 random base64url characters. */
@@ -41,7 +41,7 @@ export function idBlock(id: string): { type: 'text'; text: string } {
   return { type: 'text', text: `Task ID: ${id}. Send it as session_id on later calls for this task, and pass it to any subagent working on it.` }
 }
 
-/** get_more_tools as listed: it takes `need`, and `session_id` when sessions are on, and only reads. */
+/** get_more_tools as listed: it takes `need`, and `session_id` when sessions are on. It changes nothing on the server, but its `need` leaves it. */
 export function missingToolsTool(sessions: boolean): Record<string, unknown> {
   const properties: Record<string, unknown> = { need: { type: 'string', description: NEED_DESCRIPTION } }
   if (sessions) put(properties, SESSION_ID, { type: 'string', description: DESCRIPTIONS[SESSION_ID] })
@@ -49,7 +49,7 @@ export function missingToolsTool(sessions: boolean): Record<string, unknown> {
     name: MISSING_TOOLS,
     description: MISSING_TOOLS_DESCRIPTION,
     inputSchema: { type: 'object', properties, required: ['need'] },
-    annotations: { readOnlyHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
   }
 }
 

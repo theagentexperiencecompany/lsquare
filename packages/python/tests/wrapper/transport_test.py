@@ -6,6 +6,7 @@ protocol version, and whether the reply carries the ID line."""
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import http.client
 import importlib
 import json
@@ -314,7 +315,7 @@ async def test_stateful_http_groups_calls_by_the_session_id_the_server_issued_an
     calls = by_query(events.calls())
     assert sorted(calls) == ["a1", "a2", "b1"]
     for query, event in calls.items():
-        assert (event["sessionId"], event["sessionSource"]) == (issued_ids[query[0]], "protocol"), query
+        assert (event["sessionId"], event["sessionSource"]) == (hashlib.sha256(str(issued_ids[query[0]]).encode()).hexdigest(), "protocol"), query
         assert event["protocolVersion"] == asked()
         # The client the session's initialize named.
         assert isinstance(event.get("client"), dict), event

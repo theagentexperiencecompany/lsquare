@@ -118,7 +118,9 @@ call belongs to. Leave it out on your first call. On every later call for the sa
 an earlier result gave you, and pass it to any subagent working on that task."
 
 - A call with a valid ID (`ses_` and 22 letters, digits, `-` or `_`) is recorded with it. Any other
-  value is taken out and ignored.
+  value is taken out and ignored. The transport's own ID, sent back on its own connection on a protocol
+  version before 2026-07-28, is recorded as its hash; a server whose session IDs have this format should keep them from agents, as one sent
+  back any other way is recorded as it is.
 - A call whose tool called `capture()` with a `conversationId` is grouped by that.
 - A call from a client on a protocol version before 2026-07-28 is grouped by its protocol session:
   a stateful HTTP server's `Mcp-Session-Id`, one ID per SSE connection (an `mcp-session-id` header
@@ -155,14 +157,14 @@ call that leaves it out.
 
 ### `get_more_tools`: what agents looked for
 
-A server with at least one tool of its own gets one more tool, `get_more_tools`, marked read-only,
-with a required `need` input (and the optional `session_id`): "Call this when none of the available
-tools fits what you need, or one fits only in part. It doesn't return new tools: it tells the
-server's developers what to add." The wrapper answers it ("Noted. No other tools are available
-right now, and your request was passed on to the server's developers.") and records the request as
-a `tool_call` event with `extra: "missing_tools"`, under the same `inputs` option as any tool. It's
-added to the last page of a paged list. A server that registers its own `get_more_tools` keeps it,
-and doesn't get LSquare's.
+A server with at least one tool of its own gets one more tool, `get_more_tools`, marked as not
+read-only, since what the agent writes leaves the server, with a required `need` input (and the
+optional `session_id`): "Call this when none of the available tools fits what you need, or one fits
+only in part. It doesn't return new tools: it tells the server's developers what to add." The
+wrapper answers it ("Noted. No other tools are available right now.") and records the request as a
+`tool_call` event with `extra: "missing_tools"`. With `inputs` off for it, the server doesn't get
+the tool, since the request wouldn't be recorded. It's added to the last page of a paged list. A
+server that registers its own `get_more_tools` keeps it, and doesn't get LSquare's.
 
 ### Which tools get them
 
