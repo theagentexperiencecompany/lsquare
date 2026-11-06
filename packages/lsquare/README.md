@@ -287,6 +287,11 @@ In a script or a test, call `await lsquare.shutdown()` before exiting.
 - The core runs on Node 18 and later, Cloudflare Workers (with the `nodejs_compat` compatibility
   flag) and Bun. `lsquare/mcp` runs where the MCP SDK does: SDK 1.x from Node 18, SDK 2.x from Node
   20.
+- On Node, two bugs in the built-in `fetch` let a malicious or compromised endpoint crash the
+  process, and the SDK can't catch it
+  ([GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c),
+  [GHSA-qrxm-fqhp-jwvm](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm)). They're fixed from Node
+  22.23.4, 24.22.1 and 26.12.1; Node 18, 20 and 25 have no fixed release.
 - Linking a `capture()` to its call uses `AsyncLocalStorage`, on from the first `instrument()`.
   Before Node 24 it slows promises across the process a little: about 2× in a benchmark of nothing
   but promises, little in code that waits on I/O.
