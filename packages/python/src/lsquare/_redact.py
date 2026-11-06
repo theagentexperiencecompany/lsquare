@@ -26,7 +26,7 @@ WS: Final = "\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\
 
 #: TypeScript's pattern sources, as its RegExp `source` gives them.
 SOURCES: Final[dict[PatternName, str]] = {
-    "email": r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}",
+    "email": r"(?:(?<![A-Za-z0-9._%+-])(?!(?<=\\)(?:[nrtfb]|(?:u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|U[0-9A-Fa-f]{8})(?!%40)[A-Za-z0-9._%+-]))|(?<=\\[nrtfb])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))[A-Za-z0-9._%+-]+(?:@|%40)[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}",
     "phone": (
         r"\+(?=[1-9](?:[ .()-]{0,2}\d){5})"
         r"(?:\d{1,3}(?:[ .-]\(?|\()(?:\d{1,4}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)"
@@ -39,24 +39,24 @@ SOURCES: Final[dict[PatternName, str]] = {
         r"|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{4,11}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)"
         r"|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{6,15}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)"
         r"|\d{8,19}(?:[ .-]\d{2,4}\b|\b)|\d{10,23}\b)"
-        r"|\(\d{3}\) ?\d{3}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b"
+        r"|\(\d{3}\) ?\d{3}-\d{4}\b|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))\d{3}-\d{3}-\d{4}\b"
     ),
-    "card": r"\b[3-6]\d{3}(?:[ -]?\d){11,12}\b",
+    "card": r"(?<!\d\.)(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[3-6]\d{3}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720))(?:[ -]?\d){11,12}\b(?<![ -]\d)(?<![ -]\d\d)|3[068]\d\d(?:[ -]?\d){10}\b)",
     "secret": (
-        r"\b(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
+        r"(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
         r"|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}"
-        r"|xox[abprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack\.com\/services\/[A-Za-z0-9\/_-]{20,}"
-        r"|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)" + "[\"']?[" + WS + "]*[:=][" + WS + "]*[\"']?"
-        r"[A-Za-z0-9\/+]{40}"
+        r"|xox[a-z]-[A-Za-z0-9%+\/=-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack(?:-gov)?\.com\\{0,2}\/(?:services|triggers|workflows|commands|actions)\\{0,2}\/[A-Za-z0-9\/\\_-]{20,}"
+        r"|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)" + r"(?:\\{0,7}[" + "\"'" + "])?[" + WS + "]*[:=][" + WS + r"]*(?:\\{0,7}[" + "\"'" + "])?"
+        r"(?:[A-Za-z0-9\/+]|\\{1,2}\/){40}"
         r"|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9._-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|phx_[A-Za-z0-9]{20,})"
-        r"|(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
+        r"|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
         r"|(?:[Bb]earer|BEARER)[" + WS + r"]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*"
-        r"|\b(?:Basic|BASIC)[" + WS + r"]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}"
-        r"|(?<=:\/\/)[^" + WS + r"/:@?#]{0,256}:[^" + WS + r"/@?#]{1,256}(?=@)"
-        r"|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?-----END [A-Z ]{0,32}PRIVATE KEY-----"
+        r"|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[" + WS + r"]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}"
+        r"|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))(?:(?!',|,')[^" + WS + "/:?#\"]){0,256}:[^" + WS + "/?#\"]{1,256}(?=@)"
+        r"|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))"
     ),
     "ip": (
-        r"\b(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)){3}\b|(?<![0-9A-Za-z:.])(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
+        r"(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)){3}\b|(?:(?<![0-9A-Za-z:.])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}"
         r"|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}"
         r"|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}"
         r"|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}|:(?::[0-9A-Fa-f]{1,4}){1,7})"
@@ -87,7 +87,7 @@ _WHOLE_PLACEHOLDER: Final = re.compile(r"\[(?:EMAIL|PHONE|CARD|SECRET|IP)_\d{1,9
 
 #: What a secret looks like at its start, for one that runs into a cut and so can't be matched whole.
 _SECRET_START: Final = re.compile(
-    r"(?:lsq_|sk-|[rs]k_(?:live|test)_|whsec_|gh[opsur]_|github_pat_|glpat-|npm_|xox[abprs]-|xapp-|hooks\.slack\.com\/services\/"
+    r"(?:lsq_|sk-|[rs]k_(?:live|test)_|whsec_|gh[opsur]_|github_pat_|glpat-|npm_|xox[a-z]-|xapp-|hooks\.slack(?:-gov)?\.com\\{0,2}\/"
     r"|AKIA|ASIA|AIza|ya29\.|GOCSPX-|phx_|eyJ)",
     re.ASCII,
 )
@@ -98,19 +98,21 @@ _PEM_BEGIN: Final = re.compile(r"-----BEGIN [A-Z ]{0,32}(?:PRIVATE KEY-----|\Z)"
 _PEM_END: Final = re.compile(r"-----END [A-Z ]{0,32}PRIVATE KEY-----", re.ASCII)
 #: A run of token characters, read backwards from the end of what's kept.
 _TOKEN_RUN: Final = re.compile(r"[A-Za-z0-9._~+/=-]*", re.ASCII)
+#: What's after the backslash of an escape a value can start straight after.
+_WRITTEN_ESCAPE: Final = re.compile(r"[nrtfb0aevNLP_]|u[0-9A-Fa-f]{4}|x[0-9A-Fa-f]{2}|U[0-9A-Fa-f]{8}", re.ASCII)
 #: Inside a run of token characters, a secret can start after one of these, as the patterns allow.
 _SECRET_BOUNDARY: Final = re.compile(r"[.~+/=]", re.ASCII)
 #: Matched values longer than this (in UTF-16 units) are numbered by a hash, so a pending event doesn't keep them.
 MAX_KEPT_IDENTITY: Final = 64
 #: Python only: the fewest UTF-16 units each pattern matches (what `re`'s parser gives as its least
 #: width, which a test checks), so a string shorter than that is never searched for it.
-SHORTEST_MATCH: Final[dict[PatternName, int]] = {"email": 6, "phone": 7, "card": 15, "secret": 2, "ip": 3}
-#: Card numbers have 15 or 16 digits, the first 3 to 6: a number outside these isn't one.
-_CARD_LOW: Final = 3 * 10**14
+SHORTEST_MATCH: Final[dict[PatternName, int]] = {"email": 6, "phone": 7, "card": 14, "secret": 2, "ip": 3}
+#: Card numbers have 14 to 16 digits (see `_CARD_DIGITS`): a number outside these isn't one.
+_CARD_LOW: Final = 3 * 10**13
 _CARD_HIGH: Final = 7 * 10**15
 _NOT_KEY_CHAR: Final = re.compile(r"[^a-z0-9]", re.ASCII)
 _NOT_DIGIT: Final = re.compile(r"\D", re.ASCII)
-_CARD_DIGITS: Final = re.compile(r"[3-6]\d{14,15}", re.ASCII)
+_CARD_DIGITS: Final = re.compile(r"[3-6]\d{14,15}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720)\d{11,12}|3[068]\d{12}", re.ASCII)
 
 
 def normalize_key(key: str) -> str:
@@ -217,6 +219,9 @@ class Redactor:
         #: string whose secret values were replaced, its length before that, since placeholders may
         #: have made it longer than the limit it fitted. Only what is still in the event, after `prune`.
         self.cuts: dict[str, int] = {}
+        #: What the scan made of strings before `before_send`, which isn't read again: a placeholder
+        #: could be taken for part of what's around it.
+        self._scanned: set[str] = set()
         self._used: dict[PatternName, set[int]] = {}
         self._next: dict[PatternName, int] = {}
         self._assigned: dict[str, int] = {}
@@ -333,6 +338,7 @@ class Redactor:
         walk(event)
         for closed in [closed for closed in self.cuts if closed not in strings]:
             del self.cuts[closed]
+        self._scanned &= strings
         for key in [key for key, n in self._assigned.items() if n not in present.get(cast(PatternName, key[: key.index("\x00")]), ())]:
             del self._assigned[key]
         self._used = present
@@ -342,7 +348,7 @@ class Redactor:
         total = 0
         for key in self._assigned:
             total += utf16_length(key) * 2 + 64
-        total += len(self.cuts) * 64
+        total += (len(self.cuts) + len(self._scanned)) * 64
         for numbers in self._used.values():
             total += len(numbers) * 16
         return total
@@ -374,12 +380,14 @@ class Redactor:
 
     def string(self, value: str) -> str:
         """A string value: what's under secret key names in JSON it holds, then the patterns."""
-        return self.text(self._without_secret_values(value))
+        return self.text(value if value in self._scanned else self._without_secret_values(value))
 
     def _before_hook(self, value: str) -> str:
         """A string value before the hook: only what's under secret key names, which the hook never
         sees."""
         out = self._without_secret_values(value)
+        if may_hold_key(out):
+            self._scanned.add(out)
         # One ending with a marker is read as any other marked string after the hook.
         if out is not value and not is_marked(out):
             length = len(value)
@@ -486,6 +494,10 @@ class Redactor:
             return kept[:begin] + self._placeholder("secret", kept[begin:], False)
         found = _TOKEN_RUN.match(kept[::-1])
         run = len(kept) - (len(found.group(0)) if found is not None else 0)
+        # What ends an escape written in JSON, such as the `n` of `\\n`, isn't part of the token.
+        escape = _WRITTEN_ESCAPE.match(kept, run) if kept[run - 1 : run] == "\\" else None
+        if escape is not None:
+            run = escape.end()
         if run >= len(kept):
             return kept
         # The earliest place in the run where a secret could start: its beginning, or just after a
@@ -548,8 +560,8 @@ class Redactor:
 #: avoids; this check costs a substring search per literal instead.
 _SECRET_LITERALS: Final = (
     "lsq_", "sk-", "k_live_", "k_test_", "whsec_", "gho_", "ghp_", "ghs_", "ghu_", "ghr_", "github_pat_", "glpat-", "npm_",
-    "xox", "xapp-", "hooks.slack.com/services/", "AKIA", "ASIA", "aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", "AIza",
-    "ya29.", "GOCSPX-", "phx_", "eyJ", "earer", "EARER", "Basic", "BASIC", "://", "-----BEGIN ",
+    "xox", "xapp-", "hooks.slack", "AKIA", "ASIA", "aws_secret_access_key", "AWS_SECRET_ACCESS_KEY", "AIza",
+    "ya29.", "GOCSPX-", "phx_", "eyJ", "earer", "EARER", "Basic", "BASIC", "://", ":\\/", ":\\\\/", "-----BEGIN ",
 )  # fmt: skip
 _DIGIT: Final = re.compile(r"[0-9]", re.ASCII)
 #: Every IPv6 alternative holds a group followed by a colon, or two colons.

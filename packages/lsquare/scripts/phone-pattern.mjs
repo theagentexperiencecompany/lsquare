@@ -30,8 +30,8 @@ const PIECES = [COUNTRY, AREA, GROUP, GROUP, GROUP, GROUP]
 /** A number can end after its second group, or any piece after it. */
 const FIRST_END = 3
 
-/** 0.1's two US formats, as they are. */
-const US = String.raw`\(\d{3}\) ?\d{3}-\d{4}\b|\b\d{3}-\d{3}-\d{4}\b`
+/** 0.1's two US formats, and the second may also start straight after an escape written in JSON, such as `\\n` or `\\u201c`. */
+const US = String.raw`\(\d{3}\) ?\d{3}-\d{4}\b|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))\d{3}-\d{3}-\d{4}\b`
 
 const one = (chars) => (chars.length > 1 ? `[${chars}]` : `\\${chars}`)
 const either = (options) => (options.length > 1 ? `(?:${options.join('|')})` : options[0])

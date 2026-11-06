@@ -12,7 +12,9 @@ import { z } from 'zod'
 import { validateEvent } from '../../contract/src/validate.js'
 import { LSquare, type LSquareEvent, type ToolCallEvent } from '../src/index.js'
 import { instrument } from '../src/mcp/index.js'
+import { createHash } from 'node:crypto'
 
+const hashed = (id: string): string => createHash('sha256').update(id).digest('hex')
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
 const OFF = { sessions: false, intent: false, missingTools: false }
 const LINE = /^Task ID: (ses_[A-Za-z0-9_-]{22})\. Send it as session_id on later calls for this task, and pass it to any subagent working on it\.$/
@@ -139,8 +141,8 @@ describe.each(transports)('$name, stateful, a client on 2025-11-25', ({ server: 
     expect(((await declared.json()) as any).result).toEqual(text('ok'))
     await post(transport, { ...callAsk, id: 2 }, { 'mcp-session-id': 'issued-by-server' })
     const [one, two] = await lsquare.calls()
-    expect(one).toMatchObject({ protocolVersion: '2025-03-26', client: { name: 'cursor', version: '1.7' }, sessionId: 'issued-by-server', sessionSource: 'protocol' })
-    expect(two).toMatchObject({ protocolVersion: '2025-11-25', client: { name: 'cursor', version: '1.7' }, sessionId: 'issued-by-server', sessionSource: 'protocol' })
+    expect(one).toMatchObject({ protocolVersion: '2025-03-26', client: { name: 'cursor', version: '1.7' }, sessionId: hashed('issued-by-server'), sessionSource: 'protocol' })
+    expect(two).toMatchObject({ protocolVersion: '2025-11-25', client: { name: 'cursor', version: '1.7' }, sessionId: hashed('issued-by-server'), sessionSource: 'protocol' })
   })
 })
 

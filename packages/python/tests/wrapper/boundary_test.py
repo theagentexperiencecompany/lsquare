@@ -284,6 +284,7 @@ async def test_a_cancelled_call_is_recorded_as_timeout_and_the_cancellation_pass
     assert finished == ["cancelled"]
     [event] = events
     assert event["status"] == "error" and event["error"]["category"] == "timeout"
+    assert event["error"]["message"] == "The request was cancelled before the tool finished."
 
 
 class _Ended(_Slow):

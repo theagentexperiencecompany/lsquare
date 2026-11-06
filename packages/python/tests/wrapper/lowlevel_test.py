@@ -424,6 +424,68 @@ async def test_a_high_level_server_whose_handler_was_replaced_follows_the_low_le
     assert seen == [{"id": "1", "session_id": "ses_" + "d" * 22}] and reply.texts == ["replaced"]
 
 
+@pytest.mark.parametrize("inputs", [False, lambda name: name != "get_more_tools"])
+async def test_doesnt_offer_get_more_tools_where_its_need_wouldnt_be_recorded(inputs: Any) -> None:
+    lsquare, events = client()
+    server = build(Plan(one_page("orders")))
+    instrument(server, lsquare, extras={"missing_tools": True}, inputs=inputs)
+    async with connected(server) as connection:
+        names = [item.name for item in await connection.tools()]
+        try:
+            await connection.call("get_more_tools", {"need": "issue refunds"})
+        except Exception:
+            pass
+    await lsquare.aflush(timeout_ms=5_000)
+    assert names == ["orders"]
+    [event] = events.calls()
+    assert "extra" not in event and "input" not in event
+
+
+@pytest.mark.parametrize(("answers", "noted"), [([True, False], True), ([False, True], False)])
+async def test_asks_the_inputs_function_once_a_call(answers: list[bool], noted: bool) -> None:
+    lsquare, events = client()
+    server = build(Plan(one_page("orders")))
+    left: list[bool] = []
+    instrument(server, lsquare, extras={"missing_tools": True}, results=False, inputs=lambda name: left.pop(0) if left else True)
+    async with connected(server) as connection:
+        # The client's own listings, which it can make around a call, answer true.
+        await connection.tools()
+        left[:] = answers
+        try:
+            reply = await connection.call("get_more_tools", {"need": "issue refunds"})
+        except Exception:
+            reply = None
+    await lsquare.aflush(timeout_ms=5_000)
+    assert (reply is not None and bool(reply.texts) and reply.texts[0].startswith("Noted.")) is noted
+    [event] = events.calls()
+    if noted:
+        assert event["extra"] == "missing_tools" and event["input"] == {"need": "issue refunds"}
+    else:
+        assert "extra" not in event
+
+
+async def test_doesnt_count_get_more_tools_as_on_in_dry_run_with_inputs_off() -> None:
+    from lsquare import LSquare
+
+    recorder = Recorder()
+    lsquare = LSquare(dry_run=True, logger=recorder)
+    instrument(build(Plan(one_page("orders"))), lsquare, extras={"sessions": True, "missing_tools": True}, inputs=False)
+    assert recorder.wait_for(lambda: any("the server's own tool list" in line for _, line in recorder.lines))
+    line = next(line for _, line in recorder.lines if "the server's own tool list" in line)
+    assert '"on":["session_id"]' in line
+
+
+async def test_says_in_dry_run_that_get_more_tools_depends_on_an_inputs_function() -> None:
+    from lsquare import LSquare
+
+    recorder = Recorder()
+    lsquare = LSquare(dry_run=True, logger=recorder)
+    instrument(build(Plan(one_page("orders"))), lsquare, extras={"sessions": True, "missing_tools": True}, inputs=lambda name: name != "get_more_tools")
+    assert recorder.wait_for(lambda: any("the server's own tool list" in line for _, line in recorder.lines))
+    line = next(line for _, line in recorder.lines if "the server's own tool list" in line)
+    assert '"get_more_tools":"only where the inputs function answers true for it"' in line
+
+
 async def test_says_in_dry_run_whether_the_extras_are_on_and_where_they_come_from() -> None:
     from lsquare import LSquare
 

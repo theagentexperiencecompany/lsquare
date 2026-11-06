@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import contextvars
 import functools
+import hashlib
 import gc
 import re
 import subprocess
@@ -1181,7 +1182,7 @@ async def test_a_stateful_http_session_keeps_its_id_whatever_query_a_request_add
         issued = await asyncio.to_thread(session, url)
     await lsquare.aflush(timeout_ms=5_000)
     assert [(event["input"]["query"], event["sessionId"], event["sessionSource"]) for event in events.calls()] == [
-        (query, issued, "protocol") for query in order
+        (query, hashlib.sha256(issued.encode()).hexdigest(), "protocol") for query in order
     ]
 
 

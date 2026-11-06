@@ -209,6 +209,25 @@ describe.each([sdk1, sdk2])('$name, high-level', (sdk) => {
     }
   })
 
+  it("keeps an error's own name as its type only if it reads as a class's", async () => {
+    const { connection, client, calls } = await serve({
+      sentence: async () => {
+        const error = new Error('x')
+        error.name = 'Failed for name-MKIN'
+        throw error
+      },
+      own: async () => {
+        throw new TypeError('x')
+      },
+    })
+    await connection.call('sentence')
+    await connection.call('own')
+    await client.flush()
+    const [sentence, own] = calls()
+    expect(sentence?.error).not.toHaveProperty('type')
+    expect(own?.error).toMatchObject({ type: 'TypeError' })
+  })
+
   it('records no inputs or results where told not to, nor an isError result’s text', async () => {
     const { connection, client, calls } = await serve(
       { kept: async () => text('a'), hidden: async () => ({ ...text('secret result'), isError: true }) },
@@ -222,6 +241,83 @@ describe.each([sdk1, sdk2])('$name, high-level', (sdk) => {
     expect(kept).not.toHaveProperty('result')
     expect(hidden).not.toHaveProperty('input')
     expect(hidden!.error).toEqual({ category: 'tool_error' })
+  })
+
+  const failing: Record<string, Tool> = {
+    boom: async () => {
+      throw new TypeError('the private note')
+    },
+    word: async () => {
+      throw 'the private note'
+    },
+    empty: async () => ({ ...text('the private note'), isError: true }),
+  }
+
+  it.each([[{ results: false }], [{ inputs: false }]])('records how a call failed but none of its text with %j', async (options) => {
+    const { connection, client, calls } = await serve(failing, { extras: OFF, ...options })
+    for (const name of ['boom', 'word', 'empty', 'nope']) await connection.call(name)
+    await client.flush()
+    const [boom, word, empty, nope] = calls()
+    expect(boom!.error).toEqual({ type: 'TypeError', category: 'thrown' })
+    expect(word!.error).toEqual({ category: 'thrown' })
+    expect(empty!.error).toEqual({ category: 'tool_error' })
+    expect(nope!.error).toMatchObject({ category: 'protocol' })
+    expect(nope!.error).not.toHaveProperty('message')
+    for (const event of calls()) {
+      expect(event).toMatchObject({ status: 'error' })
+      expect(event).not.toHaveProperty('result')
+      expect(JSON.stringify(event)).not.toContain('private note')
+    }
+  })
+
+  it('records a failed call in full with both on', async () => {
+    const { connection, client, calls } = await serve(failing, { extras: OFF })
+    for (const name of ['boom', 'word', 'empty']) await connection.call(name)
+    await client.flush()
+    const [boom, word, empty] = calls()
+    expect(boom!.error).toEqual({ message: 'the private note', type: 'TypeError', category: 'thrown' })
+    expect(word!.error).toEqual({ message: 'the private note', category: 'thrown' })
+    expect(empty).toMatchObject({ error: { message: 'the private note', category: 'tool_error' }, result: text('the private note') })
+  })
+
+  it("keeps a cancelled call's fixed sentence with results and inputs off", async () => {
+    let started: () => void = () => {}
+    const running = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let release: () => void = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const lsquare = setup()
+    const server = instrument(
+      sdk.high({
+        slow: async () => {
+          started()
+          await held
+          return text('too late')
+        },
+      }),
+      lsquare.client,
+      { extras: OFF, inputs: false, results: false },
+    )
+    const [a, b] = (sdk === sdk1 ? Memory1 : Memory2).createLinkedPair()
+    await server.connect(a as never)
+    const raw: any = new (sdk === sdk1 ? Client1 : Client2)({ name: 'claude-code', version: '2.1' })
+    await raw.connect(b)
+    const controller = new AbortController()
+    const request = { name: 'slow', arguments: {} }
+    const options = { signal: controller.signal }
+    const call = (sdk === sdk1 ? raw.callTool(request, undefined, options) : raw.callTool(request, options)).catch(() => undefined)
+    await running
+    controller.abort()
+    await call
+    await tick()
+    release()
+    await vi.waitFor(async () => {
+      await lsquare.client.flush()
+      expect(lsquare.calls()[0]!.error).toEqual({ message: 'The request was cancelled before the tool finished.', category: 'timeout' })
+    })
   })
 
   it('records no inputs or results for a call its function throws on or answers with a promise, saying so once per option', async () => {
@@ -794,6 +890,29 @@ describe('instrument()', () => {
       },
     })
     expect(lsquare.logs[1]).toContain('"kind":"tool_call"')
+  })
+
+  it("says in dry run that it won't add get_more_tools with inputs off", async () => {
+    const lsquare = setup({ apiKey: undefined, dryRun: true })
+    instrument(sdk2.high({ ask: async () => text('ok') }), lsquare.client, { inputs: false })
+    await tick()
+    expect(JSON.parse(lsquare.logs[0]!.replace('[lsquare dry-run] ', '')).extras.get_more_tools).toBe("not added: its input wouldn't be recorded")
+  })
+
+  it("doesn't ask an inputs function in dry run, which runs outside any request", async () => {
+    const lsquare = setup({ apiKey: undefined, dryRun: true })
+    const asked: string[] = []
+    instrument(sdk2.high({ ask: async () => text('ok') }), lsquare.client, {
+      inputs: (name) => {
+        asked.push(name)
+        return true
+      },
+    })
+    await tick()
+    expect(JSON.parse(lsquare.logs[0]!.replace('[lsquare dry-run] ', '')).extras.get_more_tools).toBe(
+      'added while the server has an enabled tool of its own, and the inputs function answers true for it',
+    )
+    expect(asked).toEqual([])
   })
 
   it("leaves a server it doesn't recognise as it is, with a warning, and never throws", async () => {

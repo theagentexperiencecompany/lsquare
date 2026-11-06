@@ -6,6 +6,7 @@ needed from them is read from the modules the app has already loaded (`sys.modul
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import math
 import re
@@ -78,8 +79,19 @@ def close(value: Any) -> None:
     try:
         if inspect.iscoroutine(value):
             value.close()
+        elif isinstance(value, asyncio.Future):
+            if value.done():
+                _consume(value)
+            else:
+                value.add_done_callback(_consume)
     except Exception:
         pass
+
+
+def _consume(future: asyncio.Future[Any]) -> None:
+    """Takes a task's exception, which asyncio would otherwise log with its text, once nothing awaits it."""
+    if not future.cancelled():
+        future.exception()
 
 
 def cancelled(error: BaseException) -> bool:
