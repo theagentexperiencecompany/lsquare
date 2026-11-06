@@ -1,6 +1,6 @@
 {
   "name": "@lsquare/contract",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "What the SDKs send LSquare's ingestion and what it answers: the wire limits, the event checks, turn references, the acknowledgement, and the shared test cases",
   "type": "module",

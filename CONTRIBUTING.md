@@ -7,7 +7,7 @@ instead. By contributing, you agree that your contribution is licensed under the
 
 ## TypeScript
 
-Node 22.12 or later (CI uses 24), from the repository's root:
+Node 22.18+, 24.11+ or 26+ (CI uses 24), from the repository's root:
 
 ```sh
 npm ci --ignore-scripts
@@ -22,7 +22,7 @@ installed.
 
 ## Python
 
-[uv](https://docs.astral.sh/uv/), and Node 22.12 or later with the root's `npm ci` done (some tests
+[uv](https://docs.astral.sh/uv/), and Node 22.18+, 24.11+ or 26+ with the root's `npm ci` done (some tests
 run the TypeScript SDK to compare the two):
 
 ```sh
