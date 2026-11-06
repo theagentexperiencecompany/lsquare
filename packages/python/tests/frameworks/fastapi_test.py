@@ -6,6 +6,7 @@ in process through httpx's ASGI transport, the lifespan run as a server runs it.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from typing import Any
 
 import pytest
@@ -102,5 +103,5 @@ async def test_a_mounted_server_records_each_call_and_the_lifespans_ashutdown_se
     else:
         # Grouped by the session the server issued: no ID line.
         assert task is None and http.session is not None
-        assert {(event["sessionId"], event["sessionSource"]) for event in events.values()} == {(http.session, "protocol")}
+        assert {(event["sessionId"], event["sessionSource"]) for event in events.values()} == {(hashlib.sha256(http.session.encode()).hexdigest(), "protocol")}
         assert all(event["client"] == {"name": "claude-code", "version": "2.1"} for event in events.values())

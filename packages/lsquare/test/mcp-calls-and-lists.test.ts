@@ -31,7 +31,9 @@ import { instrument, type Identity, type InstrumentOptions } from '../src/mcp/in
 import { mark, newLists, newWait, waitOnce, type Reader } from '../src/mcp/lists.js'
 import { adopted, declared, own, read, silence } from '../src/mcp/read.js'
 import { turnKey } from '../src/normalize.js'
+import { createHash } from 'node:crypto'
 
+const hashed = (id: string): string => createHash('sha256').update(id).digest('hex')
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
 const OFF = { sessions: false, intent: false, missingTools: false }
@@ -801,7 +803,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     const replies = await pollutedFlushed(lsquare, { sessionId: 'sess_polluted_0123456789' }, async () => [await connection.call({ name: 't', arguments: {} }), await connection.call({ name: 't', arguments: {} })])
     expect(replies.map(texts)).toEqual([['rows'], ['rows']])
     const [one, two] = lsquare.calls()
-    expect(one).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(UUID) })
+    expect(one).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
     expect(two!.sessionId).toBe(one!.sessionId)
   })
 
@@ -811,7 +813,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     const connection = await overStdio(kind, sessionsOn(lsquare), 'set-on-the-transport')
     await connection.call({ name: 't', arguments: {} })
     await lsquare.client.flush({ timeoutMs: 2_000 })
-    expect(lsquare.calls()[0]).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(UUID) })
+    expect(lsquare.calls()[0]).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
   })
 
   it.each([1, 2] as const)("takes no sessionId from it over stateless HTTP, SDK 1.x's transport having none, so the call keeps its ID line, while a stateful one's own still groups it (SDK %d.x)", async (sdk) => {
@@ -821,7 +823,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     const call = { name: 't', arguments: {} }
     const replies = await pollutedFlushed(lsquare, { sessionId: 'sess_polluted_0123456789' }, async () => [await stateless.call(call), await stateful.call(call)])
     expect(replies.map(texts)).toEqual([['rows', ID_LINE], ['rows']])
-    expect(lsquare.calls()).toMatchObject([{ sessionSource: 'issued' }, { sessionId: 'issued-by-server', sessionSource: 'protocol' }])
+    expect(lsquare.calls()).toMatchObject([{ sessionSource: 'issued' }, { sessionId: hashed('issued-by-server'), sessionSource: 'protocol' }])
   })
 
   it.each(STDIO)("takes no client or protocol version from a _meta of its on stdio (%s): initialize's are the call's, and the connection keeps its ID", async (kind) => {
@@ -831,7 +833,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     // The SDKs' parse also copies it into their reply: its texts are the tool's.
     const reply = await pollutedFlushed(lsquare, meta, () => connection.call({ name: 't', arguments: {} }))
     expect(texts(reply)).toEqual(['rows'])
-    expect(lsquare.calls()[0]).toMatchObject({ client: { name: 'claude-code', version: '2.1' }, protocolVersion: '2025-11-25', sessionSource: 'protocol', sessionId: expect.stringMatching(UUID) })
+    expect(lsquare.calls()[0]).toMatchObject({ client: { name: 'claude-code', version: '2.1' }, protocolVersion: '2025-11-25', sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
   })
 
   it.each([1, 2] as const)("takes no protocol version or client from a _meta of its over stateful HTTP: the header's and initialize's are the call's, which keeps the server's session (SDK %d.x)", async (sdk) => {
@@ -840,7 +842,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     const meta = { _meta: { [CLIENT_INFO]: { name: 'other', version: '6' }, [VERSION]: '2026-07-28' } }
     const reply = await pollutedFlushed(lsquare, meta, () => connection.call({ name: 't', arguments: {} }))
     expect(texts(reply)).toEqual(['rows'])
-    expect(lsquare.calls()[0]).toMatchObject({ client: { name: 'cursor', version: '1.7' }, protocolVersion: '2025-11-25', sessionId: 'issued-by-server', sessionSource: 'protocol' })
+    expect(lsquare.calls()[0]).toMatchObject({ client: { name: 'cursor', version: '1.7' }, protocolVersion: '2025-11-25', sessionId: hashed('issued-by-server'), sessionSource: 'protocol' })
   })
 
   it.each([1, 2] as const)('takes no client or protocol version from a _meta of its in memory either, where SDK 2.x lifts it into its envelope (SDK %d.x)', async (sdk) => {
@@ -876,7 +878,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     expect(replies.map(texts)).toEqual([['rows'], ['rows']])
     const [none, theirs] = lsquare.calls()
     expect(none!.input).toEqual({})
-    expect(none).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(UUID) })
+    expect(none).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
     expect(theirs).toMatchObject({ input: { q: 'own' }, sessionId: sent, sessionSource: 'sent' })
   })
 
@@ -980,7 +982,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
     const call = { name: 't', arguments: {} }
     const replies = await pollutedFlushed(lsquare, { sessionId: 'issued-by-server' }, async () => [await stateful.call(call), await stateless.call(call)])
     expect(replies.map(texts)).toEqual([['rows'], ['rows', ID_LINE]])
-    expect(lsquare.calls()).toMatchObject([{ sessionId: 'issued-by-server', sessionSource: 'protocol' }, { sessionSource: 'issued' }])
+    expect(lsquare.calls()).toMatchObject([{ sessionId: hashed('issued-by-server'), sessionSource: 'protocol' }, { sessionSource: 'issued' }])
   })
 
   it.each([1, 2] as const)("takes that evidence from the transport the call came on, read before a low-level server's snapshot wait, though the server moves to another meanwhile (SDK %d.x)", async (sdk) => {
@@ -1006,7 +1008,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
       release()
       for (let i = 0; i < 400 && lsquare.calls().length === 0; i++) await lsquare.client.flush({ timeoutMs: 50 }).then(() => sleep(5))
     })
-    expect(lsquare.calls()).toMatchObject([{ sessionId: 'issued-by-server', sessionSource: 'protocol' }])
+    expect(lsquare.calls()).toMatchObject([{ sessionId: hashed('issued-by-server'), sessionSource: 'protocol' }])
   })
 
   // Codex's fifth review. zod copies the checks it finds as it builds a schema into the function it
@@ -1190,7 +1192,7 @@ describe("ts-core-14, the wrapper's half: a polluted Object.prototype", () => {
       return done
     })
     expect(replies.map(texts)).toEqual([['rows', ID_LINE], ['rows', ID_LINE], ['rows']])
-    expect(lsquare.calls()).toMatchObject([{ sessionSource: 'issued' }, { sessionSource: 'issued' }, { sessionId: 'issued-by-server', sessionSource: 'protocol' }])
+    expect(lsquare.calls()).toMatchObject([{ sessionSource: 'issued' }, { sessionSource: 'issued' }, { sessionId: hashed('issued-by-server'), sessionSource: 'protocol' }])
   })
 
   const FRESH_META = [

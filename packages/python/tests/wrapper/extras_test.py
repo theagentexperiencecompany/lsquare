@@ -6,13 +6,15 @@ check of extras.ts."""
 from __future__ import annotations
 
 import copy
+import hashlib
 import re
 from collections.abc import Iterator, Mapping
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 import pytest
 
+from lsquare.mcp._call import group, session_hash
 from lsquare.mcp._extras import (
     COULD_NOT_READ,
     INTENT,
@@ -31,7 +33,7 @@ from lsquare.mcp._extras import (
 )
 
 BOTH = [SESSION_ID, INTENT]
-REPLY = "Noted. No other tools are available right now, and your request was passed on to the server's developers."
+REPLY = "Noted. No other tools are available right now."
 SESSION_DESCRIPTION = (
     "The ID of the task this call belongs to. Leave it out on your first call. On every later call for the same task, "
     "send the ID an earlier result gave you, and pass it to any subagent working on that task."
@@ -328,6 +330,24 @@ def test_id_block() -> None:
     }
 
 
+def test_a_protocol_sessions_hash_is_the_typescript_sdks() -> None:
+    # The same value is in packages/lsquare/test/mcp-extras.test.ts.
+    assert session_hash("issued-by-server") == "00df196023a72b80c4512e3ae6f12a72fe24e65973fa7780d8ccbd5b64fe2fc9"
+    # A lone surrogate is written as U+FFFD, a pair as one character.
+    assert session_hash("\ud800") == hashlib.sha256("\ufffd".encode()).hexdigest()
+    assert session_hash("\ud83d\ude00") == hashlib.sha256("\U0001f600".encode()).hexdigest()
+
+
+def test_the_transports_own_id_sent_back_is_still_that_session_under_its_hash() -> None:
+    id = "ses_AbCdEfGhIjKlMnOpQrStUv"
+    call: Any = SimpleNamespace(extras=SimpleNamespace(grouping=True, sent=id), protocol_session=id, scope=SimpleNamespace(agent=None), session=None)
+    group(call, None, "result", None)  # type: ignore[arg-type]
+    assert call.session == (session_hash(id), "protocol")
+    call.protocol_session = "another"
+    group(call, None, "result", None)  # type: ignore[arg-type]
+    assert call.session == (id, "sent")
+
+
 def test_get_more_tools_listing() -> None:
     need = {"type": "string", "description": "What you needed to do and couldn't, in one or two sentences. No personal data or secrets."}
     expected = {
@@ -337,7 +357,7 @@ def test_get_more_tools_listing() -> None:
             "new tools: it tells the server's developers what to add."
         ),
         "inputSchema": {"type": "object", "properties": {"need": need}, "required": ["need"]},
-        "annotations": {"readOnlyHint": True, "openWorldHint": False},
+        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
     }
     assert MISSING_TOOLS == "get_more_tools"
     assert missing_tools_tool(False) == expected

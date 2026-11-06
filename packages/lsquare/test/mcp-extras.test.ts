@@ -18,14 +18,16 @@ import { validateEvent } from '../../contract/src/validate.js'
 import { LSquare, type LSquareEvent, type LSquareOptions, type ToolCallEvent, type TurnEvent } from '../src/index.js'
 import { advertise } from '../src/mcp/extras.js'
 import { instrument } from '../src/mcp/index.js'
+import { createHash } from 'node:crypto'
 
+const hashed = (id: string): string => createHash('sha256').update(id).digest('hex')
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const tick = () => new Promise<void>((resolve) => setImmediate(() => setImmediate(resolve)))
 const text = (value: string) => ({ content: [{ type: 'text' as const, text: value }] })
 const ID = /^ses_[A-Za-z0-9_-]{22}$/
 const SENT = 'ses_AbCdEfGhIjKlMnOpQrStUv'
 const LINE = /^Task ID: (ses_[A-Za-z0-9_-]{22})\. Send it as session_id on later calls for this task, and pass it to any subagent working on it\.$/
-const REPLY = "Noted. No other tools are available right now, and your request was passed on to the server's developers."
+const REPLY = 'Noted. No other tools are available right now.'
 const OFF = { sessions: false, intent: false, missingTools: false }
 
 /** The session ID a reply's last block gives, if it gives one. */
@@ -148,7 +150,7 @@ describe.each([kit1, kit2])('$name: session_id and intent', (kit) => {
         properties: { need: { type: 'string', description: "What you needed to do and couldn't, in one or two sentences. No personal data or secrets." }, session_id: { type: 'string' } },
         required: ['need'],
       },
-      annotations: { readOnlyHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     })
     expect(tool(listed, 'get_more_tools').inputSchema.properties).not.toHaveProperty('intent')
     // The definition is the developer's, as registered.
@@ -419,7 +421,7 @@ describe.each([kit1, kit2])('$name: session_id and intent', (kit) => {
     const [ask, plain] = await lsquare.calls()
     expect(ask).toMatchObject({ conversationId: 'conversation-1' })
     expect(ask).not.toHaveProperty('sessionId')
-    expect(plain).toMatchObject({ sessionId: 'transport-id', sessionSource: 'protocol' })
+    expect(plain).toMatchObject({ sessionId: hashed('transport-id'), sessionSource: 'protocol' })
   })
 
   it('drops the extras from a listing still pending when the tools/call handler is replaced, and groups no later call', async () => {
@@ -700,11 +702,75 @@ describe.each([kit1, kit2])('$name: get_more_tools', (kit) => {
     expect(one).toMatchObject({ toolName: 'get_more_tools', extra: 'missing_tools', status: 'completed', input: { need: 'Cancel an order' }, sessionSource: 'issued', result: text(REPLY) })
     expect(two).toMatchObject({ extra: 'missing_tools', input: { need: 'Refund it' }, sessionId: issued(first), sessionSource: 'sent' })
 
+  })
+
+  it.each([[false], [(name: string) => name !== 'get_more_tools']])("isn't offered where its need wouldn't be recorded, and says so once", async (inputs) => {
     const quiet = setup()
-    const hidden = instrument(kit.server(), quiet.client, { inputs: (name) => name !== 'get_more_tools' })
+    const hidden = instrument(kit.server(), quiet.client, { inputs })
     hidden.registerTool('search', {}, async () => text('ok'))
-    await (await kit.connect(hidden)).call('get_more_tools', { need: 'Cancel an order' })
-    expect((await quiet.calls())[0]).not.toHaveProperty('input')
+    const connection = await kit.connect(hidden)
+    expect((await connection.list()).tools.map((entry: any) => entry.name)).toEqual(['search'])
+    await connection.list()
+    await tick()
+    expect(quiet.logs.filter((line) => line.includes("get_more_tools isn't offered"))).toHaveLength(1)
+    const reply = await connection.call('get_more_tools', { need: 'Cancel an order' })
+    expect(JSON.stringify(reply)).not.toContain('Noted.')
+    const [event] = await quiet.calls()
+    expect(event).not.toHaveProperty('extra')
+    expect(JSON.stringify(event)).not.toContain('Cancel an order')
+  })
+
+  it.each([
+    [[true, false], true],
+    [[false, true], false],
+  ])('asks the inputs function once a call: answers %j', async (answers, noted) => {
+    const lsquare = setup()
+    let reads = 0
+    const server = instrument(kit.server(), lsquare.client, { inputs: () => (answers as boolean[])[reads++] ?? false })
+    server.registerTool('search', {}, async () => text('ok'))
+    const reply = await (await kit.connect(server)).call('get_more_tools', { need: 'Cancel an order' })
+    expect(JSON.stringify(reply).includes('Noted.')).toBe(noted)
+    expect(reads).toBe(1)
+    const [event] = await lsquare.calls()
+    if (noted) expect(event).toMatchObject({ extra: 'missing_tools', input: { need: 'Cancel an order' } })
+    else expect(event).not.toHaveProperty('extra')
+  })
+
+  it("keeps a warning of its own for an inputs function that doesn't know get_more_tools", async () => {
+    const lsquare = setup()
+    const policy: Record<string, { log: boolean }> = { search: { log: true } }
+    const server = instrument(kit.server(), lsquare.client, { inputs: (name) => (policy[name] as { log: boolean }).log })
+    server.registerTool('search', {}, async () => text('ok'))
+    server.registerTool('other', {}, async () => text('ok'))
+    const connection = await kit.connect(server)
+    await connection.list()
+    await tick()
+    expect(lsquare.logs.filter((line) => line.includes('when asked about get_more_tools'))).toHaveLength(1)
+    expect(lsquare.logs.filter((line) => line.includes("aren't recorded for the calls"))).toEqual([])
+    await connection.call('other')
+    await tick()
+    expect(lsquare.logs.filter((line) => line.includes("aren't recorded for the calls"))).toHaveLength(1)
+  })
+
+  it("still warns of the server's own get_more_tools with inputs off", async () => {
+    const lsquare = setup()
+    const server = instrument(kit.server(), lsquare.client, { inputs: false })
+    server.registerTool('get_more_tools', {}, async () => text('mine'))
+    await (await kit.connect(server)).list()
+    await tick()
+    expect(lsquare.logs.filter((line) => line.includes('has its own get_more_tools'))).toHaveLength(1)
+  })
+
+  it("keeps none of a refusal's text, which can quote what was sent, with inputs off", async () => {
+    const lsquare = setup()
+    const server = instrument(kit.server(), lsquare.client, { extras: false, inputs: false })
+    server.registerTool('strict', { inputSchema: z.strictObject({ q: z.string().optional() }) }, async () => text('ok'))
+    const reply = await (await kit.connect(server)).call('strict', { 'the-private-note': 1 })
+    expect(JSON.stringify(reply)).toContain('the-private-note')
+    const [event] = await lsquare.calls()
+    expect(event).toMatchObject({ status: 'error', error: { category: 'protocol' } })
+    expect(event).not.toHaveProperty('result')
+    expect(JSON.stringify(event)).not.toContain('the-private-note')
   })
 
   it('answers a call without a string need with an isError reply, recorded as protocol', async () => {
@@ -798,6 +864,17 @@ describe.each(transports)('$kit.name: protocol sessions', ({ kit, http, stdio })
   const initialize = { jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'old', version: '1' } } }
   const callAsk = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'ask', arguments: {} } }
 
+  it("hashes the transport's own ID when an agent sends it back, as the same session", async () => {
+    const lsquare = setup()
+    const server = instrument(kit.server(), lsquare.client)
+    server.registerTool('ask', { inputSchema: z.object({}) }, async () => text('ok'))
+    const raw = (server as any).server._requestHandlers.get('tools/call')
+    await raw({ method: 'tools/call', params: { name: 'ask', arguments: { session_id: SENT } } }, { ...direct(kit, SENT), requestInfo: {} })
+    const [event] = await lsquare.calls()
+    expect(event).toMatchObject({ sessionId: hashed(SENT), sessionSource: 'protocol' })
+    expect(JSON.stringify(event)).not.toContain(SENT)
+  })
+
   it("groups an older client's calls by the session a stateful HTTP server issued, leaving results unchanged", async () => {
     const lsquare = setup()
     const transport: any = http({ sessionIdGenerator: () => 'issued-by-server', enableJsonResponse: true })
@@ -805,7 +882,11 @@ describe.each(transports)('$kit.name: protocol sessions', ({ kit, http, stdio })
     await post(transport, initialize)
     const response = await post(transport, callAsk, { 'mcp-session-id': 'issued-by-server' })
     expect(((await response.json()) as any).result).toEqual(text('ok'))
-    expect((await lsquare.calls())[0]).toMatchObject({ sessionId: 'issued-by-server', sessionSource: 'protocol' })
+    const [event] = await lsquare.calls()
+    // The same value is in packages/python/tests/wrapper/extras_test.py.
+    expect(event).toMatchObject({ sessionId: '00df196023a72b80c4512e3ae6f12a72fe24e65973fa7780d8ccbd5b64fe2fc9', sessionSource: 'protocol' })
+    expect(event!.sessionId).toBe(hashed('issued-by-server'))
+    expect(JSON.stringify(event)).not.toContain('issued-by-server')
   })
 
   it('sends no session ID from a stateful HTTP server with sessions turned off', async () => {
@@ -855,7 +936,7 @@ describe.each(transports)('$kit.name: protocol sessions', ({ kit, http, stdio })
     expect(await connect()).toEqual([text('ok'), text('ok')])
     expect(await connect()).toEqual([text('ok'), text('ok')])
     const [one, two, three, four] = await lsquare.calls()
-    expect(one).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f-]{36}$/) })
+    expect(one).toMatchObject({ sessionSource: 'protocol', sessionId: expect.stringMatching(/^[0-9a-f]{64}$/) })
     expect(two!.sessionId).toBe(one!.sessionId)
     expect(three).toMatchObject({ sessionSource: 'protocol' })
     expect(four!.sessionId).toBe(three!.sessionId)
@@ -881,7 +962,7 @@ describe('protocol versions', () => {
     expect(await server.server._requestHandlers.get('tools/call')(older, extra)).toEqual(text('ok'))
     const [one, two] = await lsquare.calls()
     expect(one).toMatchObject({ sessionSource: 'issued' })
-    expect(two).toMatchObject({ sessionId: 'transport-session', sessionSource: 'protocol' })
+    expect(two).toMatchObject({ sessionId: hashed('transport-session'), sessionSource: 'protocol' })
   })
 })
 
