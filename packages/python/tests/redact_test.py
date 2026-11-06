@@ -280,6 +280,12 @@ def pem(label: str) -> str:
     return f"-----BEGIN {label}PRIVATE KEY-----\n{'ABCD' * 16}\n-----END {label}PRIVATE KEY-----"
 
 
+class TestATokenCutOffAfterAWrittenLineEnd:
+    def test_is_masked_the_escapes_letter_isnt_part_of_the_token(self) -> None:
+        for escape in ("\\n", "\\r", "\\t"):
+            assert Redactor(ALL).cut_text(f"a{escape}sk-abcdefgh", 14) == f"a{escape}[SECRET_1]"
+
+
 class TestAPemKeyCutOff:
     def test_is_masked_whole_when_the_cut_falls_anywhere_in_its_end_line(self) -> None:
         for label in ("", "RSA ", "OPENSSH "):

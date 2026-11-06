@@ -262,6 +262,32 @@ function time(text: string): number {
   return best
 }
 
+describe('values under secret names in other syntax', () => {
+  const question = (text: string) => redactBody({ question: text }, resolvePatterns(undefined)).value.question
+  it.each([
+    ["{'password': 'x', 'a': 1}", "{'password': '[SECRET_1]', 'a': 1}"],
+    ["must\n  Field required [type=missing, input_value={'a': 'b'}, input_type=dict]", 'must\n  Field required [type=missing, input_value=[SECRET_1], input_type=dict]'],
+    ['https://x.io/?token=abc&a=1', 'https://x.io/?token=[SECRET_1]&a=1'],
+    ['https://x.io/?next=https%3A%2F%2Fy.io%3Ftoken%3Dabc', 'https://x.io/?next=https%3A%2F%2Fy.io%3Ftoken%3D[SECRET_1]'],
+    ['postgres://admin:p@ss@db/app', 'postgres://[SECRET_1]@db/app'],
+    ["'\\U0001f511sk-abcdefghijklmnopqrstuvwx'", "'\\U0001f511[SECRET_1]'"],
+    ['"\\0sk-abcdefghijklmnopqrstuvwx"', '"\\0[SECRET_1]"'],
+    ['k -----BEGIN PRIVATE KEY-----\nMIIEow\n-----END PRIV', 'k [SECRET_1]'],
+    [`{"user's passwords": ['old]pass', 'hunter2']}`, `{"user's passwords": '[SECRET_1]'}`],
+    ["x [type=password[invalid], input_value='abc', input_type=str]", 'x [type=password[invalid], input_value=[SECRET_1], input_type=str]'],
+  ])('%s', (given, expected) => {
+    expect(question(given)).toBe(expected)
+  })
+
+  it('reads cards of the newer ranges, as text and as numbers', () => {
+    expect(question('card 2223003122003222 ok')).toBe('card [CARD_1] ok')
+    expect(question('card 36227206271667 ok')).toBe('card [CARD_1] ok')
+    expect(question('score 0.2278193294195734 ok')).toBe('score 0.2278193294195734 ok')
+    const { value } = redactBody({ toolCalls: [{ name: 'tool', input: { a: 2223003122003222, b: 36227206271667, c: 2220000000000000 } }] }, resolvePatterns(undefined))
+    expect(value.toolCalls).toEqual([{ name: 'tool', input: { a: '[CARD_1]', b: '[CARD_2]', c: 2220000000000000 } }])
+  })
+})
+
 describe('performance', () => {
   it('numbers 10,000 distinct emails in linear time', () => {
     const text = Array.from({ length: 10_000 }, (_, i) => `u${i}@acme.io`).join(' ')

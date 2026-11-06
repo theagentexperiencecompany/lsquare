@@ -240,13 +240,12 @@ const V2_TOOL_CALL: Record<string, Check> = {
   server: isNamed,
   input: anyJson,
   result: isObject,
-  // Limited diagnostics keep only a category; any other call has a message.
+  // Limited diagnostics keep only a category, and a call whose error text isn't recorded has no message.
   error: (value) =>
     isObject(value) &&
-    ((isString(value.message) &&
-      optional(value, 'type', isString) &&
-      optional(value, 'code', (code) => isFiniteNumber(code) || isString(code))) ||
-      (!has(value, 'message') && ERROR_CATEGORIES.has(value.category as string))),
+    optional(value, 'type', isString) &&
+    optional(value, 'code', (code) => isFiniteNumber(code) || isString(code)) &&
+    (isString(value.message) || (!has(value, 'message') && ERROR_CATEGORIES.has(value.category as string))),
   durationMs: (value) => isFiniteNumber(value) && value >= 0,
   round: oneOf('input_required', 'continuation'),
   task: (value) => isObject(value) && isNonEmpty(value.id) && isString(value.status),
