@@ -211,11 +211,10 @@ async def test_keeps_a_warning_of_its_own_for_an_inputs_function_that_doesnt_kno
     instrument(app, lsquare, inputs=lambda name: policy[name])
     async with connect(app) as connection:
         await connection.tools()
-        lines = [line for _, line in recorder.lines]
-        assert sum("when asked about get_more_tools" in line for line in lines) == 1
-        assert not any("recorded for the calls" in line for line in lines)
+        assert recorder.wait_for(lambda: sum("when asked about get_more_tools" in line for _, line in recorder.lines) == 1)
+        assert not any("recorded for the calls" in line for _, line in recorder.lines)
         await connection.call("own_intent", {"query": "a"})
-    assert sum("recorded for the calls" in line for _, line in recorder.lines) == 1
+    assert recorder.wait_for(lambda: sum("recorded for the calls" in line for _, line in recorder.lines) == 1)
 
 
 async def test_a_failing_task_from_the_inputs_function_is_never_logged_with_its_text() -> None:
@@ -250,7 +249,7 @@ async def test_still_warns_of_the_servers_own_get_more_tools_with_inputs_off() -
     async with connect(app) as connection:
         await connection.tools()
         await connection.call("get_more_tools", {"need": "x"})
-    assert sum("has its own get_more_tools" in line for _, line in recorder.lines) == 1
+    assert recorder.wait_for(lambda: sum("has its own get_more_tools" in line for _, line in recorder.lines) == 1)
 
 
 @pytest.mark.parametrize("inputs", [False, lambda name: name != "get_more_tools"])
@@ -263,12 +262,13 @@ async def test_doesnt_offer_get_more_tools_where_its_need_wouldnt_be_recorded_an
     async with connect(app) as connection:
         names = [item.name for item in await connection.tools()]
         await connection.tools()
-        assert sum("get_more_tools isn't offered" in line for _, line in recorder.lines) == 1
+        assert recorder.wait_for(lambda: sum("get_more_tools isn't offered" in line for _, line in recorder.lines) == 1)
         try:
             reply = await connection.call("get_more_tools", {"need": "issue refunds"})
         except Exception:
             reply = None
     await lsquare.aflush(timeout_ms=5_000)
+    assert sum("get_more_tools isn't offered" in line for _, line in recorder.lines) == 1
     assert names == ["search"]
     assert reply is None or (reply.is_error and not reply.texts[0].startswith("Noted."))
     assert events.calls()
