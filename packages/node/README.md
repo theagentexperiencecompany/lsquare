@@ -108,6 +108,12 @@ your process alive. Call them as methods: `capture` passed on its own (e.g. `.th
 doesn't throw, but drops the event. A request to LSquare still in flight does keep the process alive
 until it ends, at most 10 seconds: in a script or a test, call `shutdown()` before exiting.
 
+Two bugs in Node's built-in `fetch` are the exception: a malicious or compromised endpoint can crash
+the process, and the SDK can't catch it
+([GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c),
+[GHSA-qrxm-fqhp-jwvm](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm)). They're fixed from Node
+22.23.4, 24.22.1 and 26.12.1; Node 18, 20 and 25 have no fixed release.
+
 Your callbacks (`beforeSend`, `onError`, `logger`) are your code, and so are getters, `toJSON`
 methods and Proxies in the data you capture. The SDK catches what they throw or reject, and gives
 every promise it reads from your data a rejection handler, even if you replaced the global
