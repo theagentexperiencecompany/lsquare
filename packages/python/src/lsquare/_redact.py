@@ -631,7 +631,7 @@ def _is_written_as(text: str, at: int, form: str) -> bool:
 
 def _leaves_url(match: str, offset: int, whole: str) -> bool:
     """Whether a URL's credentials match ran out of its URL, and so holds none: `host:443','ok','ops`
-    in `['https://host:443','ok','ops@example.com']`. It takes all of this: the URL is straight after
+    in `['https://host:443','ok','ops@...']`. It takes all of this: the URL is straight after
     a `'` or a backtick, alone, doubled or after a backslash, as an SQL or JavaScript string inside
     another writes it. That quote closes before any `@` and with no word character after it, as
     `o'brien` has, and it opens again before the match ends, written the same way each time. Anything
