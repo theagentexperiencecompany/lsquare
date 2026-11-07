@@ -286,6 +286,20 @@ class TestATokenCutOffAfterAWrittenLineEnd:
             assert Redactor(ALL).cut_text(f"a{escape}sk-abcdefgh", 14) == f"a{escape}[SECRET_1]"
 
 
+class TestAUrlInAListOfStrings:
+    LIST = "['https://host:443','sk-aaaaaaaaaaaaaaaaaaaa','ops@example.com']"
+
+    def test_stays_when_the_whole_match_is_before_the_cut_with_what_it_holds_masked(self) -> None:
+        assert Redactor(ALL).cut_text(self.LIST, len(self.LIST)) == "['https://host:443','[SECRET_1]','[EMAIL_1]']"
+
+    def test_counts_the_cut_after_what_it_replaced_in_the_match(self) -> None:
+        cut = self.LIST.index("ops@") + len("ops@example.com")
+        assert Redactor(ALL).cut_text(f"{self.LIST} kept", cut) == "['https://host:443','[SECRET_1]','[EMAIL_1]"
+
+    def test_goes_whole_when_the_match_runs_past_the_cut(self) -> None:
+        assert Redactor(ALL).cut_text(self.LIST, 25) == "['https://[SECRET_1]"
+
+
 class TestAPemKeyCutOff:
     def test_is_masked_whole_when_the_cut_falls_anywhere_in_its_end_line(self) -> None:
         for label in ("", "RSA ", "OPENSSH "):
@@ -376,6 +390,7 @@ class TestPerformance:
             "ipv6Compressed": lambda n: " 1::" * (n // 4),
             "ipv6GroupsBadEnd": lambda n: (" " + "aaaa:" * 7 + "g") * (n // 37),
             "urlCredentialsNoAt": lambda n: "://a:" * (n // 5),
+            "urlLeftByItsQuote": lambda n: ("'a://h:1" + "','" * 84 + "@d ") * (n // 263),
             "basicLetters": lambda n: ("Basic " + "a" * 600 + " ") * (n // 607),
             "encodedEmailNoDomain": lambda n: " a" + "%40a" * (n // 4),
         }

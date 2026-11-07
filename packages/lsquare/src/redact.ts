@@ -29,7 +29,7 @@ export const PATTERNS: Record<PatternName, RegExp> = {
   phone: /\+(?=[1-9](?:[ .()-]{0,2}\d){5})(?:\d{1,3}(?:[ .-]\(?|\()(?:\d{1,4}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{3,8}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{5,12}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{7,16}(?:[ .-]\d{2,4}\b|\b)|\d{9,20}\b)|\d{2,7}(?:\)[ .-]?|[ .-])(?:\d{2,4}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{4,8}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{6,12}(?:[ .-]\d{2,4}\b|\b)|\d{8,16}\b)|\d{4,11}[ .-](?:\d{2,4}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{4,8}(?:[ .-]\d{2,4}\b|\b)|\d{6,12}\b)|\d{6,15}(?:[ .-](?:\d{2,4}(?:[ .-]\d{2,4}\b|\b)|\d{4,8}\b)|\b)|\d{8,19}(?:[ .-]\d{2,4}\b|\b)|\d{10,23}\b)|\(\d{3}\) ?\d{3}-\d{4}\b|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))\d{3}-\d{3}-\d{4}\b/g,
   card: /(?<!\d\.)(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[3-6]\d{3}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720))(?:[ -]?\d){11,12}\b(?<![ -]\d)(?<![ -]\d\d)|3[068]\d\d(?:[ -]?\d){10}\b)/g,
   secret: new RegExp(
-    String.raw`(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|xox[a-z]-[A-Za-z0-9%+\/=-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack(?:-gov)?\.com\\{0,2}\/(?:services|triggers|workflows|commands|actions)\\{0,2}\/[A-Za-z0-9\/\\_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)(?:\\{0,7}["'])?[${WS}]*[:=][${WS}]*(?:\\{0,7}["'])?(?:[A-Za-z0-9\/+]|\\{1,2}\/){40}|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9._-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|phx_[A-Za-z0-9]{20,})|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(?:[Bb]earer|BEARER)[${WS}]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[${WS}]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))(?:(?!',|,')[^${WS}/:?#"]){0,256}:[^${WS}/?#"]{1,256}(?=@)|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))`,
+    String.raw`(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}|xox[a-z]-[A-Za-z0-9%+\/=-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack(?:-gov)?\.com\\{0,2}\/(?:services|triggers|workflows|commands|actions)\\{0,2}\/[A-Za-z0-9\/\\_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)(?:\\{0,7}["'])?[${WS}]*[:=][${WS}]*(?:\\{0,7}["'])?(?:[A-Za-z0-9\/+]|\\{1,2}\/){40}|AIza[0-9A-Za-z_-]{35}|ya29\.[A-Za-z0-9._-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|phx_[A-Za-z0-9]{20,})|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|(?:[Bb]earer|BEARER)[${WS}]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[${WS}]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))[^${WS}/:?#"]{0,256}:[^${WS}/?#"]{1,256}(?=@)|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))`,
     'g',
   ),
   ip: /(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|\d\d?)){3}\b|(?:(?<![0-9A-Za-z:.])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,7}:|(?:[0-9A-Fa-f]{1,4}:){1,6}:[0-9A-Fa-f]{1,4}|(?:[0-9A-Fa-f]{1,4}:){1,5}(?::[0-9A-Fa-f]{1,4}){1,2}|(?:[0-9A-Fa-f]{1,4}:){1,4}(?::[0-9A-Fa-f]{1,4}){1,3}|(?:[0-9A-Fa-f]{1,4}:){1,3}(?::[0-9A-Fa-f]{1,4}){1,4}|(?:[0-9A-Fa-f]{1,4}:){1,2}(?::[0-9A-Fa-f]{1,4}){1,5}|[0-9A-Fa-f]{1,4}:(?::[0-9A-Fa-f]{1,4}){1,6}|:(?::[0-9A-Fa-f]{1,4}){1,7})(?![0-9A-Za-z:]|\.\d)/g,
@@ -413,12 +413,18 @@ export class Redactor {
     let out = input
     for (const pattern of this.patterns) {
       if (skip(pattern, out)) continue
-      out = out.replace(PATTERNS[pattern], (match) => {
+      out = out.replace(PATTERNS[pattern], (match: string, offset: number, whole: string) => {
         if (rejected(pattern, match)) return match
+        if (pattern === 'secret' && leavesUrl(match, offset, whole)) return this.secretsIn(match, fresh)
         return this.placeholder(pattern, identity(pattern, match), fresh)
       })
     }
     return out
+  }
+
+  /** A match that holds no credentials: only the secrets in it go. */
+  private secretsIn(match: string, fresh: boolean): string {
+    return match.replace(PATTERNS.secret, (found) => this.placeholder('secret', identity('secret', found), fresh))
   }
 
   /**
@@ -434,12 +440,16 @@ export class Redactor {
       if (skip(pattern, out)) continue
       let shift = 0
       let straddled: number | undefined
-      out = out.replace(PATTERNS[pattern], (match: string, offset: number) => {
+      out = out.replace(PATTERNS[pattern], (match: string, offset: number, whole: string) => {
         if (offset >= at || straddled !== undefined || rejected(pattern, match)) return match
-        const placeholder = this.placeholder(pattern, identity(pattern, match), false)
-        if (offset + match.length <= at) shift += placeholder.length - match.length
-        else straddled = offset + shift + placeholder.length
-        return placeholder
+        const fits = offset + match.length <= at
+        const replaced =
+          fits && pattern === 'secret' && leavesUrl(match, offset, whole)
+            ? this.secretsIn(match, false)
+            : this.placeholder(pattern, identity(pattern, match), false)
+        if (fits) shift += replaced.length - match.length
+        else straddled = offset + shift + replaced.length
+        return replaced
       })
       at = straddled ?? at + shift
     }
@@ -522,6 +532,49 @@ function rejected(pattern: PatternName, match: string): boolean {
   if (pattern === 'card') return !luhn(match)
   // IPv6 needs three groups: `::1`, `fe80::1` and code such as `data[::10]` or `A::B` stay.
   if (pattern === 'ip') return match.includes(':') && match.split(':').filter(Boolean).length < 3
+  return false
+}
+
+/** `://` as it's written in text, in JSON and in JSON in JSON. */
+const URL_SLASHES = ['://', ':\\/\\/', ':\\\\/\\\\/']
+
+/** Whether `form` at `at` is the whole of how a quote is written there: `o''''brien` and a shell's `'\''` hold neither `'` nor `''`. */
+function isWrittenAs(text: string, at: number, form: string): boolean {
+  const quote = form.charAt(form.length - 1)
+  const before = text.slice(Math.max(at - 1, 0), at)
+  const after = text.slice(at + form.length, at + form.length + 1)
+  return before !== '\\' && before !== quote && after !== '\\' && after !== quote
+}
+
+/**
+ * Whether a URL's credentials match ran out of its URL, and so holds none: `host:443','ok','ops` in
+ * `['https://host:443','ok','ops@...']`. It takes all of this: the URL is straight after a `'`
+ * or a backtick, alone, doubled or after a backslash, as an SQL or JavaScript string inside another
+ * writes it. That quote closes before any `@` and with no word character after it, as `o'brien` has,
+ * and it opens again before the match ends, written the same way each time. Anything else stays masked
+ * whole, since `new URL` leaves a `'` in a password and `urlunsplit` a backtick too. Linear: it reads
+ * the match and at most 42 characters before it, and matches don't overlap.
+ */
+function leavesUrl(match: string, offset: number, whole: string): boolean {
+  if (whole[offset + match.length] !== '@') return false
+  const slashes = URL_SLASHES.find((written) => offset >= written.length && whole.startsWith(written, offset - written.length))
+  if (slashes === undefined) return false
+  const colon = offset - slashes.length
+  let scheme = colon
+  while (scheme > 0 && colon - scheme < 32 && /[A-Za-z0-9+.-]/.test(whole.charAt(scheme - 1))) scheme--
+  if (scheme === colon || scheme === 0) return false
+  const quote = whole.charAt(scheme - 1)
+  if (quote !== "'" && quote !== '`') return false
+  const previous = whole.slice(Math.max(scheme - 2, 0), scheme - 1)
+  const form = previous === quote || previous === '\\' ? previous + quote : quote
+  if (!isWrittenAs(whole, scheme - form.length, form)) return false
+  const closedBy = (at: number) => isWrittenAs(match, at, form) && !/\w/.test(match.slice(at + form.length, at + form.length + 1))
+  let closes = match.indexOf(form)
+  while (closes !== -1 && !closedBy(closes)) closes = match.indexOf(form, closes + 1)
+  if (closes === -1 || match.slice(0, closes).includes('@')) return false
+  for (let opens = match.indexOf(form, closes + form.length); opens !== -1; opens = match.indexOf(form, opens + 1)) {
+    if (isWrittenAs(match, opens, form)) return true
+  }
   return false
 }
 

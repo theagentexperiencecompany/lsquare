@@ -16455,5 +16455,1838 @@
         "secret": 1
       }
     }
+  },
+  {
+    "name": "URL credentials: a port in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "const rows=[['https://host:443','healthy','cache-hit','ops@example.com']];"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "const rows=[['https://host:443','healthy','cache-hit','[EMAIL_1]']];"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port in SQL values",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "INSERT INTO t VALUES('https://host:443','ok','ops@example.com');"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "INSERT INTO t VALUES('https://host:443','ok','[EMAIL_1]');"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port in backticks",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[`https://host:443`,`ops@example.com`]"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[`https://host:443`,`[EMAIL_1]`]"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a later colon in backticks",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[`https://example.com`,`mailto:ops@example.com`]"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[`https://example.com`,`mailto:[EMAIL_1]`]"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port in a minified dict's key",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{'https://host:443':'ops@example.com'}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{'https://host:443':'[EMAIL_1]'}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port in minified statements",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "x='https://host:443';y='ops@example.com'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "x='https://host:443';y='[EMAIL_1]'"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a template's port in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['http://{host}:{port}','ok','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['http://{host}:{port}','ok','[EMAIL_1]']"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: an IPv6 host in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['http://[::1]:8080','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['http://[::1]:8080','[EMAIL_1]']"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a minified list in JSON",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"code\":\"['https:\\/\\/host:443','ok','ops@example.com']\"}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"code\":\"['https:\\/\\/host:443','ok','[EMAIL_1]']\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a minified list in JSON in JSON",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\\"code\\\":\\\"['https:\\\\/\\\\/host:443','ok','ops@example.com']\\\"}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\\"code\\\":\\\"['https:\\\\/\\\\/host:443','ok','[EMAIL_1]']\\\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a key later in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://host:443','sk-aaaaaaaaaaaaaaaaaaaa','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://host:443','[SECRET_1]','[EMAIL_1]']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1,
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a key after the colon in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://user:sk-aaaaaaaaaaaaaaaaaaaa','x','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://user:[SECRET_1]','x','[EMAIL_1]']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1,
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: numbers stay in order around a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "sk-aaaaaaaaaaaaaaaaaaaa ['https://host:443','sk-bbbbbbbbbbbbbbbbbbbb','a@example.com'] sk-cccccccccccccccccccc"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[SECRET_1] ['https://host:443','[SECRET_2]','[EMAIL_1]'] [SECRET_3]"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 3,
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a quote alone doesn't end the URL",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "connect to 'postgres://u:12',x@db/app' failed"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "connect to 'postgres://[SECRET_1]@db/app' failed"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a quote before a percent-encoded comma",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:12'%2Cx@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: an SQL literal's doubled quote",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://o''brien:Hunter2Canary@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a shell's written quote",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:it'\\''s@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: an escaped quote doesn't open a string",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a',b\\'c@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a doubled quote doesn't open a string",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a',b''c@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a digit and a parenthesis in a password",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:123)abc@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: pipes in a password, after a pipe",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "|postgres://u:a|b|c@db/app|"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "|postgres://[SECRET_1]@db/app|"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: angle brackets in a password, after one",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "<postgres://u:a>,<b@db/app>"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "<postgres://[SECRET_1]@db/app>"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: parentheses in a password, after one",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "(postgres://u:a),(b@db/app)"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "(postgres://[SECRET_1]@db/app)"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two quotes in a password, with none before it",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://u:a','b@db/app"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://[SECRET_1]@db/app"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two quotes in a password, in double quotes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\"postgres://u:a','b@db/app\""
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\"postgres://[SECRET_1]@db/app\""
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: an @ before the quote closes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:p@ss',x'y@db'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: real credentials in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://u:pw@host','ok','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://[SECRET_1]@example.com']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two URLs with credentials in a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['postgres://u:a@h','postgres://v:b@i']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['postgres://[SECRET_1]@h','postgres://[SECRET_2]@i']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 2
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port in a list in escaped quotes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\'a\\':\\'https://host:443\\',\\'b\\':\\'ops@example.com\\'}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\'a\\':\\'https://host:443\\',\\'b\\':\\'[EMAIL_1]\\'}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a doubled quote before the URL, single ones after it",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''https://host:443','x','ops@example.com'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''https://[SECRET_1]@example.com'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a port and a comma with no quotes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "https://host:443,ops@example.com"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "https://[SECRET_1]@example.com"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a secret that isn't credentials, right after a URL's slashes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'https://-----BEGIN PRIVATE KEY-----a','b-----END PRIVATE KEY-----'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'https://[SECRET_1]'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a password holding a URL's own quote twice stays, as listed",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a','b@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a','b@db/app'"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a comma and a quote in the user",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://u,'v:Hunter2Canary@db/app"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://[SECRET_1]@db/app"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a quote and a comma in the user",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://u',v:Hunter2Canary@db/app"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://[SECRET_1]@db/app"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a comma and a quote in the user, in JSON",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"url\":\"postgres://u,'v:Hunter2Canary@db/app\"}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"url\":\"postgres://[SECRET_1]@db/app\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a URL with only a user, before a minified list with a colon",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://me@host','x','owner:ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['https://[SECRET_1]@example.com']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: no quote before a minified list",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "x=https://example.com','ops@example.com','mailto:help@example.com"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "x=https://[SECRET_1]@example.com"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a scheme too long to be read back",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa://host:443','ops@example.com']"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa://[SECRET_1]@example.com']"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a key format followed by an @, right after a URL's slashes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'https://-----BEGIN PRIVATE KEY-----a','b-----END PRIVATE KEY-----@db"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'https://[SECRET_1]@db"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a long password with an earlier @",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://u:a@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@db/app"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "postgres://[SECRET_1]@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb@db/app"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a list in an SQL string inside an SQL string",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "SELECT 'INSERT INTO status VALUES(''https://status.example.com'',''healthy'',''eu-west-1'',''api'',''200'',''owner:ops@example.com'');';"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "SELECT 'INSERT INTO status VALUES(''https://status.example.com'',''healthy'',''eu-west-1'',''api'',''200'',''owner:[EMAIL_1]'');';"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a list in an SQL string inside an SQL string, in JSON",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sql\":\"SELECT 'INSERT INTO status VALUES(''https://status.example.com'',''healthy'',''eu-west-1'',''api'',''200'',''owner:ops@example.com'');';\"}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"sql\":\"SELECT 'INSERT INTO status VALUES(''https://status.example.com'',''healthy'',''eu-west-1'',''api'',''200'',''owner:[EMAIL_1]'');';\"}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a later colon in a list in escaped quotes",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\'url\\':\\'https://example.com\\',\\'owner\\':\\'a:b@example.com\\'}"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "{\\'url\\':\\'https://example.com\\',\\'owner\\':\\'a:[EMAIL_1]\\'}"
+          }
+        ]
+      },
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a username's quote in an SQL string inside an SQL string",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://o''''brien:Hunter2Canary@db/app''"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://[SECRET_1]@db/app''"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a doubled quote closes, with none opening again",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://u:a'',b@db/app''"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://[SECRET_1]@db/app''"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: an escaped quote closes, with none opening again",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\'postgres://u:a\\',b@db/app\\'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\'postgres://[SECRET_1]@db/app\\'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a backslash before an escaped quote",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\\\'https://host:443\\\\','x','ops@example.com'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\\\'https://[SECRET_1]@example.com'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a password holding a URL's own doubled quote twice stays, as listed",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://u:a'',''b@db/app''"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "''postgres://u:a'',''b@db/app''"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two backslashes before the URL's quote, one before the others",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\\\'https://host:443\\',\\'ops@example.com\\'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "\\\\'https://[SECRET_1]@example.com\\'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a comma between pipes in a password, after a pipe",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "|postgres://u:a|,|b@db/app|"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "|postgres://[SECRET_1]@db/app|"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two apostrophes in credentials, with words after them",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://o'brien:a'b@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: a doubled quote doesn't close a string",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a'',b'c@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
+  },
+  {
+    "name": "URL credentials: two apostrophes in a password, as a shell writes them",
+    "call": {
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://u:a'\\''b'\\''c@db/app'"
+          }
+        ]
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "tool_call",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "'postgres://[SECRET_1]@db/app'"
+          }
+        ]
+      },
+      "redactions": {
+        "secret": 1
+      }
+    }
   }
 ]

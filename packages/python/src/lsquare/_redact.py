@@ -52,7 +52,7 @@ SOURCES: Final[dict[PatternName, str]] = {
         r"|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
         r"|(?:[Bb]earer|BEARER)[" + WS + r"]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*"
         r"|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[" + WS + r"]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}"
-        r"|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))(?:(?!',|,')[^" + WS + "/:?#\"]){0,256}:[^" + WS + "/?#\"]{1,256}(?=@)"
+        r"|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))[^" + WS + "/:?#\"]{0,256}:[^" + WS + "/?#\"]{1,256}(?=@)"
         r"|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))"
     ),
     "ip": (
@@ -103,6 +103,11 @@ _WRITTEN_ESCAPE: Final = re.compile(r"[nrtfb0aevNLP_]|u[0-9A-Fa-f]{4}|x[0-9A-Fa-
 #: Inside a run of token characters, a secret can start after one of these, as the patterns allow.
 _SECRET_BOUNDARY: Final = re.compile(r"[.~+/=]", re.ASCII)
 #: Matched values longer than this (in UTF-16 units) are numbered by a hash, so a pending event doesn't keep them.
+#: `://` as it's written in text, in JSON and in JSON in JSON.
+_URL_SLASHES: Final = ("://", ":\\/\\/", ":\\\\/\\\\/")
+_SCHEME_CHAR: Final = re.compile(r"[A-Za-z0-9+.-]", re.ASCII)
+_WORD_CHAR: Final = re.compile(r"\w", re.ASCII)
+
 MAX_KEPT_IDENTITY: Final = 64
 #: Python only: the fewest UTF-16 units each pattern matches (what `re`'s parser gives as its least
 #: width, which a test checks), so a string shorter than that is never searched for it.
@@ -444,10 +449,23 @@ class Redactor:
                 match = found.group(0)
                 if _rejected(pattern, match):
                     return match
+                if pattern == "secret" and _leaves_url(match, found.start(), found.string):
+                    return self._secrets_in(match, fresh)
                 return self._placeholder(pattern, _identity(pattern, match), fresh)
 
             out = PATTERNS[pattern].sub(replace_match, out)
         return out if units is value else join(out)
+
+    def _secrets_in(self, match: str, fresh: bool) -> str:
+        """A match that holds no credentials: only the secrets in it go."""
+
+        if _skip("secret", match):
+            return match
+
+        def replace_found(found: re.Match[str]) -> str:
+            return self._placeholder("secret", _identity("secret", found.group(0)), fresh)
+
+        return PATTERNS["secret"].sub(replace_found, match)
 
     def cut_text(self, window: str, cut: int, scanned: bool = False) -> str:
         """Redacts what's kept of a cut string, reading `window` past the cut at `cut` (a code point
@@ -473,12 +491,16 @@ class Redactor:
                 offset = found.start()
                 if offset >= at or straddled is not None or _rejected(pattern, match):
                     return match
-                placeholder = self._placeholder(pattern, _identity(pattern, match), False)
-                if offset + len(match) <= at:
-                    shift += len(placeholder) - len(match)
+                fits = offset + len(match) <= at
+                if fits and pattern == "secret" and _leaves_url(match, offset, found.string):
+                    replaced = self._secrets_in(match, False)
                 else:
-                    straddled = offset + shift + len(placeholder)
-                return placeholder
+                    replaced = self._placeholder(pattern, _identity(pattern, match), False)
+                if fits:
+                    shift += len(replaced) - len(match)
+                else:
+                    straddled = offset + shift + len(replaced)
+                return replaced
 
             out = PATTERNS[pattern].sub(replace_match, out)
             at = straddled if straddled is not None else at + shift
@@ -574,7 +596,8 @@ _LEAVES: Final = frozenset([int, float, bool, type(None)])
 
 def _skip(pattern: PatternName, value: str) -> bool:
     """Cheap checks that let a pattern skip text it can't match: TypeScript's, and in Python, for the
-    patterns its engine is slow on, a character or literal every match must contain."""
+    patterns its engine is slow on, a character or literal the text must hold for a match anywhere in
+    it, which may be just before the match, as `://` is for a URL's credentials."""
     if pattern == "email":
         return "@" not in value and "%40" not in value
     if pattern == "ip":
@@ -594,6 +617,56 @@ def _rejected(pattern: PatternName, match: str) -> bool:
     # IPv6 needs three groups: `::1`, `fe80::1` and code such as `data[::10]` or `A::B` stay.
     if pattern == "ip":
         return ":" in match and len([part for part in match.split(":") if part]) < 3
+    return False
+
+
+def _is_written_as(text: str, at: int, form: str) -> bool:
+    """Whether `form` at `at` is the whole of how a quote is written there: `o''''brien` and a shell's
+    `'\\''` hold neither `'` nor `''`."""
+    quote = form[-1]
+    before = text[max(at - 1, 0) : at]
+    after = text[at + len(form) : at + len(form) + 1]
+    return before != "\\" and before != quote and after != "\\" and after != quote
+
+
+def _leaves_url(match: str, offset: int, whole: str) -> bool:
+    """Whether a URL's credentials match ran out of its URL, and so holds none: `host:443','ok','ops`
+    in `['https://host:443','ok','ops@...']`. It takes all of this: the URL is straight after
+    a `'` or a backtick, alone, doubled or after a backslash, as an SQL or JavaScript string inside
+    another writes it. That quote closes before any `@` and with no word character after it, as
+    `o'brien` has, and it opens again before the match ends, written the same way each time. Anything
+    else stays masked whole, since `new URL` leaves a `'` in a password and `urlunsplit` a backtick
+    too. Linear: it reads the match and at most 42 characters before it, and matches don't overlap."""
+    if whole[offset + len(match) : offset + len(match) + 1] != "@":
+        return False
+    slashes = next((written for written in _URL_SLASHES if offset >= len(written) and whole.startswith(written, offset - len(written))), None)
+    if slashes is None:
+        return False
+    colon = offset - len(slashes)
+    scheme = colon
+    while scheme > 0 and colon - scheme < 32 and _SCHEME_CHAR.match(whole[scheme - 1]) is not None:
+        scheme -= 1
+    if scheme == colon or scheme == 0:
+        return False
+    quote = whole[scheme - 1]
+    if quote not in ("'", "`"):
+        return False
+    previous = whole[max(scheme - 2, 0) : scheme - 1]
+    form = previous + quote if previous in (quote, "\\") else quote
+    if not _is_written_as(whole, scheme - len(form), form):
+        return False
+    closes = match.find(form)
+    while closes != -1 and (
+        not _is_written_as(match, closes, form) or _WORD_CHAR.match(match[closes + len(form) : closes + len(form) + 1]) is not None
+    ):
+        closes = match.find(form, closes + 1)
+    if closes == -1 or "@" in match[:closes]:
+        return False
+    opens = match.find(form, closes + len(form))
+    while opens != -1:
+        if _is_written_as(match, opens, form):
+            return True
+        opens = match.find(form, opens + 1)
     return False
 
 

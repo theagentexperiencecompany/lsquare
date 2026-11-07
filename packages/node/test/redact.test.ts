@@ -310,6 +310,7 @@ describe('performance', () => {
       ipv6Compressed: (n) => ' 1::'.repeat(n / 4),
       ipv6GroupsBadEnd: (n) => (' ' + 'aaaa:'.repeat(7) + 'g').repeat(n / 37),
       urlCredentialsNoAt: (n) => '://a:'.repeat(n / 5),
+      urlLeftByItsQuote: (n) => `'a://h:1${"','".repeat(84)}@d `.repeat(n / 263),
       basicLetters: (n) => ('Basic ' + 'a'.repeat(600) + ' ').repeat(n / 607),
       encodedEmailNoDomain: (n) => ' a' + '%40a'.repeat(n / 4),
     }
