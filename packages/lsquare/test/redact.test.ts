@@ -267,6 +267,23 @@ describe('a token cut off straight after a line end or tab written in JSON', () 
   })
 })
 
+describe('a URL in a list of strings', () => {
+  const list = "['https://host:443','sk-aaaaaaaaaaaaaaaaaaaa','ops@example.com']"
+
+  it('stays when the whole match is before the cut, with what it holds masked', () => {
+    expect(new Redactor(all).cutText(list, list.length)).toBe("['https://host:443','[SECRET_1]','[EMAIL_1]']")
+  })
+
+  it('counts the cut after what it replaced in the match', () => {
+    const cut = list.indexOf('ops@') + 'ops@example.com'.length
+    expect(new Redactor(all).cutText(`${list} kept`, cut)).toBe("['https://host:443','[SECRET_1]','[EMAIL_1]")
+  })
+
+  it('goes whole when the match runs past the cut', () => {
+    expect(new Redactor(all).cutText(list, 25)).toBe("['https://[SECRET_1]")
+  })
+})
+
 describe('a PEM key cut off', () => {
   const pem = (label: string) => `-----BEGIN ${label}PRIVATE KEY-----\n${'ABCD'.repeat(16)}\n-----END ${label}PRIVATE KEY-----`
 
@@ -324,6 +341,7 @@ describe('performance', { retry: 3 }, () => {
       ipv6Compressed: (n) => ' 1::'.repeat(n / 4),
       ipv6GroupsBadEnd: (n) => (' ' + 'aaaa:'.repeat(7) + 'g').repeat(n / 37),
       urlCredentialsNoAt: (n) => '://a:'.repeat(n / 5),
+      urlLeftByItsQuote: (n) => `'a://h:1${"','".repeat(84)}@d `.repeat(n / 263),
       basicLetters: (n) => ('Basic ' + 'a'.repeat(600) + ' ').repeat(n / 607),
       encodedEmailNoDomain: (n) => ' a' + '%40a'.repeat(n / 4),
     }
