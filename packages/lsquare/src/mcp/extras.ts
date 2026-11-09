@@ -41,7 +41,7 @@ export function idBlock(id: string): { type: 'text'; text: string } {
   return { type: 'text', text: `Task ID: ${id}. Send it as session_id on later calls for this task, and pass it to any subagent working on it.` }
 }
 
-/** get_more_tools as listed: it takes `need`, and `session_id` when sessions are on. It changes nothing on the server, but its `need` leaves it. */
+/** get_more_tools as listed: it takes `need`, and `session_id` when sessions are on. It changes nothing on the server, but recording `need` is what it's for, so it isn't read-only. */
 export function missingToolsTool(sessions: boolean): Record<string, unknown> {
   const properties: Record<string, unknown> = { need: { type: 'string', description: NEED_DESCRIPTION } }
   if (sessions) put(properties, SESSION_ID, { type: 'string', description: DESCRIPTIONS[SESSION_ID] })

@@ -9,6 +9,8 @@ cache and the token, which files a release publishes, and which pull requests sk
 - No checkout keeps the token.
 - Every job that takes the Python package takes python-build's artifact by its ID, checked first,
   and its files by the SHA-256s python-build recorded once its pinned build and checks were done.
+- Only the release's `publish` job can get a token for PyPI, and it waits for the `pypi`
+  environment, whose required reviewer approves each release.
 - The `changes` step, run on scratch repositories: only a pull request into main that changes
   Markdown alone, and not packages/contract/REDACTION.md, skips the test suites.
 - Every job that runs the workspaces' code builds packages/contract first, and a pull request that
@@ -158,6 +160,12 @@ def test_publish_uploads_only_the_files_python_build_recorded() -> None:
     assert check["working-directory"] == download["with"]["path"] == steps[upload]["with"]["packages-dir"].rstrip("/")
     # And nothing but those files: the upload takes the whole directory.
     assert "ls -A" in check["run"]
+
+
+def test_only_publish_can_publish_and_it_waits_for_the_pypi_environment() -> None:
+    release = jobs("pypi-release.yml")
+    assert release["publish"]["environment"] == "pypi"
+    assert [job_id for job_id, job in release.items() if (job.get("permissions") or {}).get("id-token") == "write"] == ["publish"]
 
 
 def test_python_build_records_the_files_of_its_pinned_build_once_checked() -> None:

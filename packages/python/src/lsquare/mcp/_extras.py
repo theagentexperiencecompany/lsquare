@@ -73,7 +73,7 @@ def id_block(id: str) -> dict[str, str]:
 
 def missing_tools_tool(sessions: bool) -> dict[str, Any]:
     """get_more_tools as listed: it takes `need`, and `session_id` when sessions are on. It changes
-    nothing on the server, but its `need` leaves it."""
+    nothing on the server, but recording `need` is what it's for, so it isn't read-only."""
     properties: dict[str, Any] = {"need": {"type": "string", "description": _NEED_DESCRIPTION}}
     if sessions:
         properties[SESSION_ID] = {"type": "string", "description": _DESCRIPTIONS[SESSION_ID]}

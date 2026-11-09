@@ -1,6 +1,6 @@
 {
   "name": "lsquare",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Record every tool call of your MCP server, and the agent turns behind them, in LSquare",
   "license": "MIT",
   "author": "The Agent Experience Company",

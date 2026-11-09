@@ -126,6 +126,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # The only job that can publish: it downloads the tested files and hands them to PyPA's action.
+    # It waits for the environment's required reviewer, and PyPI's publishers name the environment.
+    environment: pypi
     permissions:
       id-token: write
     steps:
@@ -149,9 +151,6 @@ jobs:
         with:
           repository-url: ${{ inputs.index == 'testpypi' && 'https://test.pypi.org/legacy/' || 'https://upload.pypi.org/legacy/' }}
           packages-dir: dist/
-          # Off while the repository is private: they'd log its name, workflow and commit in
-          # Sigstore's public transparency log for good (RELEASING.md).
-          attestations: false
           # A file already there fails the upload, except when recovering, once `verify` has
           # checked those files are this build's.
           skip-existing: ${{ inputs.recover }}
