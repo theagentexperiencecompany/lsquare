@@ -43,7 +43,8 @@ SOURCES: Final[dict[PatternName, str]] = {
     ),
     "card": r"(?<!\d\.)(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:(?:[3-6]\d{3}|2(?:20[0-4]|22[1-9]|2[3-9]\d|[3-6]\d\d|7[01]\d|720))(?:[ -]?\d){11,12}\b(?<![ -]\d)(?<![ -]\d\d)|3[068]\d\d(?:[ -]?\d){10}\b)",
     "secret": (
-        r"(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
+        r"(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))[^" + WS + "/:?#\"]{0,256}:[^" + WS + "/?#\"]{1,256}(?=@)"
+        r"|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:lsq_[A-Za-z0-9_-]{40,}|sk-[A-Za-z0-9_-]{20,}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9]{24,}"
         r"|gh[opsur]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{36}"
         r"|xox[a-z]-[A-Za-z0-9%+\/=-]{10,}|xapp-[A-Za-z0-9-]{10,}|hooks\.slack(?:-gov)?\.com\\{0,2}\/(?:services|triggers|workflows|commands|actions)\\{0,2}\/[A-Za-z0-9\/\\_-]{20,}"
         r"|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:aws_secret_access_key|AWS_SECRET_ACCESS_KEY)" + r"(?:\\{0,7}[" + "\"'" + "])?[" + WS + "]*[:=][" + WS + r"]*(?:\\{0,7}[" + "\"'" + "])?"
@@ -52,7 +53,6 @@ SOURCES: Final[dict[PatternName, str]] = {
         r"|(?:(?<![A-Za-z0-9_-])|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
         r"|(?:[Bb]earer|BEARER)[" + WS + r"]+(?=[A-Za-z0-9._~+/-]{0,512}\d)[A-Za-z0-9._~+/-]{16,}=*"
         r"|(?:\b|(?<=\\[nrtfb0aevNLP_])|(?<=\\u[0-9A-Fa-f]{4})|(?<=\\x[0-9A-Fa-f]{2})|(?<=\\U[0-9A-Fa-f]{8}))(?:Basic|BASIC)[" + WS + r"]+(?=[A-Za-z0-9+/]{0,512}[0-9+=])[A-Za-z0-9+/]{16,}={0,2}"
-        r"|(?:(?<=:\/\/)|(?<=:\\\/\\\/)|(?<=:\\\\\/\\\\\/))[^" + WS + "/:?#\"]{0,256}:[^" + WS + "/?#\"]{1,256}(?=@)"
         r"|-----BEGIN [A-Z ]{0,32}PRIVATE KEY-----(?:[^-]|-(?!----))*?(?:-----END [A-Z ]{0,32}PRIVATE KEY-----|(?:-----[A-Z ]{0,48}-{0,4})?(?![\d\D]))"
     ),
     "ip": (
@@ -67,7 +67,8 @@ SOURCES: Final[dict[PatternName, str]] = {
 #: 0.1's patterns, with `\s` written out. Each matches in linear time (redact.ts says how). The phone
 #: pattern and the IPv4 octet are 0.1's, rewritten so that adjacent digit repeats can't split one run of
 #: digits in more than one way, and they match exactly what 0.1's did. packages/lsquare/scripts/phone-pattern.mjs
-#: builds the phone pattern from 0.1's pieces.
+#: builds the phone pattern from 0.1's pieces. A URL's credentials come first in `secret`, so a key as
+#: their user goes with the password.
 PATTERNS: Final[dict[PatternName, re.Pattern[str]]] = {name: re.compile(source, re.ASCII) for name, source in SOURCES.items()}
 
 #: 0.1's secret key names, matched by the end of a key lowercased and stripped to `a-z0-9`.

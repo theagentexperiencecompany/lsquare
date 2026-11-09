@@ -18288,5 +18288,215 @@
         "secret": 1
       }
     }
+  },
+  {
+    "name": "URL credentials: a key as the user goes with its password, as in Celery's SQS broker URL",
+    "turn": {
+      "question": "broker_url = 'sqs://AKIAIOSFODNN7EXAMPLE:CanaryQz@'"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "broker_url = 'sqs://[SECRET_1]@'",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the user goes with its password, in an S3 URL with a bucket and a path",
+    "turn": {
+      "question": "s3://AKIAIOSFODNN7EXAMPLE:CanaryQz@bucket/key"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "s3://[SECRET_1]@bucket/key",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the user goes with its password, a `!` in it",
+    "turn": {
+      "question": "postgres://AKIAIOSFODNN7EXAMPLE:CanaryQz!@db.example.com/app"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "postgres://[SECRET_1]@db.example.com/app",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the user goes with its password with the email pattern off, which would have taken the password and host",
+    "options": {
+      "redact": {
+        "email": false
+      }
+    },
+    "turn": {
+      "question": "https://AKIAIOSFODNN7EXAMPLE:CanaryQz@s3.amazonaws.com"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]@s3.amazonaws.com",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a GitHub token as the user goes with its password, the host kept",
+    "turn": {
+      "question": "git clone https://ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:x-oauth-basic@github.com/a/b.git"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "git clone https://[SECRET_1]@github.com/a/b.git",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the user goes with its password, before a list of hosts with ports",
+    "turn": {
+      "question": "mongodb://AKIAIOSFODNN7EXAMPLE:CanaryQz@h1:27017,h2:27017/db"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "mongodb://[SECRET_1]@h1:27017,h2:27017/db",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a token as the user with no password goes alone, the port kept",
+    "turn": {
+      "question": "https://ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@host:443/path"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]@host:443/path",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the host with a port and no @ goes alone",
+    "turn": {
+      "question": "https://sk-aaaaaaaaaaaaaaaaaaaa:443/path"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]:443/path",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the host in a list of strings goes alone, the email after it on its own",
+    "turn": {
+      "question": "['https://sk-aaaaaaaaaaaaaaaaaaaa:443','x','ops@example.com']"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "['https://[SECRET_1]:443','x','[EMAIL_1]']",
+      "redactions": {
+        "secret": 1,
+        "email": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a password over 256 characters with an @ in it goes up to that @, and what follows it stays",
+    "turn": {
+      "question": "https://ghp_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:pppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp@CanarySecret.com@host/repo"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]@CanarySecret.com@host/repo",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key with its password and the same key alone get different numbers",
+    "turn": {
+      "question": "https://sk-aaaaaaaaaaaaaaaaaaaa:pw@h sk-aaaaaaaaaaaaaaaaaaaa"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]@h [SECRET_2]",
+      "redactions": {
+        "secret": 2
+      },
+      "status": "completed"
+    }
+  },
+  {
+    "name": "URL credentials: a key as the host with a port goes up to a later @",
+    "turn": {
+      "question": "https://sk-aaaaaaaaaaaaaaaaaaaa:443,ops@example.com"
+    },
+    "event": {
+      "eventId": "$uuid",
+      "schemaVersion": 2,
+      "source": "live",
+      "kind": "turn",
+      "question": "https://[SECRET_1]@example.com",
+      "redactions": {
+        "secret": 1
+      },
+      "status": "completed"
+    }
   }
 ]
