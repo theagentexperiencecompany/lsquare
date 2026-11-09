@@ -35,6 +35,7 @@ describe('patterns', () => {
     ['secret', 'Authorization: Basic YWRtaW46aHVudGVyMi1zZWNyZXQ=', 'Authorization: [SECRET_1]'],
     ['secret', 'postgres://admin:hunter2@db.internal/app', 'postgres://[SECRET_1]@db.internal/app'],
     ['secret', 'REDIS_URL=redis://:s3cretPassw0rd@localhost:6379', 'REDIS_URL=redis://[SECRET_1]@localhost:6379'],
+    ['secret', 'broker_url = sqs://AKIAIOSFODNN7EXAMPLE:CanaryQz@', 'broker_url = sqs://[SECRET_1]@'],
     ['email', `write to ${'a.'.repeat(40)}jane@acme.io`, 'write to [EMAIL_1]'],
     ['email', 'GET /users?email=jane.doe%40acme.io', 'GET /users?email=[EMAIL_1]'],
     ['ip', 'from 192.168.1.20', 'from [IP_1]'],
