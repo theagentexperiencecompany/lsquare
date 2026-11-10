@@ -357,7 +357,7 @@ def test_get_more_tools_listing() -> None:
             "new tools: it tells the server's developers what to add."
         ),
         "inputSchema": {"type": "object", "properties": {"need": need}, "required": ["need"]},
-        "annotations": {"readOnlyHint": False, "destructiveHint": False, "openWorldHint": True},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True},
     }
     assert MISSING_TOOLS == "get_more_tools"
     assert missing_tools_tool(False) == expected

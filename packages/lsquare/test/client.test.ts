@@ -359,7 +359,7 @@ describe('sending', () => {
       kind: 'turn',
       source: 'live',
       schemaVersion: 2,
-      sdk: { name: 'lsquare', version: '0.2.0', language: 'js', runtime: `node/${process.versions.node.split('.')[0]}` },
+      sdk: { name: 'lsquare', version: '0.2.1', language: 'js', runtime: `node/${process.versions.node.split('.')[0]}` },
       status: 'completed',
       question: 'Ask [EMAIL_1]',
       redactions: { email: 1 },

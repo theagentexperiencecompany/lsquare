@@ -127,10 +127,11 @@ call that leaves it out.
 ### `get_more_tools`: what agents looked for
 
 A server with at least one enabled tool of its own gets one more tool, `get_more_tools`, marked as
-not read-only, since what the agent writes leaves the server, with a required `need` input (and the
-optional `session_id`): "Call this when none of the available tools fits what you need, or one fits
-only in part. It doesn't return new tools: it tells the server's developers what to add." The
-wrapper answers it ("Noted. No other tools are available right now.") and records the request as a
+read-only, since nothing on your server changes, and as reaching outside the server, since what
+the agent writes leaves it, with a required `need` input (and the optional `session_id`): "Call
+this when none of the available tools fits what you need, or one fits only in part. It doesn't
+return new tools: it tells the server's developers what to add." The wrapper answers it
+("Noted. No other tools are available right now.") and records the request as a
 `tool_call` event with `extra: "missing_tools"`. With `inputs` off for it, the server doesn't get
 the tool, since the request wouldn't be recorded. It's added to the last page of a paged list.
 Clients that cap the number of tools across servers count it. A server that registers its own

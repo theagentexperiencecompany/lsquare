@@ -313,7 +313,7 @@ describe('sending', () => {
       turnId: '42',
       source: 'live',
       schemaVersion: 1,
-      sdk: { name: '@lsquare/node', version: '0.1.2' },
+      sdk: { name: '@lsquare/node', version: '0.1.3' },
       status: 'completed',
       question: 'Ask [EMAIL_1]',
       redactions: { email: 1 },

@@ -16,7 +16,7 @@ import type {
 } from './types.js'
 
 export const SDK_NAME = '@lsquare/node'
-export const SDK_VERSION = '0.1.2'
+export const SDK_VERSION = '0.1.3'
 
 const DEFAULTS = {
   flushTimeoutMs: 2_000,

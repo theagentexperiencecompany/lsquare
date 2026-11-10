@@ -8,48 +8,56 @@ stable release of `lsquare`, so a plain `pip install lsquare` installs the newes
 
 ## Who can release
 
-Anyone with write access to the repository: PyPI checks the repository and the workflow's file
-name, not the branch, the person, or what the file says, so a workflow of that name run from any
-branch, edited or not, can publish. The workflow's own checks (from `main` only, and the rest
-below) stop mistakes, not someone with write access who means to get round them. Today that's the
-org's admins; the org's members get read access by default, which can't.
+Anyone with write access to the repository can start a release, but nothing is uploaded until the
+`pypi` environment's required reviewer approves the run's `publish` job. PyPI checks the
+repository, the workflow's file name and the environment, not the person or what the file says: a
+job outside the environment is refused, and the environment takes only runs from `main`. The
+workflow's own checks (from `main` only, and the rest below) stop mistakes; the approval stops
+someone with write access acting alone. An admin can still change the environment, or bypass it
+if it lets admins bypass its rules (setting up, below). Today write
+access is the org's admins'; the org's members get read access by default, which can't start a
+release.
 
 So:
 
-- Give the Write role (or higher) on this repository only to people you'd trust to publish.
+- Give the Write role (or higher) on this repository only to people you'd trust to publish, and
+  the Admin role only to people you'd trust to change who approves.
+- Approve only a run you started, from `main`, with the version you meant.
 - Keep two-factor login on for everyone in the org: GitHub → the org's Settings → Authentication
   security → Require two-factor authentication.
 - Keep PyPI to this one way in: delete any API token you don't use (PyPI → Account settings → API
   tokens).
 
-GitHub Free has no environments for private repositories, so a release can't wait for someone's
-approval. If the repository goes public (or the org moves to Enterprise), add an environment
-`pypi` with you as its required reviewer, set `environment: pypi` on the `publish` job, and name
-the environment in the PyPI publisher too.
-
 ## Setting up, once
 
-The same values on TestPyPI, for rehearsals, and on PyPI. TestPyPI is a separate site, with its
+1. **The environment,** before the first run: GitHub → the repository's Settings → Environments →
+   New environment, named `pypi`. Under Deployment protection rules, tick Required reviewers and
+   add yourself, and leave Prevent self-review unticked, since you approve your own runs. Untick
+   Allow administrators to bypass configured protection rules, or an admin's run publishes without
+   anyone's approval. Under Deployment branches and tags, choose Selected branches and tags, then
+   Add deployment branch or tag rule: a branch, `main`. Save. A run that names an environment that
+   doesn't exist makes it, with no reviewer, so make this one first.
+
+The same publisher on TestPyPI, for rehearsals, and on PyPI. TestPyPI is a separate site, with its
 own account and two-factor login.
 
 | Field | Value |
 |---|---|
-| PyPI project name (TestPyPI only) | `lsquare` |
 | Owner | `theagentexperiencecompany` |
 | Repository name | `lsquare` |
 | Workflow name | `pypi-release.yml` |
-| Environment name | leave it empty |
+| Environment name | `pypi` |
 
-1. **TestPyPI:** `lsquare` doesn't exist there yet, so add a *pending* publisher: test.pypi.org →
-   Your account → Publishing → Add a new pending publisher → GitHub, with the values above. The
-   first upload creates the project, owned by your account.
-2. **PyPI:** pypi.org → Your projects → `lsquare` → Manage → Publishing → Add a new publisher →
-   GitHub, with the values above (no project name: it's this project's).
+2. **TestPyPI:** test.pypi.org → Your projects → `lsquare` → Manage → Publishing → Add a new
+   publisher → GitHub, with the values above. Then remove every other publisher listed there, such
+   as one naming the repository's old owner or name.
+3. **PyPI:** the same on pypi.org: Your projects → `lsquare` → Manage → Publishing.
 
 ## Each release
 
 1. **The version:** a pull request sets `src/lsquare/_version.py` to the release's version
-   (`0.2.0b1`), merged into `main` with CI green.
+   (`0.2.0b1`) and says what changed in the repository's `CHANGELOG.md`, merged into `main` with CI
+   green.
 2. **The rehearsal:** GitHub → Actions → PyPI release → Run workflow, from `main`, with the
    version and `testpypi`. Or:
 
@@ -57,7 +65,9 @@ own account and two-factor login.
    gh workflow run pypi-release.yml --ref main -f version=0.2.0b1 -f index=testpypi
    ```
 
-3. **The release:** the same, with `pypi`.
+   Once CI and the checks pass, the run waits at `publish`: its page → Review deployments → `pypi`
+   → Approve and deploy.
+3. **The release:** the same, with `pypi`, and approved the same way.
 4. **After it:** a pull request sets `_version.py` to the next beta's `.dev0` (`0.2.0b2.dev0`), so
    what's built in between doesn't say it's the release.
 
@@ -136,10 +146,10 @@ builds the release's own commit, so it uses that commit's pins.
 
 ## Attestations
 
-The upload carries no [PEP 740 attestations](https://docs.pypi.org/attestations/) while the
-repository is private: signing them would write the repository's name, the workflow and the commit
-into Sigstore's public transparency log, for good. When the repository is public, remove
-`attestations: false` from the `publish` job, and PyPI shows each file's provenance.
+Each upload carries [PEP 740 attestations](https://docs.pypi.org/attestations/), PyPA's action's
+default: PyPI shows each file's provenance, the repository, workflow and commit that built it. The
+signing also writes those into Sigstore's public transparency log, for good, which is no more than
+the public repository already shows.
 
 ## At launch
 

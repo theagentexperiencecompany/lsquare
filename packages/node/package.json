@@ -1,6 +1,6 @@
 {
   "name": "@lsquare/node",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Capture MCP turns and send them to LSquare",
   "license": "MIT",
   "author": "The Agent Experience Company",

@@ -14,8 +14,10 @@ out, by hand (step 7). Both have pointed at 0.2.0 since 2 November 2026. An owne
 
 From a checkout of the repository, with `gh` signed in:
 
-1. **The version:** a pull request sets `version` in `packages/lsquare/package.json`, merged into
-   `main` with CI green.
+1. **The version:** a pull request sets `version` in `packages/lsquare/package.json`, its entry in
+   the root `package-lock.json`, and `SDK_VERSION` in `src/client.ts`, which events send, with the
+   tests that expect it, and says what changed in `CHANGELOG.md`. It's merged into `main` with CI
+   green.
 2. **The commit's CI:** the push run of `ci.yml` for that exact commit of `main`, finished and
    green. A pull request's run doesn't count: its tarball is built from a merge commit, and one
    that changes Markdown alone skips the tests.
@@ -27,7 +29,9 @@ From a checkout of the repository, with `gh` signed in:
    ```
 
    Its `status` is `completed` and its `conclusion` `success`; `databaseId` is the run's ID.
-3. **Its tarball,** into an empty directory:
+3. **Its tarball,** into an empty directory that `mktemp` makes. npm keeps the tarball's path in
+   the version's public metadata for good (`_from` and `_resolved`), and `mktemp`'s path names no
+   one; a folder under your home or a tool's working folder would.
 
    ```bash
    dir=$(mktemp -d)
@@ -62,10 +66,11 @@ From a checkout of the repository, with `gh` signed in:
    ```bash
    npm view lsquare@<version> dist.integrity
    npm view lsquare dist-tags
+   npm view lsquare@<version> _from _resolved
    ```
 
-   The integrity is step 4's, and the tags are `next: <version>` and, until step 7, `latest` the
-   version before.
+   The integrity is step 4's, the tags are `next: <version>` and, until step 7, `latest` the
+   version before, and the paths are step 3's directory.
 7. **`latest`,** for a version without a prerelease part (`0.2.1`, not `0.3.0-beta.1`):
    `npm dist-tag add lsquare@<version> latest`, so a plain `npm install lsquare` gets it too.
 

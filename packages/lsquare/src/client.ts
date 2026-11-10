@@ -17,7 +17,7 @@ import type {
 } from './types.js'
 
 export const SDK_NAME = 'lsquare'
-export const SDK_VERSION = '0.2.0'
+export const SDK_VERSION = '0.2.1'
 
 /** How the wrapper (`lsquare/mcp`) reaches a client: by this key, never `instanceof`, so two copies of the SDK still meet. */
 export const INTERNAL = Symbol.for('lsquare.client.internal/1')

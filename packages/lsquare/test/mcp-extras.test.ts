@@ -150,7 +150,7 @@ describe.each([kit1, kit2])('$name: session_id and intent', (kit) => {
         properties: { need: { type: 'string', description: "What you needed to do and couldn't, in one or two sentences. No personal data or secrets." }, session_id: { type: 'string' } },
         required: ['need'],
       },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
     })
     expect(tool(listed, 'get_more_tools').inputSchema.properties).not.toHaveProperty('intent')
     // The definition is the developer's, as registered.

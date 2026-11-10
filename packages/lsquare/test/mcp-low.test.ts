@@ -226,7 +226,7 @@ describe.each([kit1, kit2])('$name: low-level extras', (kit) => {
     const connection = await kit.connect(fixed.server)
     const listed = await connection.list()
     expect(Object.keys(tool(listed, 'search').inputSchema.properties)).toEqual(['q', 'session_id', 'intent'])
-    expect(tool(listed, 'get_more_tools')).toMatchObject({ inputSchema: { required: ['need'] }, annotations: { readOnlyHint: false, openWorldHint: true } })
+    expect(tool(listed, 'get_more_tools')).toMatchObject({ inputSchema: { required: ['need'] }, annotations: { readOnlyHint: true, openWorldHint: true } })
     const first = await connection.call('search', { q: 'a', intent: 'Find late orders' })
     expect(withoutLine(first)).toEqual(text('{"q":"a"}'))
     const id = issued(first)
