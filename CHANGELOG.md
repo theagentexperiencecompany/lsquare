@@ -45,10 +45,9 @@ with inputs or results off, a failed call's error text is no longer sent.
 
 - It's offered only when inputs are recorded, since its description tells the agent that what it
   writes reaches the server's developers.
-- It's no longer marked read-only, since recording what the agent writes is what it's for
-  (`readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: true`). An agent app that runs
-  read-only tools without asking now asks the person before each call, and makes no call when it
-  can't ask. The READMEs say how the agents tried behave.
+- It's now marked as reaching outside the server (`openWorldHint: true`), since what the agent
+  writes leaves it, and still as read-only (`readOnlyHint: true`, `destructiveHint: false`), since
+  nothing on the server changes. The READMEs say how the agents tried behave with each label.
 - Its reply no longer says the request was passed on, which a hook or a failed `identify` can stop.
 
 ### Fixed

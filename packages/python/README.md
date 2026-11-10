@@ -218,12 +218,14 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - **`get_more_tools`**: both called it in every run where no tool fitted, or one fitted only in
   part (8 of 8 each). Claude Code never called it otherwise. Codex did in 3 of the 18 runs where the
   tools fitted: each time, after confirming a customer had been charged twice and before answering,
-  it asked for the payment-processor logs that would explain why. Those runs were before the tool
-  stopped being marked read-only. Run again on 9 November 2026 (Claude Code 2.1.321, Codex CLI
-  0.167.0), Claude Code still called it in every run where no tool fitted (16 of 16) and never
-  otherwise. Codex tried to in all 16, and refused each call itself: it asks the person before a
-  tool that isn't marked read-only, and these runs had approvals off. Used interactively, Codex asks
-  the person before each call.
+  it asked for the payment-processor logs that would explain why. Run again on 9 November 2026
+  (Claude Code 2.1.321, Codex CLI 0.167.0) with the tool marked `readOnlyHint: false` and the
+  server's tools allowed in advance, Claude Code called it in every run where no tool fitted (16 of
+  16) and never otherwise. Codex blocked all 16 of its attempted calls: it asks the person before a
+  tool that isn't marked read-only, and these runs had approvals off. Marked read-only, as it is
+  now, Codex called it in every run where no tool fitted (16 of 16, over stdio on both servers) and
+  in 2 of the 4 where one did. Claude Code wasn't run again: in its default permission mode it asks
+  before any MCP tool its settings don't allow, read-only or not.
 
 ## What leaves your process
 
