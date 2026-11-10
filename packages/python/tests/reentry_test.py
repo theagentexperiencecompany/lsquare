@@ -81,6 +81,25 @@ def reenter_once(owner: Any, name: str, nested: Callable[[], None]) -> list[int]
     return fired
 
 
+def inside(owner: Any, name: str) -> Callable[[], bool]:
+    """Wraps `owner.name`, one instance's method; returns a check, true on a thread while that call
+    runs there. A patched module function, which every thread in the process calls, then acts on
+    that instance's own calls alone."""
+    real = getattr(owner, name)
+    marks = threading.local()
+
+    def wrapped(*args: Any, **kwargs: Any) -> Any:
+        was = getattr(marks, "inside", False)
+        marks.inside = True
+        try:
+            return real(*args, **kwargs)
+        finally:
+            marks.inside = was
+
+    setattr(owner, name, wrapped)
+    return lambda: bool(getattr(marks, "inside", False))
+
+
 class Landing:
     """Runs `nested()` once, on the thread it traces, at the `at`-th line run inside a call of
     `code` and of whatever that calls (only the lines `counts` takes, when given): where a signal
@@ -185,13 +204,17 @@ def make(transport: FakeTransport, recorder: Recorder | None = None) -> LSquare:
 
 
 def interrupted_start(monkeypatch: pytest.MonkeyPatch, name: str, after: bool) -> Callable[[Callable[[], None], str], None]:
-    """Makes the first start of a thread called `name` raise SystemExit, as a signal handler's
-    would, inside the start: before the thread begins, or after. Returns that start_thread."""
+    """Makes the first start of a thread called `name` from the calling thread raise SystemExit, as
+    a signal handler's would, inside the start: before the thread begins, or after. Returns that
+    start_thread."""
     real = start_thread
+    here = threading.current_thread()
     fired: list[int] = []
 
     def start(target: Callable[[], None], thread_name: str) -> None:
-        if fired or thread_name != name:
+        # Every thread in the process starts through this, and a client an earlier test left can
+        # start one at any moment: only the test's own start is interrupted, made on its thread.
+        if fired or thread_name != name or threading.current_thread() is not here:
             real(target, thread_name)
             return
         fired.append(1)
@@ -394,8 +417,14 @@ def test_a_keyboard_interrupt_connecting_in_turn_on_the_main_thread_is_passed_on
 ) -> None:
     # How green sockets connect; at exit, inline, that runs on the main thread.
     made: list[int] = []
+    real = _sending._DeadlineSocket
+    here = threading.current_thread()
 
     def interrupted(*args: Any) -> Any:
+        # Every connection in the process makes its socket through this, and a client an earlier
+        # test left can connect at any moment: only this thread's is interrupted.
+        if threading.current_thread() is not here:
+            return real(*args)
         made.append(1)
         raise KeyboardInterrupt
 
@@ -507,9 +536,12 @@ def test_a_call_back_in_anywhere_in_starting_the_scheduler_starts_one_thread(mon
 
 def test_a_stop_from_inside_get_reaches_the_loop_get_publishes(monkeypatch: pytest.MonkeyPatch) -> None:
     holder = PrivateLoop()
+    # Only the holder's own start: one another thread makes meanwhile would stop it before get().
+    starting = inside(holder, "_begin")
 
     def start(target: Callable[[], None], name: str) -> None:
-        holder.stop()  # shutdown() from a signal handler, while get() starts the loop
+        if starting():
+            holder.stop()  # shutdown() from a signal handler, while get() starts the loop
         start_thread(target, name)
 
     monkeypatch.setattr(_threads, "start_thread", start)
@@ -521,8 +553,15 @@ def test_a_stop_from_inside_get_reaches_the_loop_get_publishes(monkeypatch: pyte
 def test_get_hands_out_the_loop_without_waiting_for_its_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     # The loop's thread is held up: get() doesn't wait for it, as it would under the client's lock.
     go = threading.Event()
+    holder = PrivateLoop()
+    # Only the holder's own thread: the others in the process start as they would.
+    starting = inside(holder, "_begin")
 
     def held(target: Callable[[], None], name: str) -> None:
+        if not starting():
+            start_thread(target, name)
+            return
+
         def later() -> None:
             go.wait(10)
             target()
@@ -530,10 +569,11 @@ def test_get_hands_out_the_loop_without_waiting_for_its_thread(monkeypatch: pyte
         start_thread(later, name)
 
     monkeypatch.setattr(_threads, "start_thread", held)
-    holder = PrivateLoop()
     try:
         loop = on_own_thread(holder.get, timeout=3.0)
         future = asyncio.run_coroutine_threadsafe(asyncio.sleep(0, "ran"), loop)
+        # Its thread is still held, so nothing has run it yet.
+        assert not future.done()
         go.set()
         assert future.result(5) == "ran"
     finally:
@@ -544,16 +584,17 @@ def test_get_hands_out_the_loop_without_waiting_for_its_thread(monkeypatch: pyte
 def test_a_loop_start_interrupted_after_its_thread_began_withdraws_that_loop_and_its_thread_closes_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    made: list[asyncio.AbstractEventLoop] = []
-    real = asyncio.new_event_loop
-
-    def recorded() -> asyncio.AbstractEventLoop:
-        made.append(real())
-        return made[-1]
-
-    monkeypatch.setattr(asyncio, "new_event_loop", recorded)
     interrupted_start(monkeypatch, "lsquare-loop", after=True)
     holder = PrivateLoop()
+    # The loops this one starts, in turn: other code can make loops of its own meanwhile.
+    made: list[asyncio.AbstractEventLoop] = []
+    begin = holder._begin
+
+    def begun(loop: asyncio.AbstractEventLoop, start: Any) -> None:
+        made.append(loop)
+        begin(loop, start)
+
+    monkeypatch.setattr(holder, "_begin", begun)
     try:
         with pytest.raises(SystemExit):
             holder.get()
@@ -589,9 +630,13 @@ def test_a_loop_start_that_fails_fails_what_every_caller_handed_that_loop_and_ea
                      on_error=on_error, before_send=before_send, before_send_timeout_ms=60_000)
     internal = client._lsquare_internal()
     others: list[Any] = []
+    here = threading.current_thread()
 
     def start(target: Callable[[], None], name: str) -> None:
-        if name != "lsquare-loop" or others:
+        # Only this client's loop start, which its first identify makes on this thread: a client an
+        # earlier test left can start a loop at any moment. This thread does nothing else until
+        # `others` is filled.
+        if name != "lsquare-loop" or threading.current_thread() is not here or others:
             start_thread(target, name)
             return
         others.append(on_own_thread(lambda: internal.identify(hook, lambda signal: None, internal.origin())))
@@ -626,9 +671,11 @@ def test_a_loop_start_interrupted_before_its_thread_began_fails_what_was_handed_
     holder = PrivateLoop()
     failed: list[BaseException] = []
     fired: list[int] = []
+    here = threading.current_thread()
 
     def start(target: Callable[[], None], name: str) -> None:
-        if fired:
+        # Only the holder's start, made on this thread: other threads start threads at any moment.
+        if fired or name != "lsquare-loop" or threading.current_thread() is not here:
             start_thread(target, name)
             return
         fired.append(1)
@@ -905,9 +952,12 @@ def test_a_request_built_as_a_shutdown_lands_is_never_posted(ingestion: Ingestio
     client = LSquare(api_key=KEY, endpoint=ingestion.url)
     results: list[Any] = []
     real_batch = _client._Batch
+    # Only a batch this client's _send_batch builds: a client an earlier test left can build one
+    # at any moment.
+    sending = inside(client, "_send_batch")
 
     def batch(*args: Any, **kwargs: Any) -> Any:
-        if not results:
+        if not results and sending():
             results.append(client.shutdown(timeout_ms=0))
         return real_batch(*args, **kwargs)
 
@@ -959,11 +1009,13 @@ def test_the_exit_flush_sends_a_request_whose_sending_thread_s_start_was_interru
     # No scheduler thread can start, as at interpreter exit: the capture's steps run inline, and its
     # request's sending thread starts under the client's lock, where the SystemExit lands.
     fired: list[int] = []
+    here = threading.current_thread()
 
     def start(target: Callable[[], None], name: str) -> None:
         if name == "lsquare-scheduler":
             raise RuntimeError("can't create new thread at interpreter shutdown")
-        if name == "lsquare-sender" and not fired:
+        # Inline, so on this thread: a client an earlier test left can start a sender meanwhile.
+        if name == "lsquare-sender" and not fired and threading.current_thread() is here:
             fired.append(1)
             raise SystemExit(3)
         start_thread(target, name)
@@ -984,9 +1036,12 @@ def test_the_exit_flush_runs_a_step_left_waiting_by_an_interrupted_scheduler_sta
     transport = FakeTransport()
     client = make(transport)
     fired: list[int] = []
+    here = threading.current_thread()
 
     def start(target: Callable[[], None], name: str) -> None:
-        if name == "lsquare-scheduler" and not fired:
+        # Only the timer's start, on this thread: a client an earlier test left can start its
+        # scheduler meanwhile.
+        if name == "lsquare-scheduler" and not fired and threading.current_thread() is here:
             fired.append(1)
             other = threading.Thread(target=lambda: client.capture(dict(TURN)))
             other.start()
@@ -1011,11 +1066,13 @@ def test_the_exit_flush_spends_one_timeout_on_the_requests_it_resumes_and_its_fl
     exiting: list[int] = []
     fired: list[int] = []
     posted: list[bytes] = []
+    here = threading.current_thread()
 
     def start(target: Callable[[], None], name: str) -> None:
         if exiting or name == "lsquare-scheduler":
             raise RuntimeError("can't create new thread at interpreter shutdown")
-        if name == "lsquare-sender" and not fired:
+        # Inline, so on this thread: a client an earlier test left can start a sender meanwhile.
+        if name == "lsquare-sender" and not fired and threading.current_thread() is here:
             fired.append(1)
             raise SystemExit(3)
         start_thread(target, name)

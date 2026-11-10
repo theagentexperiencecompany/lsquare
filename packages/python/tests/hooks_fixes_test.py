@@ -525,6 +525,7 @@ def test_a_stop_called_back_in_anywhere_in_a_hook_s_hand_off_to_the_private_loop
     # included: the hook is never created there, its `done` hears why, and the loop made for it
     # stops and closes rather than run on with no one to stop it.
     code = PrivateLoop.hand.__code__
+    here = threading.current_thread()
     at = 0
     while True:
         at += 1
@@ -535,8 +536,12 @@ def test_a_stop_called_back_in_anywhere_in_a_hook_s_hand_off_to_the_private_loop
         real_new = asyncio.new_event_loop
 
         def new_loop() -> asyncio.AbstractEventLoop:
-            loops.append(real_new())
-            return loops[-1]
+            # Every loop in the process is made through this, and a client an earlier test left can
+            # make one at any moment: only those made on this thread, by the hand-off.
+            loop = real_new()
+            if threading.current_thread() is here:
+                loops.append(loop)
+            return loop
 
         def make() -> Any:
             made.append(1)
@@ -564,17 +569,26 @@ def test_a_callback_handed_over_after_stop_never_lands_on_a_loop_winding_down(mo
     # one pass, winds down and closes. The first one's loop is held between its wind-down and its
     # close (a thread switch there): before, it was still the published loop, and the second
     # callback, queued on it then, never ran, its future never settled.
+    # Only this PrivateLoop's loops are held: one left by another test can wind down meanwhile.
     real = _threads._wind_down
     wound, go = threading.Event(), threading.Event()
+    mine: set[asyncio.AbstractEventLoop] = set()
 
     def held(loop: asyncio.AbstractEventLoop, cancel: bool = False) -> None:
         real(loop, cancel)
-        if not wound.is_set():
+        if loop in mine and not wound.is_set():
             wound.set()
             go.wait(10)
 
     monkeypatch.setattr(_threads, "_wind_down", held)
     private = PrivateLoop()
+    begin = private._begin
+
+    def begun(loop: asyncio.AbstractEventLoop, start: Any) -> None:
+        mine.add(loop)
+        begin(loop, start)
+
+    monkeypatch.setattr(private, "_begin", begun)
     private.stop()
 
     async def report(name: str) -> str:
@@ -998,13 +1012,17 @@ def test_a_call_s_identify_diagnostic_is_reported_as_its_event_is_admitted_never
     internal.record(call_record("11111111-1111-4111-8111-111111111111"), diagnostic=diagnostic)
     assert delivered(lsquare, transport, 1)
     real = _event.build_call
+    second = call_record("22222222-2222-4222-8222-222222222222")
 
-    def building(*args: Any) -> Any:
-        lsquare.shutdown(timeout_ms=0)
-        return real(*args)
+    def building(record: Any, *args: Any) -> Any:
+        # This record's build only: another client's, meanwhile, would shut this one down before
+        # the record is captured, which would then never meet a shutdown during its build.
+        if record is second:
+            lsquare.shutdown(timeout_ms=0)
+        return real(record, *args)
 
     monkeypatch.setattr(_event, "build_call", building)
-    internal.record(call_record("22222222-2222-4222-8222-222222222222"), diagnostic=diagnostic)
+    internal.record(second, diagnostic=diagnostic)
     future = internal.delivered()
     future.result(5)
     assert codes(recorder) == ["identify_failed", "shutdown"]
@@ -1111,9 +1129,13 @@ def test_an_async_before_send_no_hook_thread_can_start_for_never_runs_and_isnt_c
     called: list[str] = []
     copies: list[str] = []
     real_copy = copy.deepcopy
+    # Every copy in the process is made through this, another client's too (a report's, on its
+    # scheduler's thread): only this test's events, by their mark. Never by thread: a copy made on
+    # the wrong one is what this looks for.
+    mark = "copied-on-a-hook-thread"
 
     def copying(value: Any, memo: Any = None) -> Any:
-        if isinstance(value, dict) and "eventId" in value:
+        if isinstance(value, dict) and "eventId" in value and value.get("orgId") == mark:
             copies.append(threading.current_thread().name)
         return real_copy(value, memo)
 
@@ -1125,10 +1147,10 @@ def test_an_async_before_send_no_hook_thread_can_start_for_never_runs_and_isnt_c
     flushed: list[Any] = []
 
     async def main() -> None:
-        lsquare.capture(turn(1))
+        lsquare.capture(turn(1, orgId=mark))
         flushed.append(await lsquare.aflush(timeout_ms=5_000))
         refusing.clear()
-        lsquare.capture(turn(2))
+        lsquare.capture(turn(2, orgId=mark))
         flushed.append(await lsquare.aflush(timeout_ms=5_000))
 
     monkeypatch.setattr(copy, "deepcopy", copying)
@@ -1136,11 +1158,16 @@ def test_an_async_before_send_no_hook_thread_can_start_for_never_runs_and_isnt_c
     monkeypatch.setattr(copy, "deepcopy", real_copy)
     assert copies and all(name.startswith("lsquare-hook") for name in copies), copies
     assert called == ["conv-2"]
-    assert [(result.failed, result.sent) for result in flushed] == [(1, 0), (0, 1)]
+    # The first fails as soon as its hook is refused, which the scheduler's thread can do before
+    # aflush() starts, whose counts leave out what has already ended: that failure is read from its
+    # report. The second's hook runs on this loop, which runs nothing until aflush() waits: counted.
+    assert (flushed[0].sent, flushed[0].pending) == (0, 0)
+    assert (flushed[1].failed, flushed[1].sent) == (0, 1)
     assert recorder.wait_for(lambda: len(recorder.errors) >= 1)
     assert codes(recorder) == ["hook_failed"]
     assert recorder.errors[0].message == "No thread could start for before_send; the event was dropped."
     assert [event["conversationId"] for event in transport.events] == ["conv-2"]
+    assert not lsquare._live
     lsquare.shutdown(timeout_ms=0)
 
 
@@ -1242,8 +1269,12 @@ def failing_build(kind: str, lsquare: LSquare, monkeypatch: pytest.MonkeyPatch, 
     if kind == "invalid":
         record["ids"] = ShutsDown(then)
         return record
+    real = _event.build_call
 
-    def building(*args: Any) -> Any:
+    def building(given: Any, *args: Any) -> Any:
+        # This record's build only: another client's, meanwhile, would shut this one down first.
+        if given is not record:
+            return real(given, *args)
         then()
         raise RuntimeError("the build failed")
 

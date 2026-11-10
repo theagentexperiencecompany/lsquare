@@ -912,10 +912,13 @@ def test_an_endpoint_on_port_0_fails_its_event_as_a_network_error_as_typescript_
     resolver = Asking(look_up=True)
     lsquare._exchange._resolver = resolver
     lsquare.capture(turn(1))
+    # Port 0 fails at once, often before flush() starts, whose counts leave out what has already
+    # ended: the failure is read from its report, not from the counts.
     result = lsquare.flush(timeout_ms=5_000)
-    assert (result.sent, result.failed) == (0, 1)
+    assert (result.sent, result.pending) == (0, 0)
     assert recorder.wait_for(lambda: recorder.codes() == ["send_failed"])
     assert resolver.asked == [("127.0.0.1", 0)]
+    assert not lsquare._live
     lsquare.shutdown(timeout_ms=0)
 
 

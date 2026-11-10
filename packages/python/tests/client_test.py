@@ -370,19 +370,32 @@ def test_a_burst_of_slow_hooks_after_earlier_traffic_runs_at_once() -> None:
 
 def test_before_send_returning_none_skips_and_raising_fails() -> None:
     recorder = Recorder()
-    calls = []
+    flushing = threading.Event()
+    gave_up: list[str] = []
 
     def before_send(event: dict[str, Any]) -> Any:
-        calls.append(event)
-        if len(calls) == 1:
+        # Each returns only once flush() is waiting for both: one that ended before it took them
+        # would be in none of its counts. Giving up waiting, well before its own deadline, is
+        # recorded, for the test to fail on the order and not on a count.
+        if not flushing.wait(10):
+            gave_up.append(event["conversationId"])
+        if event["conversationId"] == "conv-1":
             return None
         raise ValueError("no")
 
     transport = FakeTransport()
-    lsquare = client(transport, recorder, before_send=before_send)
+    lsquare = client(transport, recorder, before_send=before_send, before_send_timeout_ms=60_000)
+    block = lsquare._block
+
+    def blocking(wait: Any, timeout_ms: float) -> None:
+        flushing.set()
+        block(wait, timeout_ms)
+
+    lsquare._block = blocking  # type: ignore[method-assign]
     lsquare.capture(turn(1))
     lsquare.capture(turn(2))
     result = lsquare.flush()
+    assert (flushing.is_set(), gave_up) == (True, [])
     assert (result.skipped, result.failed) == (1, 1)
     assert transport.requests == []
     assert recorder.wait_for(lambda: "hook_failed" in recorder.codes())
@@ -1672,23 +1685,25 @@ def test_a_capture_whose_build_shuts_the_client_down_is_dropped_and_reported_onc
 def test_a_capture_whose_build_shuts_the_client_down_takes_no_room_from_an_event_the_shutdown_is_sending() -> None:
     recorder, held = Recorder(), Held()
     lsquare = LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=held, on_error=recorder.on_error, max_queue_events=1)
+    _release_once_shutdown_waits(lsquare, held)
     lsquare.capture(turn(1))
-    releasing = threading.Thread(target=_release_once_entered, args=(held,))
-    releasing.start()
     captured = _ShutsDownWhenRead(turn(2), lsquare, 2_000)
     lsquare.capture(captured)
-    releasing.join()
     assert [result.sent for result in captured.results] == [1]
     assert [[event["turnId"] for event in batch] for batch in held.batches] == [["1"]]
     assert recorder.wait_for(lambda: recorder.codes() == ["shutdown"], 2)
 
 
 def test_ashutdown_aborts_a_request_in_flight() -> None:
-    started = threading.Event()
+    started, answer = threading.Event(), threading.Event()
+    gave_up: list[str] = []
 
     def respond(events: list[dict[str, Any]]) -> Reply:
         started.set()
-        time.sleep(1)
+        # Answered once ashutdown() has returned: in flight all along, however late it starts.
+        # Giving up waiting first is recorded, for the test to fail on the order, not the count.
+        if not answer.wait(10):
+            gave_up.extend(event["conversationId"] for event in events)
         return Reply(200, None, ack(*[event["eventId"] for event in events]))
 
     lsquare = client(FakeTransport(respond))
@@ -1698,9 +1713,13 @@ def test_ashutdown_aborts_a_request_in_flight() -> None:
         await asyncio.sleep(0)
         assert started.wait(2)
         result = await lsquare.ashutdown(timeout_ms=100)
+        assert gave_up == []
         assert result.failed == 1
 
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        answer.set()
 
 
 # -- What flush and shutdown reported, or waited for, reaches on_error before they return -----------
@@ -2232,10 +2251,19 @@ def test_a_line_logged_for_an_empty_context_and_no_loop_keeps_both() -> None:
         lsquare.shutdown(timeout_ms=0)
 
 
-def _release_once_entered(held: Held) -> None:
-    """Lets the held batches answer once one has reached the transport (within 2 s)."""
-    held.entered.wait(2)
-    held.release()
+def _release_once_shutdown_waits(lsquare: LSquare, held: Held) -> None:
+    """Lets the held batches answer once shutdown() or ashutdown() has taken the events it counts
+    and waits for them, and only if it waits: answered sooner, one could end before it's taken,
+    and be in none of its counts."""
+    start = lsquare._shutdown_start
+
+    def starting(calls: Any, result: Any, timeout_ms: float, before: Any) -> Any:
+        started = start(calls, result, timeout_ms, before)
+        if started[1] is not None:
+            held.release()
+        return started
+
+    lsquare._shutdown_start = starting  # type: ignore[method-assign]
 
 
 class _Unreadable(int):
@@ -2248,11 +2276,9 @@ class _Unreadable(int):
 def test_shutdown_with_an_unreadable_timeout_waits_as_by_default_and_closes() -> None:
     recorder, held = Recorder(), Held()
     lsquare = LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=held, on_error=recorder.on_error, flush_timeout_ms=2_000)
+    _release_once_shutdown_waits(lsquare, held)
     lsquare.capture(turn(1))
-    releasing = threading.Thread(target=_release_once_entered, args=(held,))
-    releasing.start()
     assert lsquare.shutdown(timeout_ms=_Unreadable(5)).sent == 1
-    releasing.join()
     lsquare.capture(turn(2))
     assert recorder.wait_for(lambda: recorder.codes() == ["shutdown"], 2)
     assert [[event["turnId"] for event in batch] for batch in held.batches] == [["1"]]
@@ -2261,13 +2287,11 @@ def test_shutdown_with_an_unreadable_timeout_waits_as_by_default_and_closes() ->
 def test_ashutdown_with_an_unreadable_timeout_waits_as_by_default_and_closes() -> None:
     recorder, held = Recorder(), Held()
     lsquare = LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=held, on_error=recorder.on_error, flush_timeout_ms=2_000)
+    _release_once_shutdown_waits(lsquare, held)
 
     async def main() -> None:
         lsquare.capture(turn(1))
-        releasing = threading.Thread(target=_release_once_entered, args=(held,))
-        releasing.start()
         assert (await lsquare.ashutdown(timeout_ms=_Unreadable(5))).sent == 1
-        releasing.join()
 
     asyncio.run(main())
     lsquare.capture(turn(2))
