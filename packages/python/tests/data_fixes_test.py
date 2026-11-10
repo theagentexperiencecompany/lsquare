@@ -11,6 +11,7 @@ import gc
 import importlib
 import math
 import re
+import threading
 import tracemalloc
 import uuid
 import weakref
@@ -78,6 +79,14 @@ def shaped(value: Any) -> tuple[Any, dict[str, str]]:
 
 def client(transport: FakeTransport, recorder: Recorder, **options: Any) -> LSquare:
     return LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=transport, logger=recorder, on_error=recorder.on_error, **options)
+
+
+def on_this_thread() -> Callable[[], bool]:
+    """Whether a call runs on the thread that asked. Every thread in the process calls what a test
+    counts through, another client's too (building, rebuilding or sending its own events): each
+    test here counts only its own calls, all made on its own thread."""
+    here = threading.current_thread()
+    return lambda: threading.current_thread() is here
 
 
 # py-data-6: a model's or a dataclass's fields are worked out as the walk enumerates them, each
@@ -227,11 +236,13 @@ class TestWideModels:
         reached = 0
         name = "_model_pairs" if kind == "model" else "_dataclass_pairs"
         pairs = getattr(_values, name)
+        mine = on_this_thread()
 
         def counted(*args: Any) -> Iterator[Any]:
             nonlocal reached
             for pair in pairs(*args):
-                reached += 1
+                if mine():
+                    reached += 1
                 yield pair
 
         monkeypatch.setattr(_values, name, counted)
@@ -345,10 +356,12 @@ def counting(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     """Counts each model field reached (`_values._model_pairs`): the list's one item."""
     reached = [0]
     pairs = _values._model_pairs
+    mine = on_this_thread()
 
     def counted(fields: dict[str, Any]) -> Iterator[Any]:
         for pair in pairs(fields):
-            reached[0] += 1
+            if mine():
+                reached[0] += 1
             yield pair
 
     monkeypatch.setattr(_values, "_model_pairs", counted)
@@ -543,11 +556,13 @@ class TestOneClassesObjects:
         reached = 0
         name = "_model_pairs" if kind == "model" else "_dataclass_pairs"
         pairs = getattr(_values, name)
+        mine = on_this_thread()
 
         def counted(*args: Any) -> Iterator[Any]:
             nonlocal reached
             for pair in pairs(*args):
-                reached += 1
+                if mine():
+                    reached += 1
                 yield pair
 
         monkeypatch.setattr(_values, name, counted)
@@ -691,11 +706,13 @@ class TestKeysJavaScriptReadsAsOne:
     def test_are_told_apart_reading_at_most_twice_the_allowance_left_of_the_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
         read = 0
         surrogate = _jsjson._SURROGATE
+        mine = on_this_thread()
 
         class Counted:
             def search(self, value: str) -> Any:
                 nonlocal read
-                read += len(value)
+                if mine():
+                    read += len(value)
                 return surrogate.search(value)
 
         monkeypatch.setattr(_jsjson, "_SURROGATE", Counted())
@@ -741,11 +758,13 @@ class TestKeysJavaScriptReadsAsOne:
     def test_and_are_never_told_apart_again_in_the_pass(self, monkeypatch: pytest.MonkeyPatch) -> None:
         read = 0
         surrogate = _jsjson._SURROGATE
+        mine = on_this_thread()
 
         class Counted:
             def search(self, value: str) -> Any:
                 nonlocal read
-                read += len(value)
+                if mine():
+                    read += len(value)
                 return surrogate.search(value)
 
         monkeypatch.setattr(_jsjson, "_SURROGATE", Counted())
@@ -816,10 +835,12 @@ class TestBuildingCost:
     def test_an_event_far_over_256_kb_is_written_only_until_it_is_known_to_be_over(self, monkeypatch: pytest.MonkeyPatch) -> None:
         writes = 0
         write = _jsjson._write
+        mine = on_this_thread()
 
         def counted(*args: Any) -> None:
             nonlocal writes
-            writes += 1
+            if mine():
+                writes += 1
             write(*args)
 
         monkeypatch.setattr(_jsjson, "_write", counted)
@@ -833,13 +854,16 @@ class TestBuildingCost:
     def test_a_full_budget_of_short_keys_is_matched_without_normalizing_them(self, monkeypatch: pytest.MonkeyPatch) -> None:
         counts = {"normalize_key": 0, "skip": 0}
         normalize, skip = _redact.normalize_key, _redact._skip
+        mine = on_this_thread()
 
         def counted_normalize(key: str) -> str:
-            counts["normalize_key"] += 1
+            if mine():
+                counts["normalize_key"] += 1
             return normalize(key)
 
         def counted_skip(pattern: Any, value: str) -> bool:
-            counts["skip"] += 1
+            if mine():
+                counts["skip"] += 1
             return skip(pattern, value)
 
         monkeypatch.setattr(_redact, "normalize_key", counted_normalize)
@@ -854,10 +878,12 @@ class TestBuildingCost:
     def test_text_without_a_colon_is_never_searched_for_an_ipv6_address(self, monkeypatch: pytest.MonkeyPatch) -> None:
         searched: list[str] = []
         hint = _redact._IPV6_HINT
+        mine = on_this_thread()
 
         class Counted:
             def search(self, value: str) -> Any:
-                searched.append(value)
+                if mine():
+                    searched.append(value)
                 return hint.search(value)
 
         monkeypatch.setattr(_redact, "_IPV6_HINT", Counted())
@@ -1253,9 +1279,13 @@ class TestAFieldThatCantBeRead:
         recorder, transport = Recorder(), FakeTransport()
         lsquare = client(transport, recorder, before_send=lambda event: Guarded(event))
         lsquare.capture({"conversationId": "c", "question": "q"})
-        assert lsquare.flush(timeout_ms=1_000).failed == 1
+        # It fails on a hook thread as soon as the hook returns, which can be before flush() starts,
+        # whose counts leave out what has already ended: the drop is read from its report instead.
+        result = lsquare.flush(timeout_ms=1_000)
+        assert (result.sent, result.pending) == (0, 0)
         assert transport.events == []
         assert recorder.wait_for(lambda: recorder.codes() == ["redaction_failed"])
+        assert not lsquare._live
         lsquare.shutdown(timeout_ms=0)
 
     def test_inside_a_call_reports_the_capture_and_takes_none_of_it(self) -> None:
@@ -1322,9 +1352,11 @@ class TestFileLengths:
 
     def test_reads_a_non_ascii_strings_length_once_however_many_times_the_event_holds_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         read: list[int] = []
+        mine = on_this_thread()
 
         def counted(value: str) -> int:
-            read.append(len(value))
+            if mine():
+                read.append(len(value))
             return utf16_length(value)
 
         monkeypatch.setattr(_shape, "utf16_length", counted)

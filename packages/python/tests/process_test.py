@@ -144,16 +144,41 @@ def test_a_shutdown_in_an_atexit_handler_that_runs_after_the_exit_flush_sends_wi
             _threads.start_thread = refusing
 
         def late():
+            block = lsquare._block
+
+            def waiting(wait, timeout_ms):
+                # shutdown()'s wait, not the exit flush's, lets the later requests go out.
+                counted.set()
+                block(wait, timeout_ms)
+
+            lsquare._block = waiting
             lsquare.capture({{"conversationId": "late", "turnId": 2}})
             result = lsquare.shutdown(timeout_ms=5000)
             print("sent", result.sent, "failed", result.failed, flush=True)
 
         atexit.register(late)
         lsquare = LSquare(api_key="lsq_test", endpoint="{ingestion.url}", flush_timeout_ms=300)
+        # Only the first request goes out before shutdown() waits for what it counts: the next one
+        # (the late event's, or the first's sent again) lets the server answer the first, and both
+        # could otherwise end before shutdown() began, uncounted. The first is claimed under a lock,
+        # so two can't both take it, and the others wait outside it; one that waits in vain says so.
+        counted, claiming, claimed = threading.Event(), threading.Lock(), []
+        post = lsquare._exchange.post
+
+        def posting(body, timeout_s, abort):
+            with claiming:
+                later = bool(claimed)
+                claimed.append(True)
+            if later and not counted.wait(10):
+                print("a request went out unheld", flush=True)
+            return post(body, timeout_s, abort)
+
+        lsquare._exchange.post = posting
         lsquare.capture({{"conversationId": "early", "turnId": 1}})
         """
     )
     assert done.returncode == 0, done.stderr
+    assert "unheld" not in done.stdout, done.stdout
     assert "sent 2 failed 0" in done.stdout, (done.stdout, done.stderr)
     # The first may be sent twice: posted only once the exit flush began, its request took that
     # flush's timeout and gave up before its answer came, then was sent again.
@@ -567,14 +592,31 @@ def test_a_child_forked_after_a_shutdown_gives_its_requests_their_own_timeout(in
     # isn't held to its parent's. The clock stands in for the child running past that deadline.
     done = run(
         f"""
-        import os
+        import os, threading
         from lsquare import LSquare
         now = [1_000.0]
         lsquare = LSquare(api_key="lsq_test", endpoint="{ingestion.url}", _clock=lambda: now[0])
+        # Each request goes out once the call that counts it (shutdown(), then the child's flush())
+        # waits for it: one answered before that call began would have ended uncounted. One that
+        # waits in vain says so.
+        counted = [threading.Event()]
+        post, block = lsquare._exchange.post, lsquare._block
+
+        def posting(body, timeout_s, abort):
+            if not counted[0].wait(10):
+                print("a request went out unheld", flush=True)
+            return post(body, timeout_s, abort)
+
+        def waiting(wait, timeout_ms):
+            counted[0].set()
+            block(wait, timeout_ms)
+
+        lsquare._exchange.post, lsquare._block = posting, waiting
         lsquare.capture({{"conversationId": "parent", "turnId": 1}})
         print("parent", lsquare.shutdown(timeout_ms=5000).sent, flush=True)
         pid = os.fork()
         if pid == 0:
+            counted[0] = threading.Event()
             now[0] += 60
             lsquare.capture({{"conversationId": "child", "turnId": 2}})
             result = lsquare.flush(timeout_ms=5000)
@@ -584,6 +626,7 @@ def test_a_child_forked_after_a_shutdown_gives_its_requests_their_own_timeout(in
         """
     )
     assert done.returncode == 0, done.stderr
+    assert "unheld" not in done.stdout, done.stdout
     assert "parent 1" in done.stdout and "child 0" in done.stdout, done.stdout
     assert sorted(event["conversationId"] for event in ingestion.events()) == ["child", "parent"]
 
