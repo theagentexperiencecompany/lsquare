@@ -276,7 +276,7 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 | `apiKey` | | Project key. Without it, the client is disabled |
 | `endpoint` | `LSQUARE_ENDPOINT`, then `https://ingest.lsquare.io` | https only, except localhost |
 | `dryRun` | `LSQUARE_DRY_RUN=1` | Run everything but send nothing |
-| `flushTimeoutMs` | `2000` | How long `flush()` waits. `0`: it doesn't |
+| `flushTimeoutMs` | `2000` | How long `flush()` waits. `0`: it doesn't. `shutdown()` waits up to 5 s, or this when it is longer |
 | `beforeSend` | | Redact more, or drop an event |
 | `beforeSendTimeoutMs` | `flushTimeoutMs`, or `2000` when that is `0` | Hook deadline |
 | `maxConcurrentHooks` | `16` | `beforeSend` hooks running at once, and `identify` hooks, each ([on Workers](REFERENCE.md#hooks-on-workers)) |
@@ -286,7 +286,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 | `onError` | logs codes, once a minute | `(error, event?) => void`. Receives a redacted copy, or none while earlier reports' copies hold `maxQueueBytes` |
 | `logger` | standard error | `{ info, warn }`. Don't pass `console` on a stdio server: its `info` writes to stdout |
 
-In a script or a test, call `await lsquare.shutdown()` before exiting.
+In a script or a test, call `await lsquare.shutdown()` before exiting. It sends what's queued,
+waiting up to 5 s by default (`shutdown({ timeoutMs })` to change that).
 
 ## Compatibility
 

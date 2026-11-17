@@ -203,7 +203,7 @@ export interface LSquareOptions {
   endpoint?: string | undefined
   /** Run the whole pipeline but send nothing. Defaults to `LSQUARE_DRY_RUN=1`. */
   dryRun?: boolean | undefined
-  /** How long `flush()` waits by default. `0`: it doesn't wait. */
+  /** How long `flush()` waits by default. `0`: it doesn't wait. `shutdown()` waits 5000, or this when it is longer. */
   flushTimeoutMs?: number | undefined
   /** Redact more, or drop an event by returning `null`. Runs before built-in redaction. */
   beforeSend?: BeforeSend | undefined

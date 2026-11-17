@@ -288,10 +288,14 @@ left, so stop cleanly on `SIGTERM`:
 
 ```ts
 process.on('SIGTERM', async () => {
-  await lsquare.shutdown()
+  await lsquare.shutdown()   // sends what's queued, within 5 s by default
   process.exit(0)
 })
 ```
+
+`shutdown()` waits up to 5 s, or `flushTimeoutMs` when that is longer, and returns as soon as
+everything is sent; `shutdown({ timeoutMs })` sets its own limit. Give the process that long before
+a host kills it.
 
 Frameworks that hand you the official SDK's server are covered through it, and tested: Cloudflare's
 `McpAgent` and `createMcpHandler` (`agents` 0.31), and Vercel's `mcp-handler` (2.3). Frameworks with their own

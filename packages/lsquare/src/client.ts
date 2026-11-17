@@ -125,6 +125,8 @@ const CAPTURE_FIELDS = [
 
 const DEFAULTS = {
   flushTimeoutMs: 2_000,
+  /** At least this long, or the flush timeout when that is longer: an exiting process has time for slow requests. */
+  shutdownTimeoutMs: 5_000,
   maxConcurrentHooks: 16,
   maxConcurrentRequests: 4,
   maxQueueEvents: 1_000,
@@ -943,17 +945,18 @@ export class LSquare {
   /**
    * Terminal: drops events still waiting for `beforeSend`, waits up to `timeoutMs` for the rest
    * (`0`: not at all; never for a retry due after the deadline), then drops whatever is left,
-   * aborting requests and retries. Later captures are dropped. By default it waits the flush
-   * timeout, or 2 s when that is 0: a request path that doesn't wait still lets shutdown finish
-   * what is in flight. Its result counts the events outstanding when it was called, one sent while
-   * it waited for calls still being built included, and those it found as it closed. A `timeoutMs`
-   * it can't read (a getter that throws) counts as not given, as flush()'s does: it still shuts
-   * down. It resolves once what it reported has reached `onError` or the logger, as flush() does.
+   * aborting requests and retries. Later captures are dropped. By default it waits 5 s, or the
+   * flush timeout when that is longer: a request path that waits briefly, or not at all, still
+   * lets shutdown finish what is in flight. Its result counts the events outstanding when it was
+   * called, one sent while it waited for calls still being built included, and those it found as
+   * it closed. A `timeoutMs` it can't read (a getter that throws) counts as not given, as
+   * flush()'s does: it still shuts down. It resolves once what it reported has reached `onError`
+   * or the logger, as flush() does.
    */
   async shutdown(options?: { timeoutMs?: number | undefined }): Promise<FlushResult> {
     const result: FlushResult = { sent: 0, skipped: 0, failed: 0, pending: 0 }
     try {
-      let timeoutMs = waitTime(readTimeout(options), this.#flushTimeoutMs || DEFAULTS.flushTimeoutMs)
+      let timeoutMs = waitTime(readTimeout(options), Math.max(this.#flushTimeoutMs, DEFAULTS.shutdownTimeoutMs))
       // Counted: the events outstanding now, as flush() counts them, even one sent while it waits
       // for the calls below, then those still live as it closes, each once.
       const before = [...this.#live.values()]

@@ -339,7 +339,8 @@ describe('printing a client', () => {
     expect(printed).not.toContain('secret question')
     expect(printed).not.toContain('bob@example.com')
     expect(Object.getOwnPropertyNames(client)).toEqual([])
-    await client.shutdown()
+    // Its request never answers: no wait, which would outlast the test's own timeout.
+    await client.shutdown({ timeoutMs: 0 })
   })
 })
 
@@ -531,6 +532,53 @@ describe('sending', () => {
     await tick()
     expect(await client.shutdown()).toMatchObject({ sent: 1, failed: 0 })
     expect(calls).toHaveLength(1)
+  })
+
+  it.each([
+    { when: 'by default', options: {}, timeoutMs: undefined, waits: 5_000 },
+    { when: 'when flushTimeoutMs is 0', options: { flushTimeoutMs: 0 }, timeoutMs: undefined, waits: 5_000 },
+    { when: 'when flushTimeoutMs is shorter', options: { flushTimeoutMs: 1_000 }, timeoutMs: undefined, waits: 5_000 },
+    { when: 'as flushTimeoutMs when that is longer', options: { flushTimeoutMs: 8_000 }, timeoutMs: undefined, waits: 8_000 },
+    { when: 'as the timeoutMs it is given', options: { flushTimeoutMs: 8_000 }, timeoutMs: 300, waits: 300 },
+  ])('shutdown() waits $waits ms for a request in flight $when', async ({ options, timeoutMs, waits }) => {
+    // The clock moves only as the test says.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const { client, calls } = setup(hanging, options)
+      client.capture(input())
+      let done = false
+      const shut = client.shutdown(timeoutMs === undefined ? undefined : { timeoutMs }).then((result) => {
+        done = true
+        return result
+      })
+      await vi.advanceTimersByTimeAsync(waits - 1)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await shut).toMatchObject({ sent: 0, failed: 1 })
+      expect(calls).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("flush() still waits 2 s by default: shutdown()'s longer wait is its own", async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    try {
+      const { client } = setup(hanging)
+      client.capture(input())
+      let done = false
+      const flushed = client.flush().then((result) => {
+        done = true
+        return result
+      })
+      await vi.advanceTimersByTimeAsync(1_999)
+      expect(done).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(await flushed).toMatchObject({ pending: 1 })
+      await client.shutdown({ timeoutMs: 0 })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('reads a web stream body that has getReader() but no async iterator', async () => {
