@@ -57,7 +57,7 @@ DEFAULTS = {
     "shutdown_timeout_ms": 5_000,
     "max_concurrent_hooks": 16,
     "max_concurrent_requests": 4,
-    "max_queue_events": 1_000,
+    "max_queue_events": 10_000,
     "max_queue_bytes": 10 * 1024 * 1024,
     "max_event_bytes": 256 * 1024,
     "max_attempts": 3,

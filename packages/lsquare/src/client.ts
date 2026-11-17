@@ -129,7 +129,7 @@ const DEFAULTS = {
   shutdownTimeoutMs: 5_000,
   maxConcurrentHooks: 16,
   maxConcurrentRequests: 4,
-  maxQueueEvents: 1_000,
+  maxQueueEvents: 10_000,
   maxQueueBytes: 10 * 1024 * 1024,
   maxEventBytes: 256 * 1024,
   maxAttempts: 3,
