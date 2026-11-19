@@ -467,3 +467,9 @@ Events go in batches of up to 100, at most 4 requests at once, from the client's
 threads; nothing waits on the network in your code. If your project reaches its daily limit, the
 SDK stops sending until the limit resets (00:00 UTC), checks every 15 minutes whether it was raised,
 and reports through `on_error` when it starts dropping events and how many it dropped.
+
+The client holds up to 10,000 events at once, or 10 MB of them as JSON, whichever comes first: those
+waiting to be sent and those in a request. When your server makes events faster than they're sent,
+the oldest are dropped to make room, and reported through `on_error` as `queue_full`.
+`max_queue_events` and `max_queue_bytes` set the two limits: raise them for a server whose bursts
+are larger, and the client can hold that much more memory.

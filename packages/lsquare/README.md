@@ -281,6 +281,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 | `beforeSendTimeoutMs` | `flushTimeoutMs`, or `2000` when that is `0` | Hook deadline |
 | `maxConcurrentHooks` | `16` | `beforeSend` hooks running at once, and `identify` hooks, each ([on Workers](REFERENCE.md#hooks-on-workers)) |
 | `maxConcurrentRequests` | `4` | Requests in flight at once; other events wait, and go together |
+| `maxQueueEvents` | `10000` | Events held at once, waiting to be sent or in a request. Past it, the oldest are dropped and reported as `queue_full` |
+| `maxQueueBytes` | `10485760` | Their size together, as JSON: 10 MB. Past it, the same |
 | `redact` | all on | `false`, or `{ email, phone, card, secret, ip }` |
 | `redactKeys` | | More key names whose values are replaced whole |
 | `onError` | logs codes, once a minute | `(error, event?) => void`. Receives a redacted copy, or none while earlier reports' copies hold `maxQueueBytes` |
@@ -299,6 +301,11 @@ waiting up to 5 s by default (`shutdown({ timeoutMs })` to change that).
   ([GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c),
   [GHSA-qrxm-fqhp-jwvm](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm)). They're fixed from Node
   22.23.4, 24.22.1 and 26.12.1; Node 18, 20 and 25 have no fixed release.
+- On Node 26.5.0, `fetch` uses HTTP/2 where the server offers it, as LSquare's ingestion does, and
+  sends its requests one at a time on the one connection: `maxConcurrentRequests` has no effect, and
+  a busy server sends a quarter of the events it could. Node 26.12.1 sends them together, and so do
+  Node 22.23.5 and 24.22.3, over HTTP/1.1. The Node 26 releases between 26.5.0 and 26.12.1 weren't
+  tried.
 - Linking a `capture()` to its call uses `AsyncLocalStorage`, on from the first `instrument()`.
   Before Node 24 it slows promises across the process a little: about 2× in a benchmark of nothing
   but promises, little in code that waits on I/O.

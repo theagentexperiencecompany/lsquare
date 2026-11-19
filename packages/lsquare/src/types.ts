@@ -223,10 +223,12 @@ export interface LSquareOptions {
   onError?: ((error: LSquareError, event?: LSquareEvent) => void) | undefined
   /** Defaults to standard error where the runtime has one, so stdio servers' stdout stays clean. */
   logger?: Logger | undefined
+  /** Events held at once, waiting to be sent or in a request (10000 by default). Past it, the oldest are dropped and reported as `queue_full`. */
+  maxQueueEvents?: number | undefined
+  /** Their size together, in bytes of JSON (10485760 by default: 10 MB). Past it, the oldest are dropped too. */
+  maxQueueBytes?: number | undefined
 
   // Limits, mostly for tests.
-  maxQueueEvents?: number | undefined
-  maxQueueBytes?: number | undefined
   maxEventBytes?: number | undefined
   maxAttempts?: number | undefined
   requestTimeoutMs?: number | undefined
