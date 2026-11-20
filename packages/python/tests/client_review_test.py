@@ -63,8 +63,14 @@ def test_1_an_abort_listener_that_waits_on_a_capture_cannot_deadlock_the_client(
 
     lsquare = client(before_send=before_send, before_send_timeout_ms=100)
     holder.append(lsquare)
-    lsquare.capture(turn(1))
-    assert captured.wait(3)
+    try:
+        lsquare.capture(turn(1))
+        assert captured.wait(3)
+    finally:
+        # Each aborted hook's listener captures another event, whose hook is aborted in turn: left
+        # running, this client makes one every 100 ms or so for the rest of the session, copied for
+        # its hook through what other tests patch (copy.deepcopy).
+        lsquare.shutdown(timeout_ms=0)
 
 
 def test_2_the_exit_flush_keeps_to_its_deadline_with_a_stalled_ingestion() -> None:
