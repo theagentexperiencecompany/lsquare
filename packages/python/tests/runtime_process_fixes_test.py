@@ -368,7 +368,15 @@ def test_a_fork_resets_every_live_client_though_one_s_reset_raises() -> None:
             os._exit(0 if reset == ["disabled", "sending"] and not sending._live else 3)
         _, status = os.waitpid(pid, 0)
         print("child", os.waitstatus_to_exitcode(status))
-        held.release()
+        block = sending._block
+
+        def answering(wait, timeout_ms):
+            # Answered once shutdown() waits for it: one answered before shutdown() began would
+            # have ended uncounted.
+            held.release()
+            block(wait, timeout_ms)
+
+        sending._block = answering
         print("parent", sending.shutdown(timeout_ms=5000).sent)
         """
     )
