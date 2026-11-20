@@ -288,10 +288,14 @@ left, so stop cleanly on `SIGTERM`:
 
 ```ts
 process.on('SIGTERM', async () => {
-  await lsquare.shutdown()
+  await lsquare.shutdown()   // sends what's queued, within 5 s by default
   process.exit(0)
 })
 ```
+
+`shutdown()` waits up to 5 s, or `flushTimeoutMs` when that is longer, and returns as soon as
+everything is sent; `shutdown({ timeoutMs })` sets its own limit. Give the process that long before
+a host kills it.
 
 Frameworks that hand you the official SDK's server are covered through it, and tested: Cloudflare's
 `McpAgent` and `createMcpHandler` (`agents` 0.31), and Vercel's `mcp-handler` (2.3). Frameworks with their own
@@ -335,3 +339,9 @@ time it's sent, so a retry or a re-import is recognised as a duplicate.
 Events go in batches of up to 100, at most 4 requests at once. If your project reaches its daily
 limit, the SDK stops sending until the limit resets (00:00 UTC), checks every 15 minutes whether it
 was raised, and reports through `onError` when it starts dropping events and how many it dropped.
+
+The client holds up to 10,000 events at once, or 10 MB of them as JSON, whichever comes first: those
+waiting to be sent and those in a request. When your server makes events faster than they're sent,
+the oldest are dropped to make room, and reported through `onError` as `queue_full`.
+`maxQueueEvents` and `maxQueueBytes` set the two limits: raise them for a server whose bursts are
+larger, and the client can hold that much more memory.

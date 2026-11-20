@@ -52,9 +52,12 @@ CAPTURE_FIELDS = (
 
 DEFAULTS = {
     "flush_timeout_ms": 2_000,
+    # An exiting process has time for slow requests: shutdown() waits this, or the flush timeout
+    # when that is longer; the exit flush waits this unless the app set a flush timeout.
+    "shutdown_timeout_ms": 5_000,
     "max_concurrent_hooks": 16,
     "max_concurrent_requests": 4,
-    "max_queue_events": 1_000,
+    "max_queue_events": 10_000,
     "max_queue_bytes": 10 * 1024 * 1024,
     "max_event_bytes": 256 * 1024,
     "max_attempts": 3,
@@ -937,6 +940,7 @@ class LSquare:
         self._before_send_takes_signal = True
         self._before_send_is_async = False
         self._flush_timeout_ms: float = DEFAULTS["flush_timeout_ms"]
+        self._exit_timeout_ms: float = DEFAULTS["shutdown_timeout_ms"]
         self._before_send_timeout_ms: float = DEFAULTS["flush_timeout_ms"]
         self._max_concurrent_hooks: int = DEFAULTS["max_concurrent_hooks"]
         self._max_concurrent_requests: int = DEFAULTS["max_concurrent_requests"]
@@ -973,6 +977,9 @@ class LSquare:
                 self._on_error = on_error
                 self._on_error_takes_event = _accepts(on_error, 2)
             self._flush_timeout_ms = _wait_time(flush_timeout_ms, DEFAULTS["flush_timeout_ms"])
+            # The exit flush can't be given a timeout of its own: the app's flush timeout keeps it
+            # short; without one, or with 0, it waits 5 s.
+            self._exit_timeout_ms = _wait_time(flush_timeout_ms, 0) or DEFAULTS["shutdown_timeout_ms"]
             # When flush() doesn't wait (0), a hook still gets the default time.
             self._before_send_timeout_ms = _duration(
                 before_send_timeout_ms, self._flush_timeout_ms or DEFAULTS["flush_timeout_ms"]
@@ -1144,8 +1151,8 @@ class LSquare:
         _register_forkable(self)
 
     def _exit_flush(self) -> None:
-        """Interpreter exit: flush within the flush timeout (2 s when that is 0, as shutdown() waits),
-        on the threads already running. Then
+        """Interpreter exit: flush within the flush timeout the app set, or 5 s without one (or
+        with 0), on the threads already running. Then
         the client goes quiet, and what it already handed to the callback and signal threads (the
         flush's own report, say), with any async logger or `on_error` that started, gets
         EXIT_LOG_GRACE_S to finish: the interpreter aborts if a daemon thread is writing to stderr as
@@ -1158,9 +1165,9 @@ class LSquare:
             with self._lock:
                 if not self._live and not self._finishing_calls:
                     return
-                # Terminal, as shutdown(): 2 s when flush() doesn't wait (0), so a request path
-                # that doesn't wait still lets the exit send what's queued.
-                self._exit_deadline = self._clock() + (self._flush_timeout_ms or DEFAULTS["flush_timeout_ms"]) / 1000
+                # Terminal, as shutdown(): 5 s by default, so a request path that doesn't wait still
+                # lets the exit send what's queued.
+                self._exit_deadline = self._clock() + self._exit_timeout_ms / 1000
                 self._exit_flushing = True
                 armed = True
             # What this resumes runs within the flush's time: one budget for both. At least 1 ms: a
@@ -1370,12 +1377,12 @@ class LSquare:
 
     def shutdown(self, timeout_ms: float | None = None) -> FlushResult:
         """Terminal: drops events waiting for `before_send`, waits up to `timeout_ms` for the rest,
-        then drops whatever is left. Later captures are dropped. Its result counts the events
-        outstanding when it was called, one sent while it waited for calls still being built
-        included, and those it found as it closed. A `timeout_ms` it can't read counts as not given:
-        it still shuts down. Blocks the calling thread: on an event loop, use `ashutdown()`. Given
-        time to wait, it returns once what it reported has reached `on_error` or the logger, as
-        `flush()` does."""
+        then drops whatever is left. By default it waits 5 s, or the flush timeout when that is
+        longer. Later captures are dropped. Its result counts the events outstanding when it was
+        called, one sent while it waited for calls still being built included, and those it found
+        as it closed. A `timeout_ms` it can't read counts as not given: it still shuts down. Blocks
+        the calling thread: on an event loop, use `ashutdown()`. Given time to wait, it returns
+        once what it reported has reached `on_error` or the logger, as `flush()` does."""
         result = FlushResult()
         started: tuple[list[_Entry], _Wait | None] | None = None
         calls: list[_FinishingCall] = []
@@ -1387,7 +1394,7 @@ class LSquare:
             self._retire_closed()
             if self._mode != "disabled" and _running_loop() is not None:
                 self._warn_once("sync-shutdown", "[lsquare] shutdown() blocks the event loop it's called on; use await ashutdown() there.")
-            timeout = _wait_arg(timeout_ms, self._flush_timeout_ms or DEFAULTS["flush_timeout_ms"])
+            timeout = _wait_arg(timeout_ms, max(self._flush_timeout_ms, DEFAULTS["shutdown_timeout_ms"]))
             if self._reentered():
                 timeout = 0
             # Disabled, it captured nothing, so it reports nothing.
@@ -1430,7 +1437,7 @@ class LSquare:
             # Counted, as shutdown() counts them.
             before = self._outstanding()
             self._retire_closed()
-            timeout = _wait_arg(timeout_ms, self._flush_timeout_ms or DEFAULTS["flush_timeout_ms"])
+            timeout = _wait_arg(timeout_ms, max(self._flush_timeout_ms, DEFAULTS["shutdown_timeout_ms"]))
             waits = timeout > 0 and self._mode != "disabled"
             calls = list(self._finishing_calls.values())
             if calls and timeout > 0 and current_depth() == 0:

@@ -203,7 +203,7 @@ export interface LSquareOptions {
   endpoint?: string | undefined
   /** Run the whole pipeline but send nothing. Defaults to `LSQUARE_DRY_RUN=1`. */
   dryRun?: boolean | undefined
-  /** How long `flush()` waits by default. `0`: it doesn't wait. */
+  /** How long `flush()` waits by default. `0`: it doesn't wait. `shutdown()` waits 5000, or this when it is longer. */
   flushTimeoutMs?: number | undefined
   /** Redact more, or drop an event by returning `null`. Runs before built-in redaction. */
   beforeSend?: BeforeSend | undefined
@@ -223,10 +223,12 @@ export interface LSquareOptions {
   onError?: ((error: LSquareError, event?: LSquareEvent) => void) | undefined
   /** Defaults to standard error where the runtime has one, so stdio servers' stdout stays clean. */
   logger?: Logger | undefined
+  /** Events held at once, waiting to be sent or in a request (10000 by default). Past it, the oldest are dropped and reported as `queue_full`. */
+  maxQueueEvents?: number | undefined
+  /** Their size together, in bytes of JSON (10485760 by default: 10 MB). Past it, the oldest are dropped too. */
+  maxQueueBytes?: number | undefined
 
   // Limits, mostly for tests.
-  maxQueueEvents?: number | undefined
-  maxQueueBytes?: number | undefined
   maxEventBytes?: number | undefined
   maxAttempts?: number | undefined
   requestTimeoutMs?: number | undefined

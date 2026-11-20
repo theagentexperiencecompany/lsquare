@@ -281,7 +281,7 @@ mcp_app = mcp.streamable_http_app()        # fastmcp: mcp_app = mcp.http_app()
 async def lifespan(app):
     async with mcp.session_manager.run():   # fastmcp: async with mcp_app.lifespan(app):
         yield
-    await lsquare.ashutdown()               # sends what's queued, within flush_timeout_ms
+    await lsquare.ashutdown()               # sends what's queued, within 5 s by default
 
 api = FastAPI(lifespan=lifespan)
 api.mount("/orders", mcp_app)               # the MCP endpoint is /orders/mcp
@@ -386,9 +386,9 @@ gives cleanup at shutdown at most 500 ms, so there it's `wait_until`, not the li
 - **A script ending with `asyncio.run()`**: `await lsquare.ashutdown()` before it returns, after
   `await lsquare.aflush()` if you set `before_send`: `ashutdown()` drops an event still waiting for
   the hook, and pending async hooks are cancelled once the loop ends.
-- At interpreter exit, an `atexit` handler sends what's still queued, within `flush_timeout_ms`
-  (2 s when that is `0`, as `shutdown()` waits, so an exit with events queued can take 2 s), then
-  waits up to half a second more for the SDK's own log lines to be written. On a Python that
+- At interpreter exit, an `atexit` handler sends what's still queued, within 5 s (so an exit with
+  events queued can take 5 s), or within `flush_timeout_ms` if you set it above `0`, then waits
+  up to half a second more for the SDK's own log lines to be written. On a Python that
   refuses to start threads once the main thread has finished (3.12.2 does), it sends from the
   exiting thread what no thread can, a retry due before the timeout included; so does a sync
   `shutdown()` in an `atexit` handler of your own, but not `ashutdown()`. On such a Python a server
@@ -467,3 +467,9 @@ Events go in batches of up to 100, at most 4 requests at once, from the client's
 threads; nothing waits on the network in your code. If your project reaches its daily limit, the
 SDK stops sending until the limit resets (00:00 UTC), checks every 15 minutes whether it was raised,
 and reports through `on_error` when it starts dropping events and how many it dropped.
+
+The client holds up to 10,000 events at once, or 10 MB of them as JSON, whichever comes first: those
+waiting to be sent and those in a request. When your server makes events faster than they're sent,
+the oldest are dropped to make room, and reported through `on_error` as `queue_full`.
+`max_queue_events` and `max_queue_bytes` set the two limits: raise them for a server whose bursts
+are larger, and the client can hold that much more memory.

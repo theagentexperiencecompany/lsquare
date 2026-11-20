@@ -3,6 +3,36 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
+## Not released yet
+
+For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
+this heading. `@lsquare/node` doesn't change.
+
+**Before you upgrade:** `shutdown()` can take up to 5 seconds where it took 2, and so can a Python
+process that exits with events still queued. And the client can hold ten times as many events in
+memory, in the same 10 MB.
+
+### Sending
+
+- **`shutdown()` waits up to 5 seconds by default,** or `flushTimeoutMs` (`flush_timeout_ms`) when
+  that is longer. It waited the flush timeout: 2 seconds by default, and when that is `0`. It still
+  returns as soon as everything is sent, and a timeout of its own, `shutdown({ timeoutMs })`
+  (`shutdown(timeout_ms)`), still replaces the default. Give the process that long before a host
+  kills it.
+- **Python: a process that exits without `shutdown()`** sends what's still queued within 5 seconds.
+  It was 2. With a `flush_timeout_ms` of your own above `0`, it waits that long, as before.
+- **The client holds up to 10,000 events at once,** waiting to be sent or in a request. It held
+  1,000. The other limit is unchanged: 10 MB of events, whichever comes first. Past either, the
+  oldest events are dropped and reported as `queue_full`, as before. A server that makes events
+  faster than they're sent for a while now loses fewer of them.
+
+### Documentation
+
+- The READMEs list the two queue limits among the client options: `maxQueueEvents` and
+  `maxQueueBytes` (`max_queue_events`, `max_queue_bytes`).
+- On Node 26.5.0, the built-in `fetch` sends the SDK's requests one at a time. Node 26.12.1 sends
+  them together: the README says so beside the Node releases it asks for.
+
 ## `lsquare` 0.2.1 on npm, `lsquare` 0.2.0b7 on PyPI
 
 **Before you upgrade:** two turn fields that the reference never listed are gone. TypeScript that

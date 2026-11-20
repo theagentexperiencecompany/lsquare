@@ -307,11 +307,13 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 | `api_key` | | Project key. Without it, the client is disabled. Never read from the environment by the SDK |
 | `endpoint` | `LSQUARE_ENDPOINT`, then `https://ingest.lsquare.io` | https only, except localhost. Read as TypeScript's `new URL` reads it, but an internationalized host (non-ASCII, or `xn--`) disables the client |
 | `dry_run` | `LSQUARE_DRY_RUN=1` | Run everything but send nothing |
-| `flush_timeout_ms` | `2000` | How long `flush()` waits for events, then up to half a second more for its reports to reach a slow `on_error` or logger. `0`: it doesn't wait (`shutdown()` and the exit flush still wait up to 2 s) |
+| `flush_timeout_ms` | `2000` | How long `flush()` waits for events, then up to half a second more for its reports to reach a slow `on_error` or logger. `0`: it doesn't wait. `shutdown()` waits up to 5 s, or this when it is longer; the exit flush waits up to this when you set it above `0`, 5 s otherwise |
 | `before_send` | | Redact more, or drop an event |
 | `before_send_timeout_ms` | `flush_timeout_ms`, or `2000` when that is `0` | Hook deadline |
 | `max_concurrent_hooks` | `16` | `before_send` hooks running at once, and `identify` hooks, each |
 | `max_concurrent_requests` | `4` | Requests in flight at once; other events wait, and go together |
+| `max_queue_events` | `10000` | Events held at once, waiting to be sent or in a request. Past it, the oldest are dropped and reported as `queue_full` |
+| `max_queue_bytes` | `10485760` | Their size together, as JSON: 10 MB. Past it, the same |
 | `redact` | all on | `False`, or `{"email", "phone", "card", "secret", "ip"}` to booleans |
 | `redact_keys` | | More key names whose values are replaced whole |
 | `on_error` | logs codes, once a minute | `(error, event=None)`. Receives a redacted copy, or `None` while earlier reports' copies hold `max_queue_bytes`; may be async |

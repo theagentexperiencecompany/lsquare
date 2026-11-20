@@ -22,7 +22,7 @@ from typing import Any, cast
 
 import pytest
 
-from lsquare import LSquare, _threads
+from lsquare import FlushResult, LSquare, _threads
 from lsquare import _client as lsquare_client
 from lsquare._client import CallScope
 from lsquare._sending import Reply
@@ -2297,6 +2297,89 @@ def test_ashutdown_with_an_unreadable_timeout_waits_as_by_default_and_closes() -
     lsquare.capture(turn(2))
     assert recorder.wait_for(lambda: recorder.codes() == ["shutdown"], 2)
     assert [[event["turnId"] for event in batch] for batch in held.batches] == [["1"]]
+
+
+@pytest.mark.parametrize("form", ["shutdown", "ashutdown"])
+@pytest.mark.parametrize(
+    ("options", "timeout_ms", "waits"),
+    [
+        ({}, None, 5_000),
+        ({"flush_timeout_ms": 0}, None, 5_000),
+        ({"flush_timeout_ms": 1_000}, None, 5_000),
+        ({"flush_timeout_ms": 8_000}, None, 8_000),
+        ({"flush_timeout_ms": 8_000}, 300, 300),
+    ],
+    ids=["by-default", "flush-timeout-0", "flush-timeout-shorter", "flush-timeout-longer", "its-own-timeout"],
+)
+def test_shutdown_waits_5_s_or_the_flush_timeout_when_longer_unless_given_its_own(
+    monkeypatch: pytest.MonkeyPatch, form: str, options: dict[str, Any], timeout_ms: float | None, waits: float
+) -> None:
+    # The time it gives itself, as it starts to wait: the transport answers at once, so the test
+    # doesn't wait it out.
+    given: list[float] = []
+    start = LSquare._shutdown_start
+
+    def recording(self: LSquare, calls: Any, result: Any, timeout: float, before: Any) -> Any:
+        given.append(timeout)
+        return start(self, calls, result, timeout, before)
+
+    monkeypatch.setattr(LSquare, "_shutdown_start", recording)
+    lsquare = client(**options)
+    lsquare.capture(turn(1))
+    if form == "shutdown":
+        result = lsquare.shutdown(timeout_ms=timeout_ms)
+    else:
+        result = asyncio.run(lsquare.ashutdown(timeout_ms=timeout_ms))
+    assert given == [waits]
+    assert result.failed == 0
+
+
+def test_flush_still_waits_2_s_by_default_shutdown_s_longer_wait_is_its_own(monkeypatch: pytest.MonkeyPatch) -> None:
+    held = Held()
+    lsquare = LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=held, logger=Recorder())
+    given: list[float] = []
+    block = lsquare._block
+
+    def recording(wait: Any, timeout_ms: float) -> None:
+        given.append(timeout_ms)
+        held.release()
+        block(wait, timeout_ms)
+
+    monkeypatch.setattr(lsquare, "_block", recording)
+    lsquare.capture(turn(1))
+    assert held.entered.wait(2)
+    assert lsquare.flush().sent == 1
+    assert given == [2_000]
+    lsquare.shutdown(timeout_ms=0)
+
+
+@pytest.mark.parametrize(
+    ("options", "waits"),
+    [({}, 5_000), ({"flush_timeout_ms": 0}, 5_000), ({"flush_timeout_ms": 300}, 300), ({"flush_timeout_ms": 8_000}, 8_000)],
+    ids=["by-default", "flush-timeout-0", "flush-timeout-shorter", "flush-timeout-longer"],
+)
+def test_the_exit_flush_waits_5_s_unless_the_app_set_a_flush_timeout(monkeypatch: pytest.MonkeyPatch, options: dict[str, Any], waits: float) -> None:
+    # It has no timeout of its own to be given: a short flush timeout keeps the exit short. An
+    # event still in flight as the interpreter exits; the time the flush is given is recorded, then
+    # the request answered.
+    held = Held()
+    lsquare = LSquare(api_key=KEY, endpoint="http://localhost:1", _transport=held, logger=Recorder(), **options)
+    given: list[float] = []
+    flush = lsquare._flush
+
+    def recording(timeout_ms: float | None) -> tuple[FlushResult, bool]:
+        given.append(cast(float, timeout_ms))
+        held.release()
+        return flush(timeout_ms)
+
+    monkeypatch.setattr(lsquare, "_flush", recording)
+    lsquare.capture(turn(1))
+    assert held.entered.wait(2)
+    lsquare._exit_flush()
+    # Less what has passed since it set its deadline.
+    assert len(given) == 1 and waits - 250 < given[0] <= waits
+    assert held.answered == [True]
+    lsquare.shutdown(timeout_ms=0)
 
 
 @pytest.mark.parametrize("how", ["sync", "async"])
