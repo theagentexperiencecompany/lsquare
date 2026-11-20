@@ -3,10 +3,7 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
-## Not released yet
-
-For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
-this heading. `@lsquare/node` doesn't change.
+## `lsquare` 0.2.2 on npm, `lsquare` 0.2.0b8 on PyPI
 
 **Before you upgrade:** `shutdown()` can take up to 5 seconds where it took 2, and so can a Python
 process that exits with events still queued. And the client can hold ten times as many events in
