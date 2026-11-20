@@ -333,18 +333,25 @@ def test_a_hook_s_copy_its_result_s_rebuild_and_a_batch_s_serialization_take_no_
     real_copy = copy.deepcopy
     real_after = _event.after_hook
     real_dumps = _jsjson.dumps
+    # Every copy, rebuild and serialization in the process goes through these, another client's
+    # too (one an earlier test left, copying its own events for its hooks on its own threads, which
+    # never hold this client's lock): only this test's event, by its mark. Never by thread: one
+    # made under the lock, on whichever thread, is what this looks for. The event is sent, so no
+    # report copies it: its one copy is the hook's.
+    mark = "off-the-client-lock"
 
     def copying(value: Any, memo: Any = None) -> Any:
-        if holder and isinstance(value, dict) and "eventId" in value:
+        if holder and isinstance(value, dict) and "eventId" in value and value.get("orgId") == mark:
             seen["copy"].append(owned(holder[0]))
         return real_copy(value, memo)
 
     def rebuilding(out: Any, draft: Any, context: Any) -> Any:
-        seen["rebuild"].append(owned(holder[0]))
+        if isinstance(out, Mapping) and out.get("orgId") == mark:
+            seen["rebuild"].append(owned(holder[0]))
         return real_after(out, draft, context)
 
     def serializing(value: Any) -> str:
-        if isinstance(value, dict) and "events" in value:
+        if isinstance(value, dict) and any(isinstance(event, dict) and event.get("orgId") == mark for event in value.get("events") or ()):
             seen["serialize"].append(owned(holder[0]))
         return str(real_dumps(value))
 
@@ -355,7 +362,7 @@ def test_a_hook_s_copy_its_result_s_rebuild_and_a_batch_s_serialization_take_no_
         patch.setattr(copy, "deepcopy", copying)
         patch.setattr(_event, "after_hook", rebuilding)
         patch.setattr(_jsjson, "dumps", serializing)
-        lsquare.capture(turn(1))
+        lsquare.capture(turn(1, orgId=mark))
         assert delivered(lsquare, transport, 1)
     assert seen == {"copy": [False], "rebuild": [False], "serialize": [False]}
     lsquare.shutdown(timeout_ms=0)
