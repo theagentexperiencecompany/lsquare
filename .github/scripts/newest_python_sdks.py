@@ -3,7 +3,8 @@ newest release on PyPI, pre-releases included, pinned as that line's group in th
 checkout, and checked to be the one its tests load. Needs `packaging` (`uv run --with packaging`).
 
     pick  <line>            writes version=<newest> to $GITHUB_OUTPUT, and a line to $GITHUB_STEP_SUMMARY
-    apply <line> <version>  pins packages/python's group <line> to exactly that version
+    apply <line> <version>  pins packages/python's group <line> to exactly that version, on the
+                            Pythons its Requires-Python on PyPI includes
     check <line> <version>  run with the line's venv: fails unless the package it tests is that
                             version, loaded from the venv; prints the mcp it runs on
 
@@ -14,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import re
 import sys
 import urllib.request
@@ -76,14 +78,39 @@ def pick(name: str) -> None:
             file.write(f"- {name}: `{package}=={version}`\n")
 
 
-def apply(name: str, version: str) -> None:
+def requires_python(package: str, version: str) -> str:
+    """The Pythons that release of `package` supports, as its Requires-Python on PyPI says: "" when
+    it says none."""
+    request = urllib.request.Request(f"https://pypi.org/pypi/{package}/{version}/json", headers={"User-Agent": "lsquare-weekly-check"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return json.load(response)["info"].get("requires_python") or ""
+
+
+def requirement(package: str, version: str, python: str) -> str:
+    """The pin of exactly that release, on the Pythons its Requires-Python, `python`, includes. uv
+    locks the package for every Python the package supports, from 3.10: a release that needs a newer
+    one (fastmcp 4.2.0a4 and later need 3.11) fails the whole lock when pinned on all of them, and
+    nothing is tested. On the Pythons it leaves out, the group pins nothing."""
+    from packaging.specifiers import SpecifierSet
+
+    markers = [f"python_full_version {spec.operator} '{spec.version}'" for spec in sorted(SpecifierSet(python), key=str)]
+    return f"{package}=={version}" + (f"; {' and '.join(markers)}" if markers else "")
+
+
+def pinned(text: str, name: str, version: str, python: str) -> str:
+    """pyproject.toml's `text` with group `name` pinned to that release (`requirement`)."""
     package, _ = line_of(name)
-    text = PYPROJECT.read_text(encoding="utf-8")
     pattern = re.compile(rf'^{name} = \["{package}[^"]*"\]$', re.MULTILINE)
     if len(pattern.findall(text)) != 1:
         fail(f"pyproject.toml has no single group {name} for {package}")
-    PYPROJECT.write_text(pattern.sub(f'{name} = ["{package}=={version}"]', text), encoding="utf-8")
-    print(f"{name} pinned to {package}=={version}")
+    return pattern.sub(lambda _: f'{name} = ["{requirement(package, version, python)}"]', text)
+
+
+def apply(name: str, version: str) -> None:
+    package, _ = line_of(name)
+    python = requires_python(package, version)
+    PYPROJECT.write_text(pinned(PYPROJECT.read_text(encoding="utf-8"), name, version, python), encoding="utf-8")
+    print(f"{name} pinned to {requirement(package, version, python)}")
 
 
 def check(name: str, version: str) -> None:
@@ -91,7 +118,10 @@ def check(name: str, version: str) -> None:
     import importlib.metadata
 
     package, _ = line_of(name)
-    installed = importlib.metadata.version(package)
+    try:
+        installed = importlib.metadata.version(package)
+    except importlib.metadata.PackageNotFoundError:
+        fail(f"{package} isn't installed, on the venv's Python {platform.python_version()}: its pin holds only where {version}'s Requires-Python does")
     if installed != version:
         fail(f"{package} {installed} is installed, not the {version} picked")
     module = importlib.import_module(package)
