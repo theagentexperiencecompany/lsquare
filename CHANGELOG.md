@@ -3,10 +3,7 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
-## Not released yet
-
-For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
-this heading. `@lsquare/node` doesn't change.
+## `lsquare` 0.2.3 on npm, `lsquare` 0.2.0b9 on PyPI
 
 **Before you upgrade:** each tool call's event now carries the tool's description, so events are
 larger, by the description's length (up to 1,000 characters), and use more of a project's daily
