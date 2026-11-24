@@ -105,6 +105,42 @@ On stateful HTTP, mcp 1.x and fastmcp 3.x run a session's handlers in the contex
 that opened the session, so context variables your ASGI middleware sets (auth, tenants) hold the
 first request's values there. Read the request from `call.context` (`call.context.request`) instead.
 
+### Tool descriptions
+
+Each call's event carries its tool's description, as `toolDescription`: the text agents were listed
+when they chose the tool. When you reword a description, you can then compare the calls made under
+each wording. It is cut at 1,000 characters, redacted like any text, and given to `before_send`,
+which can change it or take it out. `descriptions=False` turns it off, and a function turns it off
+for chosen tools:
+
+```python
+instrument(mcp, lsquare, descriptions=lambda tool_name: tool_name != "admin_sql")
+```
+
+Where the description comes from depends on the server:
+
+- **`FastMCP` (mcp 1.x) and `MCPServer` (mcp 2.x):** the tool's registration, read when the call
+  arrives: the `description` you gave it, or its function's docstring. Its `tools/list` handler
+  isn't involved.
+- **fastmcp 3.x and 4.x:** the same, while every tool is the server's own. With a mounted server, a
+  proxy or another provider, or a transform other than enabling and disabling tools, a
+  registration no longer says what agents are listed, so a call has the description the instance
+  last listed, as on a low-level server. So does a tool whose registered versions have different
+  descriptions.
+- **A low-level `Server`,** or a high-level one whose `tools/call` handler you replaced: the one
+  the instance last listed. The wrapper reads each page your `tools/list` handler answers as it
+  goes to the client, changes nothing in it, and never calls the handler for this. So a call that
+  reaches an instance before any listing has no description, which on a stateless HTTP server
+  built per request is most calls. With the [extras on](#low-level-servers), the list the wrapper
+  reads for them counts too, and the first call has one. On mcp 1.x, the SDK lists the tools
+  itself while it handles an instance's first call, and that listing counts: the calls after it
+  have one. An instance that lists different descriptions to different users records the one it
+  listed last, and keeps at most 10,000 tools'.
+
+A tool without a description has none. Neither do the wrapper's own `get_more_tools`, nor a
+limited-diagnostics event. With `descriptions=False`, the wrapper reads no tool's description at
+all.
+
 ## The extras
 
 Each extra can be turned off by itself (`extras={"intent": False}`), and `extras=False` turns all

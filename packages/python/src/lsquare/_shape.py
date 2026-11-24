@@ -45,6 +45,7 @@ class LIMITS:
     agent: Final = 16_000
     result: Final = 4_000
     intent: Final = 500
+    description: Final = 1_000
 
 
 MAX_ENTRIES: Final = 100

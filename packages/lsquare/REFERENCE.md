@@ -84,6 +84,35 @@ matched with other records), and they can't be deleted by person. Each failure i
 your own code shuts the client down from as its event is built) is reported only as the client's
 one `shutdown`, since it isn't sent, nor is that event's build failing then reported.
 
+### Tool descriptions
+
+Each call's event carries its tool's description, as `toolDescription`: the text agents were listed
+when they chose the tool. When you reword a description, you can then compare the calls made under
+each wording. It is cut at 1,000 characters, redacted like any text, and given to `beforeSend`,
+which can change it or take it out. `descriptions: false` turns it off, and a function turns it off
+for chosen tools:
+
+```ts
+instrument(server, lsquare, { descriptions: (toolName) => toolName !== 'admin_sql' })
+```
+
+Where the description comes from depends on the server:
+
+- **A high-level `McpServer`:** the tool's registration, read when the call arrives. One you change
+  later (`tool.update({ description })`) is on the next call. Its `tools/list` handler isn't
+  involved.
+- **A low-level `Server`,** or a high-level one whose `tools/call` handler you replaced: the one
+  the instance last listed. The wrapper reads each page your `tools/list` handler answers as it
+  goes to the client, changes nothing in it, and never calls the handler for this. So a call that
+  reaches an instance before any listing has no description, which on a stateless HTTP server
+  built per request is most calls. With the [extras on](#low-level-servers), the list the wrapper
+  reads for them counts too, and the first call has one. An instance that lists different
+  descriptions to different users records the one it listed last, and keeps at most 10,000 tools'.
+
+A tool without a description has none. Neither do the wrapper's own `get_more_tools`, nor a
+limited-diagnostics event. With `descriptions: false` and the extras off, a low-level server's
+`tools/list` handler is left as it is.
+
 ## The extras
 
 Each extra can be turned off by itself (`extras: { intent: false }`), and `extras: false` turns all

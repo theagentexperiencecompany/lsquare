@@ -209,6 +209,7 @@
         "name": "laptop"
       },
       "intent": "look someone up",
+      "toolDescription": "Look a person up by email",
       "metadata": {
         "tenant": "acme"
       }
@@ -226,6 +227,167 @@
       "error": {
         "category": "tool_error"
       }
+    }
+  },
+  {
+    "name": "a tool description is kept as given, and redacted as any text",
+    "call": {
+      "toolDescription": "Search orders by customer. Questions go to help@acme.io."
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "toolDescription": "Search orders by customer. Questions go to [EMAIL_1].",
+      "redactions": {
+        "email": 1
+      }
+    }
+  },
+  {
+    "name": "a tool description is cut at 1,000 characters",
+    "call": {
+      "toolDescription": {
+        "$prose": 1500
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "toolDescription": {
+        "$concat": [
+          {
+            "$prose": 1000
+          },
+          "\u2026[+500 chars]"
+        ]
+      },
+      "truncated": [
+        "toolDescription"
+      ]
+    }
+  },
+  {
+    "name": "a tool description that isn't a string is left out",
+    "call": {
+      "toolDescription": 42
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "dropped": {
+        "toolDescription": "wrong_type"
+      }
+    }
+  },
+  {
+    "name": "a tool description reaches the hook already cut, and one the hook returns as it got it stays as it is",
+    "call": {
+      "toolDescription": {
+        "$prose": 1500
+      }
+    },
+    "hook": {
+      "seen": {
+        "toolDescription": {
+          "$concat": [
+            {
+              "$prose": 1000
+            },
+            "\u2026[+500 chars]"
+          ]
+        }
+      }
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "toolDescription": {
+        "$concat": [
+          {
+            "$prose": 1000
+          },
+          "\u2026[+500 chars]"
+        ]
+      },
+      "truncated": [
+        "toolDescription"
+      ]
+    }
+  },
+  {
+    "name": "a tool description is read after the result: one that uses the scan budget up is recorded as without it, and the description is what's cut",
+    "call": {
+      "input": {
+        "q": "late orders"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$prose": 1200000
+            }
+          }
+        ]
+      },
+      "toolDescription": "Search orders by customer."
+    },
+    "event": {
+      "eventId": "case-call",
+      "kind": "tool_call",
+      "schemaVersion": 2,
+      "source": "live",
+      "callId": "case-call",
+      "toolName": "search_orders",
+      "status": "completed",
+      "durationMs": 1,
+      "input": {
+        "q": "late orders"
+      },
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": {
+              "$concat": [
+                {
+                  "$prose": 4000
+                },
+                "\u2026[cut]"
+              ]
+            }
+          }
+        ]
+      },
+      "toolDescription": "\u2026[cut]",
+      "truncated": [
+        "result",
+        "toolDescription"
+      ]
     }
   }
 ]

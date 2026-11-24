@@ -140,6 +140,8 @@ class ToolCallEvent(EventBase, total=False):
     round: Round
     task: Task
     intent: str
+    #: The tool's description, as agents are listed it: cut at 1,000 characters.
+    toolDescription: str
     extra: Literal["missing_tools"]
     #: What ``capture()`` sent from inside the call before the tool returned.
     agent: TurnFields

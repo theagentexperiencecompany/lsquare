@@ -289,7 +289,146 @@ def test_before_send_keeps_a_turns_ids_and_the_markers_of_what_was_cut_and_cuts_
     assert event["truncated"] == ["answer", "question"]
 
 
+# The tool's description.
+
+DESCRIPTION = "Search a customer's orders by status and date. Returns at most 50."
+
+
+def described() -> dict[str, Any]:
+    return call(input={"value": {"q": "late orders"}}, intent="find late orders", task={"id": "task_1", "status": "working"}, toolDescription=DESCRIPTION).event
+
+
+def test_a_call_carries_its_tools_description_as_given_after_its_intent() -> None:
+    event = described()
+    assert event["toolDescription"] == DESCRIPTION
+    assert "truncated" not in event and "dropped" not in event
+    # Python only: TypeScript's field order (see test_writes_the_event_in_typescripts_field_order).
+    keys = list(event)
+    assert keys[keys.index("intent") : keys.index("intent") + 3] == ["intent", "toolDescription", "task"]
+    assert "toolDescription" not in call().event
+
+
+def cut_description() -> dict[str, Any]:
+    return call(toolDescription=prose(1_500)).event
+
+
+def test_a_description_is_cut_at_1000_characters_and_named_as_truncated() -> None:
+    event = cut_description()
+    assert event["toolDescription"] == f"{prose(1_000)}…[+500 chars]"
+    assert event["truncated"] == ["toolDescription"]
+    whole = call(toolDescription=prose(1_000)).event
+    assert whole["toolDescription"] == prose(1_000) and "truncated" not in whole
+
+
+def test_a_description_that_is_not_a_string_is_dropped_as_wrong_type() -> None:
+    event = call(toolDescription=["Search orders"]).event
+    assert "toolDescription" not in event
+    assert event["dropped"] == {"toolDescription": "wrong_type"}
+    assert "toolDescription" not in call(toolDescription=None).event
+    assert "dropped" not in call(toolDescription=None).event
+
+
+def test_a_description_is_redacted_as_the_calls_other_text_is() -> None:
+    event = call(toolDescription="Ask jane@acme.io for access, then search.", input={"value": {"to": "jane@acme.io"}}).event
+    assert event["toolDescription"] == "Ask [EMAIL_1] for access, then search."
+    # The same address, so the same placeholder, counted where it was replaced.
+    assert event["input"] == {"to": "[EMAIL_1]"}
+    assert event["redactions"] == {"email": 2}
+
+
+def test_limited_diagnostics_never_carry_the_description() -> None:
+    assert "toolDescription" not in failed(toolDescription=DESCRIPTION).event
+    assert failed(toolDescription=DESCRIPTION).event == failed().event
+    # Nor one a hook adds, or leaves in.
+    pending = failed(True, toolDescription=DESCRIPTION)
+    assert pending.event["toolDescription"] == DESCRIPTION
+    finished = after_hook({**pending.event, "toolDescription": "added"}, pending, CONTEXT)
+    assert isinstance(finished, BuiltOk)
+    assert "toolDescription" not in finished.draft.event and finished.draft.event["identity"] == "failed"
+
+
+def test_before_send_sees_the_description_and_can_change_it_or_remove_it() -> None:
+    pending = call(True, toolDescription="Ask jane@acme.io for access.", input={"value": {"q": 1}})
+    # Not redacted yet: the hook sees the text.
+    assert pending.event["toolDescription"] == "Ask jane@acme.io for access."
+    kept = after_hook(dict(pending.event), pending, CONTEXT)
+    assert isinstance(kept, BuiltOk) and kept.draft.event["toolDescription"] == "Ask [EMAIL_1] for access."
+
+    pending = call(True, toolDescription=DESCRIPTION)
+    changed = after_hook({**pending.event, "toolDescription": prose(1_200)}, pending, CONTEXT)
+    assert isinstance(changed, BuiltOk)
+    assert changed.draft.event["toolDescription"] == f"{prose(1_000)}…[+200 chars]"
+    assert changed.draft.event["truncated"] == ["toolDescription"]
+
+    pending = call(True, toolDescription=DESCRIPTION)
+    removed = after_hook({key: value for key, value in pending.event.items() if key != "toolDescription"}, pending, CONTEXT)
+    assert isinstance(removed, BuiltOk) and "toolDescription" not in removed.draft.event
+
+    pending = call(True, toolDescription=DESCRIPTION)
+    wrong = after_hook({**pending.event, "toolDescription": 7}, pending, CONTEXT)
+    assert isinstance(wrong, BuiltOk) and "toolDescription" not in wrong.draft.event
+    assert wrong.draft.event["dropped"] == {"beforeSend.toolDescription": "wrong_type"}
+
+
+def test_the_description_is_shaped_last_so_it_never_takes_scan_budget_from_the_calls_own_data() -> None:
+    # A description far past the budget: the input and the result are read first, whole.
+    rows = {"rows": [prose(900) for _ in range(40)]}
+    result = {"content": [{"type": "text", "text": prose(3_000)}]}
+    without = call(input={"value": rows}, result={"value": result}).event
+    with_one = call(input={"value": rows}, result={"value": result}, toolDescription=prose(1_200_000)).event
+    assert with_one["input"] == without["input"] == rows
+    assert with_one["result"] == without["result"] == result
+    assert "truncated" not in without
+    # Counting what was cut would use the budget up: marked as cut, without a count.
+    assert with_one["toolDescription"] == f"{prose(1_000)}…[cut]"
+    assert with_one["truncated"] == ["toolDescription"]
+
+    # A result that uses the budget up leaves none for the description: everything else is as it
+    # would be without one.
+    spent = {"content": [{"type": "text", "text": prose(1_200_000)}]}
+    without = call(input={"value": rows}, result={"value": spent}).event
+    with_one = call(input={"value": rows}, result={"value": spent}, toolDescription=DESCRIPTION).event
+    assert with_one["toolDescription"] == "…[cut]"
+    assert with_one["truncated"] == ["result", "toolDescription"] and without["truncated"] == ["result"]
+    rest = {key: value for key, value in with_one.items() if key not in ("toolDescription", "truncated")}
+    assert rest == {key: value for key, value in without.items() if key != "truncated"}
+
+
+def test_an_event_too_large_loses_its_description_first() -> None:
+    def built(max_bytes: int, **over: Any) -> dict[str, Any]:
+        context = Context(sdk=CONTEXT.sdk, patterns=CONTEXT.patterns, redact_keys=[], max_event_bytes=max_bytes)
+        made = build_call(record(**over), context, False)
+        assert isinstance(made, BuiltOk), made
+        return made.draft.event
+
+    values: dict[str, Any] = {
+        "input": {"value": {"q": prose(600)}},
+        "result": {"value": {"content": [{"type": "text", "text": prose(600)}]}},
+        "agent": {"question": prose(600)},
+        "toolDescription": prose(600),
+    }
+    whole = built(256 * 1024, **values)
+    size = len(dumps(whole).encode("utf-8"))
+    assert size > 2_400 and "truncated" not in whole
+    # Just under its size: the description is left out, and nothing that only this call has.
+    event = built(size - 1, **values)
+    assert event["truncated"] == ["toolDescription"] and "toolDescription" not in event
+    rest = {key: value for key, value in whole.items() if key != "toolDescription"}
+    assert {key: value for key, value in event.items() if key != "truncated"} == rest
+    # Smaller still: then the result, the input and the agent's turn, in the order they always went.
+    event = built(1_100, **values)
+    assert event["truncated"] == ["toolDescription", "result", "input"]
+    assert event["agent"] == whole["agent"] and len(dumps(event).encode("utf-8")) <= 1_100
+    # An event that fitted without a description is never dropped for having one.
+    alone = len(dumps(built(256 * 1024)).encode("utf-8"))
+    event = built(alone + 40, toolDescription=prose(600))
+    assert event["truncated"] == ["toolDescription"] and "toolDescription" not in event
+
+
 def test_the_ingestion_accepts_every_event() -> None:
     require_node()
-    events = [outlined(), *errors(), call(agent=AGENT).event, oversized_call()[0], oversized_turn(), failed().event, reduced_after_hook()]
+    events = [
+        outlined(), *errors(), call(agent=AGENT).event, oversized_call()[0], oversized_turn(), failed().event, reduced_after_hook(),
+        described(), cut_description(), failed(toolDescription=DESCRIPTION).event,
+    ]  # fmt: skip
     assert ingestion(events) == ["valid"] * len(events)

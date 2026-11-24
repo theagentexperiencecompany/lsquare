@@ -62,6 +62,8 @@ export interface V2Turn extends V2Event {
 export interface V2ToolCall extends V2Event {
   kind: 'tool_call'
   toolName: string
+  /** The tool's description as agents were listed it when the call came. Never in a limited-diagnostics event. */
+  toolDescription?: string
   status: 'completed' | 'error'
   /** The reference of the turn the call was made in. */
   turnRef?: string
@@ -235,6 +237,7 @@ const V2_TURN: Record<string, Check> = { ...TURN_FIELDS, toolName: isId, questio
 
 const V2_TOOL_CALL: Record<string, Check> = {
   toolName: isId,
+  toolDescription: isString,
   status: isStatus,
   turnRef: isTurnRef,
   server: isNamed,

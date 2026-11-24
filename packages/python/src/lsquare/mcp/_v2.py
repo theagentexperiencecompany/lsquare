@@ -19,8 +19,23 @@ from typing import Any, cast
 from . import _fastmcp
 from .._client import _enter_callback, current_depth
 from ._boundary import HANDLING, Phase
-from ._call import Running, State, high_mode, http_session, listed, low_listed, low_on, made_session, on_call, snapshot, sse_message, tap_tools, unchanged
-from ._lists import Reader, mark
+from ._call import (
+    Running,
+    State,
+    high_mode,
+    http_session,
+    listed,
+    low_listed,
+    low_on,
+    made_session,
+    note_listed,
+    on_call,
+    snapshot,
+    sse_message,
+    tap_tools,
+    unchanged,
+)
+from ._lists import Reader, forget, mark
 from ._extras import missing_tools_reply
 from ._read import attr, cancelled, in_mro, item, loaded, wire
 from ._run import in_stdio
@@ -134,6 +149,8 @@ def _check_list_entry(state: State) -> None:
     if entry is not state.list_entry:
         state.list_entry = entry
         mark(state.lists, False)
+        # The descriptions the one before listed say nothing of this one's tools.
+        forget(state.lists)
 
 
 def _watch(state: State, ctx: Any) -> None:
@@ -230,6 +247,9 @@ class Outer:
         except Exception:
             pass
         listing = await call_next(ctx)
+        # Each tool's description, as the page lists it, whatever the extras then add.
+        if state.lists.describes:
+            note_listed(state, item(listing, "tools"), lambda tool: item(tool, "name"), lambda tool: item(tool, "description"))
         try:
             # Checked after the await too: the handler may have been replaced meanwhile.
             _check_replaced(state)

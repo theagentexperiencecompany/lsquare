@@ -11,7 +11,7 @@ import type { Json } from './types.js'
 
 /** Characters (code points) read per event, plus one per value visited, across all its fields. */
 export const SCAN_BUDGET = 1_000_000
-export const LIMITS = { input: 16_000, agent: 16_000, result: 4_000, intent: 500 } as const
+export const LIMITS = { input: 16_000, agent: 16_000, result: 4_000, intent: 500, description: 1_000 } as const
 export const MAX_ENTRIES = 100
 export const MAX_LEVELS = 10
 /** Redaction reads this far past a cut, so a secret that runs into it is still recognised. */

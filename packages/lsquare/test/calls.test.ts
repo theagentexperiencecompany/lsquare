@@ -243,3 +243,121 @@ describe('beforeSend', () => {
     expect(event.truncated).toEqual(['answer', 'question'])
   })
 })
+
+describe("a call's tool description", () => {
+  const event = (over: Partial<CallRecord>) => call(over).event as ToolCallEvent
+
+  it('is kept as given, and the ingestion takes it', () => {
+    const built = event({ toolDescription: 'Search orders by customer, newest first.' })
+    expect(built.toolDescription).toBe('Search orders by customer, newest first.')
+    expect(built).not.toHaveProperty('truncated')
+    expect(ingestion(built)).toBe('valid')
+  })
+
+  it('is cut at 1,000 characters, counted as code points, and marked', () => {
+    const built = event({ toolDescription: prose(1_500) })
+    expect(built.toolDescription).toBe(`${prose(1_000)}…[+500 chars]`)
+    expect(built.truncated).toEqual(['toolDescription'])
+    expect(event({ toolDescription: prose(1_000) }).toolDescription).toBe(prose(1_000))
+    // A pair outside the Basic Multilingual Plane is one character.
+    expect(event({ toolDescription: '😀'.repeat(1_001) }).toolDescription).toBe(`${'😀'.repeat(1_000)}…[+1 chars]`)
+  })
+
+  it('is redacted as any text', () => {
+    const built = event({ toolDescription: 'Mail billing@acme.io, or call +1 415 555 0134.' })
+    expect(built.toolDescription).toBe('Mail [EMAIL_1], or call [PHONE_1].')
+    expect(built.redactions).toEqual({ email: 1, phone: 1 })
+  })
+
+  it.each([[42], [{ text: 'Search orders' }], [['Search orders']], [true]])('is left out, and recorded as dropped, when it is %j', (value) => {
+    const built = event({ toolDescription: value })
+    expect(built).not.toHaveProperty('toolDescription')
+    expect(built.dropped).toEqual({ toolDescription: 'wrong_type' })
+    expect(ingestion(built)).toBe('valid')
+  })
+
+  it('is left out, without a word, when there is none', () => {
+    for (const none of [undefined, null]) {
+      const built = event({ toolDescription: none })
+      expect(built).not.toHaveProperty('toolDescription')
+      expect(built).not.toHaveProperty('dropped')
+    }
+  })
+
+  it('is never in a limited-diagnostics event, before the hook or after it', () => {
+    const built = event({ diagnostics: true, toolDescription: 'Look a person up by email.' })
+    expect(built).toMatchObject({ identity: 'failed' })
+    expect(built).not.toHaveProperty('toolDescription')
+    expect(ingestion(built)).toBe('valid')
+    const pending = call({ diagnostics: true, toolDescription: 'Look a person up by email.' }, true)
+    const finished = afterHook({ ...pending.event, toolDescription: 'Put back by the hook.' }, pending, context)
+    if (!finished.ok) throw new Error(finished.code)
+    expect(finished.draft.event).not.toHaveProperty('toolDescription')
+    expect(ingestion(finished.draft.event)).toBe('valid')
+  })
+
+  it('reaches beforeSend, which may change it, take it out, or put one in', () => {
+    const hooked = (given: Partial<CallRecord>, change: (event: ToolCallEvent) => Record<string, unknown>) => {
+      const pending = call(given, true)
+      const finished = afterHook(change(pending.event as ToolCallEvent), pending, context)
+      if (!finished.ok) throw new Error(finished.code)
+      return { seen: pending.event as ToolCallEvent, event: finished.draft.event as ToolCallEvent }
+    }
+    // Not redacted yet: the hook sees the text, as for any field.
+    const changed = hooked({ toolDescription: 'Mail billing@acme.io.' }, (seen) => ({ ...seen, toolDescription: `${seen.toolDescription} Or ops@acme.io.` }))
+    expect(changed.seen.toolDescription).toBe('Mail billing@acme.io.')
+    expect(changed.event.toolDescription).toBe('Mail [EMAIL_1]. Or [EMAIL_2].')
+    const removed = hooked({ toolDescription: 'Internal.' }, ({ toolDescription, ...rest }) => rest)
+    expect(removed.event).not.toHaveProperty('toolDescription')
+    expect(removed.event).not.toHaveProperty('dropped')
+    const added = hooked({}, (seen) => ({ ...seen, toolDescription: prose(1_200) }))
+    expect(added.event.toolDescription).toBe(`${prose(1_000)}…[+200 chars]`)
+    expect(added.event.truncated).toEqual(['toolDescription'])
+    const wrong = hooked({ toolDescription: 'Search orders.' }, (seen) => ({ ...seen, toolDescription: 7 }))
+    expect(wrong.event).not.toHaveProperty('toolDescription')
+    expect(wrong.event.dropped).toEqual({ 'beforeSend.toolDescription': 'wrong_type' })
+    // One this SDK cut keeps its marker when the hook hands it back.
+    const cut = hooked({ toolDescription: prose(1_500) }, (seen) => ({ ...seen }))
+    expect(cut.seen.toolDescription).toBe(`${prose(1_000)}…[+500 chars]`)
+    expect(cut.event.toolDescription).toBe(`${prose(1_000)}…[+500 chars]`)
+  })
+
+  it('is read last: a result that uses the scan budget up is recorded as without one, and the description is what is cut', () => {
+    const big = { input: { value: { q: prose(20_000) } }, result: { value: { content: [{ type: 'text', text: prose(1_200_000) }] } } }
+    const without = event(big)
+    const { toolDescription, truncated, ...rest } = event({ ...big, toolDescription: 'Search orders.' })
+    expect(toolDescription).toBe('…[cut]')
+    expect(truncated).toEqual([...(without.truncated ?? []), 'toolDescription'])
+    const { truncated: _, ...plain } = without
+    expect(rest).toEqual(plain)
+  })
+
+  it('is the first part left out to make an event fit: nothing only this call has goes to make room for it', () => {
+    const base = record({
+      ids: { orgId: 'org_1' },
+      input: { value: { q: 'late orders' } },
+      result: { value: { content: [{ type: 'text', text: '3 orders' }] } },
+      agent: { question: 'Which orders are late?' },
+    })
+    const small = buildCall(base, context, false)
+    if (!small.ok) throw new Error(small.code)
+    // Room for the event without a description, and for saying one was left out; none for the description.
+    const tight = { ...context, maxEventBytes: new TextEncoder().encode(JSON.stringify(small.draft.event)).length + 40 }
+    const built = buildCall({ ...base, toolDescription: prose(900) }, tight, false)
+    if (!built.ok) throw new Error(built.code)
+    const { truncated, ...fitted } = built.draft.event as ToolCallEvent
+    expect(truncated).toEqual(['toolDescription'])
+    expect(fitted).toEqual(small.draft.event)
+    expect(ingestion(built.draft.event)).toBe('valid')
+    // An event too large without it too loses it, then its result, as before.
+    const { result: _, ...noResult } = base
+    const smaller = buildCall(noResult, context, false)
+    if (!smaller.ok) throw new Error(smaller.code)
+    const tighter = { ...context, maxEventBytes: new TextEncoder().encode(JSON.stringify(smaller.draft.event)).length + 50 }
+    const less = buildCall({ ...base, result: { value: { content: [{ type: 'text', text: prose(2_000) }] } }, toolDescription: 'Search orders.' }, tighter, false)
+    if (!less.ok) throw new Error(less.code)
+    const { truncated: left, ...kept } = less.draft.event as ToolCallEvent
+    expect(left).toEqual(['toolDescription', 'result'])
+    expect(kept).toEqual(smaller.draft.event)
+  })
+})
