@@ -17,13 +17,13 @@ import contextvars
 import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from .._client import Internal
 from .._threads import interrupts
 from ._extras import MISSING_TOOLS, Ownership, listed_ownership
-from ._read import loaded
+from ._read import loaded, plain_text
 
 MAX_PAGES = 100
 MAX_TOOLS = 10_000
@@ -54,6 +54,9 @@ class Reader:
     context: contextvars.Context
     #: Whether the handler it reads is still the server's: a read of a replaced one is overtaken.
     current: Callable[[], bool] | None = None
+    #: Told each tool a page lists, as the read reads it: its name, and its description as listed.
+    #: The read's own (see _start()), where descriptions are recorded.
+    listed: Callable[[str, Any], None] | None = None
 
 
 @dataclass(eq=False)
@@ -95,6 +98,54 @@ class Lists:
     lock: threading.Lock = field(default_factory=threading.Lock)
     #: Read tasks still running, abandoned ones included, kept until they end.
     tasks: set[Any] = field(default_factory=set)
+    #: Whether tool descriptions are recorded at all: off, nothing is noted below, and no listed
+    #: tool's `description` is ever read.
+    describes: bool = False
+    #: Each tool's description as the instance last listed it, by name: from every page its
+    #: tools/list handler gave, to a client or to a read of the snapshot. Under the lock.
+    described: dict[str, str] = field(default_factory=dict)
+
+
+def describe(lists: Lists, name: Any, description: Any) -> None:
+    """Notes one listed tool's description: a string that isn't empty is kept, for at most
+    MAX_TOOLS names; a tool listed with anything else has none from then on. Never raises."""
+    try:
+        if not lists.describes:
+            return
+        key = plain_text(name)
+        if key is None:
+            return
+        text = plain_text(description)
+        with lists.lock:
+            if text is None:
+                lists.described.pop(key, None)
+            elif key in lists.described or len(lists.described) < MAX_TOOLS:
+                lists.described[key] = text
+    except Exception:
+        pass
+
+
+def described(lists: Lists, name: Any) -> str | None:
+    """The description `name` was last listed with, or None. Never raises."""
+    try:
+        if not lists.describes:
+            return None
+        key = plain_text(name)
+        if key is None:
+            return None
+        with lists.lock:
+            return lists.described.get(key)
+    except Exception:
+        return None
+
+
+def forget(lists: Lists) -> None:
+    """Another tools/list handler: what the one before listed says nothing of its tools."""
+    try:
+        with lists.lock:
+            lists.described.clear()
+    except Exception:
+        pass
 
 
 def mark(lists: Lists, list_changed: bool) -> None:
@@ -201,6 +252,13 @@ async def with_snapshot(lists: Lists, internal: Internal, reader: Callable[[], R
 def _start(lists: Lists, internal: Internal, reading: Reading, reader: Reader) -> None:
     """Runs the read as a task of its own, and arms its give-up. A read that can't start fails."""
     reading.give_up = internal.timer(GIVE_UP_S, lambda: _expire(lists, reading))
+    if lists.describes:
+        # What it lists is noted as it is read, whatever becomes of the snapshot: each page is the
+        # handler's own answer, as a client's listing is.
+        try:
+            reader = replace(reader, listed=lambda name, description: describe(lists, name, description))
+        except Exception:
+            pass
     try:
         asyncio_loop = _asyncio_loop()
         if asyncio_loop is not None:
@@ -376,7 +434,10 @@ def _keep(lists: Lists, task: Any) -> None:
 
 
 async def _collect(reader: Reader) -> Snapshot:
-    """Every page of the instance's own list. Anything off fails the read."""
+    """Every page of the instance's own list. Anything off fails the read, except a description
+    that can't be read: each tool's is noted as it is read (`Reader.listed`), where descriptions
+    are recorded, and the tool has none otherwise."""
+    listed_ = reader.listed
     tools: dict[str, Ownership] = {}
     cursors: set[str] = set()
     own_missing_tools = False
@@ -396,6 +457,12 @@ async def _collect(reader: Reader) -> Snapshot:
             tools[name] = listed_ownership(strict(tool, "inputSchema"))
             if name == MISSING_TOOLS:
                 own_missing_tools = True
+            if listed_ is not None:
+                try:
+                    # Absent (the marker) or None: no description.
+                    listed_(name, strict(tool, "description"))
+                except Exception:
+                    pass
         following = strict(listed, "nextCursor")
         if following is None or following is _ABSENT:
             return Snapshot(tools, own_missing_tools)

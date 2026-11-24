@@ -162,6 +162,8 @@ export interface ToolCallEvent extends EventBase {
   /** The turn's `k/` reference, when `capture()` inside the call gave a conversation and a turnId. */
   turnRef?: string
   toolName: string
+  /** The tool's description as agents were listed it when the call came, cut at 1,000 characters. See `descriptions`. */
+  toolDescription?: string
   server?: { name: string; version?: string }
   client?: { name: string; version?: string }
   protocolVersion?: string

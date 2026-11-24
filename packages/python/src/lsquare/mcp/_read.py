@@ -24,6 +24,19 @@ def attr(value: Any, name: str, default: Any = None) -> Any:
         return default
 
 
+def plain_text(value: Any) -> str | None:
+    """`value` as a plain string that isn't empty, or None: a str subclass is read as its text, by
+    str's own `__str__`, so none of its own code (`__eq__`, `__hash__`) runs where it's compared
+    or kept."""
+    try:
+        if not isinstance(value, str):
+            return None
+        text = value if type(value) is str else str.__str__(value)
+        return text if text != "" else None
+    except Exception:
+        return None
+
+
 def item(value: Any, key: str, default: Any = None) -> Any:
     """A mapping's entry, or `default`."""
     try:

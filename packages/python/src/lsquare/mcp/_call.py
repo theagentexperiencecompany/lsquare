@@ -49,7 +49,7 @@ from ._extras import (
     new_session_id,
 )
 from ._boundary import tap, watches
-from ._lists import Lists, Reader, Snapshot, Wait, fresh, mark, wait_once, with_snapshot
+from ._lists import Lists, Reader, Snapshot, Wait, describe, described, fresh, mark, wait_once, with_snapshot
 from ._read import attr, cancelled, close, item, scope_cancelled, wire
 from ._registry import Read, Registry
 from ._weak import ByIdentity
@@ -101,6 +101,11 @@ class Settings:
     #: How `inputs` was given, for dry run, which runs outside any request and so doesn't ask a function.
     inputs_mode: str
     results: Callable[[str], bool]
+    #: Whether a call carries its tool's description, asked once per call, as the other two.
+    descriptions: Callable[[str], bool]
+    #: How `descriptions` was given: "off" (passed False: no listed tool's description is ever
+    #: read), "asked" (a function) or "on".
+    descriptions_mode: str
     wait_until: Callable[[Any], Any] | None
     flush_before_reply: bool
     #: Each extra on unless passed as False: a high-level server's defaults.
@@ -214,6 +219,7 @@ def read_options(
     extras: Any,
     wait_until: Any,
     flush_before_reply: Any,
+    descriptions: Any = True,
 ) -> Settings:
     # A function that raises, or answers with an awaitable (which can't be waited for), records
     # nothing for that call: the field stays out of its event, and one warning per option says so.
@@ -263,6 +269,8 @@ def read_options(
         ),
         inputs_mode="off" if inputs is False else "asked" if callable(inputs) else "on",
         results=choice("results", results),
+        descriptions=choice("descriptions", descriptions),
+        descriptions_mode="off" if descriptions is False else "asked" if callable(descriptions) else "on",
         wait_until=wait_until if callable(wait_until) else None,
         flush_before_reply=flush and not callable(wait_until),
         extras=Extras(extra("sessions"), extra("intent"), extra("missing_tools")),
@@ -433,6 +441,9 @@ class Running:
     #: Where the call arrived: identify and late builds run as if from there.
     origin: Origin
     context: Any
+    #: The tool's description, as agents are listed it, read when the call arrived; None when
+    #: descriptions aren't recorded for the tool, or none is known.
+    description: str | None = None
     #: The server the call came to: on fastmcp, its `call_tool()` records this call's steps.
     owner: State | None = None
     #: An `isError` result whose function wasn't entered is the SDK's (see `tap_tools`).
@@ -793,7 +804,11 @@ async def on_call(state: State, dispatch: Dispatch, tap: Callable[[State, str, R
     try:
         calls = state.internal.calls()
         if recorded is not None:
-            running = start(state, prepared, dispatch, arrived, *recorded)
+            running = start(state, prepared, dispatch, arrived, recorded[0], recorded[1])
+            # In this step too, from the same read: the description the tool has as its call
+            # arrives. The wrapper's own get_more_tools has none of the server's.
+            if recorded[2] and not prepared.answer:
+                running.description = description_of(state, running.tool_name, read)
             if tap is not None and high_mode(state) and not prepared.answer:
                 running.watched = tap(state, running.tool_name, read) is not False
     except Exception:
@@ -880,15 +895,47 @@ async def on_call(state: State, dispatch: Dispatch, tap: Callable[[State, str, R
     return reply
 
 
-def recording(state: State, dispatch: Dispatch) -> tuple[bool, bool] | None:
-    """Whether a call's inputs and its result are recorded, as the app's `inputs` and `results`
-    answer for its tool. None when they can't be asked: the call then goes on unrecorded."""
+def recording(state: State, dispatch: Dispatch) -> tuple[bool, bool, bool] | None:
+    """Whether a call's inputs, its result and its tool's description are recorded, as the app's
+    `inputs`, `results` and `descriptions` answer for its tool. None when they can't be asked: the
+    call then goes on unrecorded."""
     try:
         tool_name = dispatch.tool_name if isinstance(dispatch.tool_name, str) else ""
         settings = state.settings
-        return settings.inputs(tool_name), settings.results(tool_name)
+        return settings.inputs(tool_name), settings.results(tool_name), settings.descriptions(tool_name)
     except Exception:
         return None
+
+
+def description_of(state: State, tool_name: str, read: Read | None = None) -> str | None:
+    """The tool's description as agents are listed it now: a registered tool's own, while the
+    high-level class's own handler is in place and its registry can tell; else as this instance
+    last listed it, to a client or to a read of the snapshot (see _lists.describe()), so a tool no
+    page has shown yet has none. `read`: the call's read of the registry, from the same step;
+    without it, the registry is read now. Never raises."""
+    try:
+        registry = state.registry
+        if registry is not None and high_mode(state):
+            found = (read if read is not None else registry).description(tool_name)
+            if found is not None:
+                return found
+        return described(state.lists, tool_name)
+    except Exception:
+        return None
+
+
+def note_listed(state: State, tools: Any, name_of: Callable[[Any], Any], description_of_: Callable[[Any], Any]) -> None:
+    """Notes the description of each tool a tools/list page lists, as its handler gave it, before
+    the extras change anything of it: what `description_of()` answers with where no registry can.
+    Nothing is read where descriptions aren't recorded. Never raises, and changes nothing."""
+    try:
+        lists = state.lists
+        if not lists.describes or not isinstance(tools, list):
+            return
+        for tool in tools:
+            describe(lists, name_of(tool), description_of_(tool))
+    except Exception:
+        pass
 
 
 def start(state: State, prepared: Prepared, dispatch: Dispatch, arrived: tuple[float, str], inputs: bool, results: bool) -> Running:
@@ -1523,6 +1570,8 @@ def build_record(
     # Recorded whether or not inputs are: turning the extra off is what stops it.
     if call.extras.intent is not None:
         record["intent"] = call.extras.intent
+    if call.description is not None:
+        record["toolDescription"] = call.description
     if call.extras.answer:
         record["extra"] = "missing_tools"
     if call.inputs:

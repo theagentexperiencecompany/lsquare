@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from ._extras import INTENT, MISSING_TOOLS, SESSION_ID, Ownership
 from ._ownership import fastmcp_tool_ownership, mcp_tool_ownership
-from ._read import attr, in_mro, is_class
+from ._read import attr, in_mro, is_class, plain_text
 
 #: Which high-level class: mcp 1.x's FastMCP, mcp 2.x's MCPServer, or fastmcp 3.x / 4.x.
 Kind = Literal["fastmcp1", "mcpserver", "fastmcp"]
@@ -208,6 +208,24 @@ class Read:
                 return Ownership(readable=False, why="its registered versions don't agree on their inputs")
         return first
 
+    def description(self, name: str) -> str | None:
+        """The description the definitions of `name` give agents: a string that isn't empty, the
+        same on every registration. None for a name the server hasn't registered, where which
+        registrations it runs can't be told, or where they don't agree: the listing then says."""
+        try:
+            tools = self.tools(name)
+            if not tools:
+                return None
+            first = plain_text(attr(tools[0], "description"))
+            if first is None:
+                return None
+            for other in tools[1:]:
+                if plain_text(attr(other, "description")) != first:
+                    return None
+            return first
+        except Exception:
+            return None
+
     def _one(self, tool: Any) -> Ownership:
         try:
             if self.kind == "fastmcp":
@@ -258,6 +276,9 @@ class Registry:
 
     def ownership(self, name: str) -> Ownership | None:
         return self.read().ownership(name)
+
+    def description(self, name: str) -> str | None:
+        return self.read().description(name)
 
     def offers_missing_tools(self) -> bool:
         return self.read().offers_missing_tools()

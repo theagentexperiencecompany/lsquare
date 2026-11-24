@@ -21,6 +21,7 @@ from .._client import Internal
 from . import _run, _v1, _v2
 from ._call import NO_EXTRAS, Extras, IdentifyInput, State, read_options, warn_serverless
 from ._extras import INTENT, MISSING_TOOLS, SESSION_ID
+from ._lists import Lists
 from ._read import attr
 from ._registry import Kind, Registry
 
@@ -37,6 +38,7 @@ def instrument(
     identify: Callable[[IdentifyInput], Any] | None = None,
     inputs: bool | Callable[[str], bool] = True,
     results: bool | Callable[[str], bool] = True,
+    descriptions: bool | Callable[[str], bool] = True,
     extras: Literal[False] | dict[str, bool] | None = None,
     wait_until: Callable[[Any], Any] | None = None,
     flush_before_reply: bool = False,
@@ -66,7 +68,7 @@ def instrument(
             return server
         # Tracking calls needs the client's context variable: from here, for this client.
         internal.calls()
-        settings = read_options(internal, identify, inputs, results, extras, wait_until, flush_before_reply)
+        settings = read_options(internal, identify, inputs, results, extras, wait_until, flush_before_reply, descriptions)
         state = State(
             internal=internal,
             settings=settings,
@@ -77,6 +79,8 @@ def instrument(
             # A low-level server's tool definitions exist only in its own tools/list handler.
             high_extras=settings.extras if high is not None else NO_EXTRAS,
             low_extras=settings.explicit,
+            # Off, no listed tool's description is noted, or read at all.
+            lists=Lists(describes=settings.descriptions_mode != "off"),
         )
         setattr(low, INSTRUMENTED, state)
         if line == "v2":

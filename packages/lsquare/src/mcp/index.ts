@@ -10,7 +10,7 @@ import type { CallIds, CallRecord } from '../event.js'
 import { blank, definedBelowObjectPrototype, hasOwn } from '../json.js'
 import type { ErrorCategory, LSquareError } from '../types.js'
 import { advertise, idBlock, INTENT, listedOwnership, MISSING_TOOLS, missingToolsReply, missingToolsTool, newSessionId, type Ownership, SESSION_FORMAT, SESSION_ID, sameOwnership, toolOwnership } from './extras.js'
-import { fresh, type Lists, mark, newLists, newWait, type Reader, type Snapshot, waitOnce, withSnapshot } from './lists.js'
+import { describe, fresh, type Lists, mark, newLists, newWait, type Reader, type Snapshot, waitOnce, withSnapshot } from './lists.js'
 import { adopted, copied, declared, follow, own, read, silence } from './read.js'
 
 const { isMap } = types
@@ -58,6 +58,12 @@ export interface InstrumentOptions {
   inputs?: boolean | ((toolName: string) => boolean) | undefined
   /** Record results: everywhere, nowhere, or for the tools it returns true for. Strings are cut at 4,000 characters. */
   results?: boolean | ((toolName: string) => boolean) | undefined
+  /**
+   * Record each call's tool description, as agents were listed it: everywhere, nowhere, or for the
+   * tools it returns true for. Cut at 1,000 characters. On a low-level `Server` it is the one the
+   * instance last listed, so a call that comes before any listing has none.
+   */
+  descriptions?: boolean | ((toolName: string) => boolean) | undefined
   /** The current request's `waitUntil` (Cloudflare Workers, Vercel): each call's sending is handed to it. */
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined
   /** Wait for each call's event to be sent, up to `flushTimeoutMs`, before replying. */
@@ -134,6 +140,9 @@ interface Settings {
   /** How `inputs` was given, for dry run, which runs outside any request and so doesn't ask a function. */
   inputsMode: 'off' | 'asked' | 'on'
   results: (toolName: string) => boolean
+  descriptions: (toolName: string) => boolean
+  /** How `descriptions` was given: `off` reads no description at all, from a registry or a listing. */
+  descriptionsMode: 'off' | 'asked' | 'on'
   waitUntil: InstrumentOptions['waitUntil']
   flushBeforeReply: boolean
   /** Each extra on unless passed as false: a high-level server's defaults. */
@@ -197,7 +206,7 @@ export function instrument<T>(server: T, client: LSquareClient, options: Instrum
       wrapper: undefined,
       list: undefined,
       listOriginal: undefined,
-      lists: newLists(internal.clock),
+      lists: newLists(internal.clock, settings.descriptionsMode !== 'off'),
       initialize: undefined,
       protocolVersion: undefined,
       stdio: undefined,
@@ -328,8 +337,8 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
   const option = (key: keyof InstrumentOptions): unknown => declared(options, key)
   // A function that throws, or answers with a promise (which can't be waited for), records nothing
   // for that call: the field stays out of its event, and one warning per option says so.
-  const unanswered = (key: 'inputs' | 'results') => `[lsquare] The ${key} function threw or returned a promise: ${key} aren't recorded for the calls it answered that way.`
-  const choice = (key: 'inputs' | 'results', value: unknown, warnKey = `${key}-unanswered`, warning = unanswered(key)) => (toolName: string) => {
+  const unanswered = (key: 'inputs' | 'results' | 'descriptions') => `[lsquare] The ${key} function threw or returned a promise: ${key} aren't recorded for the calls it answered that way.`
+  const choice = (key: 'inputs' | 'results' | 'descriptions', value: unknown, warnKey = `${key}-unanswered`, warning = unanswered(key)) => (toolName: string) => {
     if (typeof value !== 'function') return value !== false
     try {
       const answer = (value as (name: string) => unknown)(toolName)
@@ -348,6 +357,7 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
     return false
   }
   const inputs = option('inputs')
+  const descriptions = option('descriptions')
   const identify = option('identify')
   const waitUntil = option('waitUntil')
   const flushBeforeReply = option('flushBeforeReply') === true
@@ -370,6 +380,8 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
     listingInputs: choice('inputs', inputs, `inputs-unanswered/${MISSING_TOOLS}`, `[lsquare] The inputs function threw or returned a promise when asked about ${MISSING_TOOLS}: it isn't listed.`),
     inputsMode: inputs === false ? 'off' : typeof inputs === 'function' ? 'asked' : 'on',
     results: choice('results', option('results')),
+    descriptions: choice('descriptions', descriptions),
+    descriptionsMode: descriptions === false ? 'off' : typeof descriptions === 'function' ? 'asked' : 'on',
     waitUntil: typeof waitUntil === 'function' ? (waitUntil as Settings['waitUntil']) : undefined,
     flushBeforeReply: flushBeforeReply && typeof waitUntil !== 'function',
     extras: { sessions: extra('sessions'), intent: extra('intent'), missingTools: extra('missingTools') },
@@ -388,7 +400,8 @@ function listLike(value: unknown): boolean {
 
 /**
  * Puts the wrapper in front of the current `tools/call` handler, unless it already is, and of
- * `tools/list` on a server with extras, and watches `initialize` for the protocol version it
+ * `tools/list` on a server with extras, or a low-level one whose tools' descriptions are recorded
+ * (its listings are where they are), and watches `initialize` for the protocol version it
  * negotiates.
  */
 function arm(state: Instrumented): void {
@@ -402,10 +415,14 @@ function arm(state: Instrumented): void {
       handlers.set('tools/call', wrapper)
     }
     const list = handlers.get('tools/list')
-    if ((anyExtra(state.highExtras) || anyExtra(state.lowExtras)) && list !== undefined && list !== state.list) {
+    if ((anyExtra(state.highExtras) || anyExtra(state.lowExtras) || listedDescriptions(state)) && list !== undefined && list !== state.list) {
       const original = list
-      // Another tools/list handler: a snapshot read from the one before is out of date.
-      if (state.listOriginal !== undefined) mark(state.lists, false)
+      // Another tools/list handler: a snapshot read from the one before is out of date, and so are
+      // the descriptions it listed.
+      if (state.listOriginal !== undefined) {
+        mark(state.lists, false)
+        state.lists.described?.clear()
+      }
       state.listOriginal = original
       const wrapper: Handler = (request, extra) => onList(state, original, request, extra)
       state.list = wrapper
@@ -649,6 +666,53 @@ function lowOn(state: Instrumented): boolean {
   return !highMode(state) && anyExtra(state.lowExtras)
 }
 
+/**
+ * The tools' descriptions come from the instance's listings: they are recorded, and the server is
+ * a low-level one, or one whose handler was replaced. A high-level server's come from its registry.
+ */
+function listedDescriptions(state: Instrumented): boolean {
+  return state.lists.described !== undefined && !highMode(state)
+}
+
+/**
+ * The tool's description as agents are listed it now: on a high-level server, its registered
+ * definition's, read as the instance holds it now; on a low-level one, or one whose handler was
+ * replaced, the one the instance last listed (see Lists.described), so a tool no page has shown
+ * yet has none. Only a string that isn't empty. Never throws.
+ */
+function descriptionOf(state: Instrumented, toolName: string): string | undefined {
+  try {
+    if (!state.lists.described) return undefined
+    const description = highMode(state)
+      ? // The definition's own field, or its class's, never a polluted Object.prototype's (see declared()).
+        declared(own(declared(state.high, '_registeredTools'), toolName), 'description')
+      : state.lists.described.get(toolName)
+    return typeof description === 'string' && description !== '' ? description : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Notes the description of each tool on a page a low-level server lists, and gives the page back
+ * as it came: its entries as JSON writes them (see listEntries()), each tool's own name and
+ * description read once. Never throws.
+ */
+function noted(state: Instrumented, page: unknown): unknown {
+  try {
+    if (!listedDescriptions(state)) return page
+    const tools = listEntries(own(page, 'tools'))
+    if (!tools) return page
+    for (const tool of tools) {
+      const name = own(tool, 'name')
+      if (typeof name === 'string') describe(state.lists, name, own(tool, 'description'))
+    }
+  } catch {
+    // Unnoted: these tools' calls carry the description last noted, or none.
+  }
+  return page
+}
+
 /** How a low-level server's snapshot is read: from its own tools/list handler, as a callback. */
 function readerOf(state: Instrumented): Reader {
   return {
@@ -712,8 +776,8 @@ function ownMissingTools(state: Instrumented): void {
 
 /**
  * The extras added to a copy of the tool list, never to the developer's definitions. On a
- * low-level server the page waits for the snapshot, at most a second. Any failure gives the list
- * as it came.
+ * low-level server the page waits for the snapshot, at most a second, and its tools' descriptions
+ * are noted as it goes by, with or without extras. Any failure gives the list as it came.
  */
 function onList(state: Instrumented, original: Handler, request: unknown, extra: unknown): unknown {
   const listed = original(request, extra)
@@ -725,7 +789,12 @@ function onList(state: Instrumented, original: Handler, request: unknown, extra:
       const adopting = adopted(listed, true)
       return adopting ? adopting.then((value) => withExtras(state, value)) : withExtras(state, listed)
     }
-    if (!lowOn(state)) return listed
+    if (!lowOn(state)) {
+      if (!listedDescriptions(state)) return listed
+      // Only read, for its descriptions: the SDK is given the page as the handler answered it.
+      const adopting = adopted(listed, true)
+      return adopting ? adopting.then((page) => noted(state, page)) : noted(state, listed)
+    }
     const first = read(read(request, 'params'), 'cursor') === undefined
     const extended = (page: unknown) => withSnapshot(state.lists, readerOf(state), extra, (snapshot) => withLowExtras(state, page, snapshot, first)).catch(() => page)
     const adopting = adopted(listed, true)
@@ -810,11 +879,13 @@ const MAX_LISTED = 10_000
  */
 function withLowExtras(state: Instrumented, page: unknown, snapshot: Snapshot | undefined, first: boolean): unknown {
   try {
-    if (!lowOn(state) || !snapshot) return page
+    // Left as it came: only its descriptions are noted.
+    if (!lowOn(state) || !snapshot) return noted(state, page)
     // As in withExtras().
     const tools = listEntries(own(page, 'tools'))
     if (!tools) return page
     const extras = state.lowExtras
+    const describes = listedDescriptions(state)
     const names = new Set<string>()
     let changed = false
     let disagrees = false
@@ -825,6 +896,8 @@ function withLowExtras(state: Instrumented, page: unknown, snapshot: Snapshot | 
         return tool
       }
       names.add(name)
+      // As the page lists it, whatever the snapshot says: noted here, where its name is read (see noted()).
+      if (describes) describe(state.lists, name, own(tool, 'description'))
       const known = snapshot.tools.get(name)
       const listed = listedOwnership(own(tool, 'inputSchema'))
       if (!known || !sameOwnership(known, listed)) {
@@ -1085,6 +1158,8 @@ interface Running {
   /** Read once per call, from the options. */
   inputs: boolean
   results: boolean
+  /** The tool's description as agents were listed it when the call arrived, when it is recorded and known. */
+  description: string | undefined
   /** Who called and how, read when the call arrived: a reconnect meanwhile doesn't change them. */
   client: unknown
   protocolVersion: unknown
@@ -1293,6 +1368,9 @@ function start(state: Instrumented, prepared: Prepared, extra: unknown, arrived:
     args: own(params, 'arguments'),
     inputs: prepared.inputs ?? state.options.inputs(toolName),
     results: state.options.results(toolName),
+    // Asked of every call, as the other two. The wrapper's own get_more_tools has none: its text
+    // is LSquare's, the same on every server.
+    description: state.options.descriptions(toolName) && !prepared.answer ? descriptionOf(state, toolName) : undefined,
     client: clientInfo(state.low, request, extra),
     protocolVersion: version,
     continued: continued(request, extra),
@@ -1807,6 +1885,7 @@ function buildRecord(
   }
   // Recorded whether or not inputs are: turning the extra off is what stops it.
   if (call.extras.intent !== undefined) record.intent = call.extras.intent
+  if (call.description !== undefined) record.toolDescription = call.description
   if (call.extras.answer) record.extra = 'missing_tools'
   if (call.inputs) record.input = { value: call.args }
   if (outcome.error) record.error = outcome.error

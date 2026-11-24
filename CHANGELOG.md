@@ -3,6 +3,43 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
+## Not released yet
+
+For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
+this heading. `@lsquare/node` doesn't change.
+
+**Before you upgrade:** each tool call's event now carries the tool's description, so events are
+larger, by the description's length (up to 1,000 characters), and use more of a project's daily
+bytes. `descriptions: false` (`descriptions=False`) keeps events as they were.
+
+### Tool descriptions
+
+- **Each `tool_call` event has `toolDescription`:** the tool's description as agents were listed it
+  when the call came, cut at 1,000 characters and redacted like any text. It tells you which
+  wording of a description a call was made under. `beforeSend` (`before_send`) gets it, and can
+  change it or take it out. A tool without a description has none. Neither do `get_more_tools`,
+  nor a limited-diagnostics event.
+- **`descriptions` turns it off,** everywhere with `false` (`False`), or for chosen tools with a
+  function, like `inputs` and `results`.
+- **On a high-level server, it is the tool's registration,** read as the call arrives: an
+  `McpServer` in TypeScript; in Python, `FastMCP`, `MCPServer`, and fastmcp serving only its own
+  tools.
+- **On a low-level `Server`, it is the description that instance last listed.** The wrapper reads
+  each `tools/list` reply as it goes to the client, and changes nothing in it. A call that reaches
+  an instance before any listing has no description, which on a stateless server built per request
+  is most calls. The same goes for a server whose `tools/call` handler you replaced, and for
+  fastmcp with mounted or proxied servers, or with tool transforms.
+- **TypeScript, on a low-level `Server` without extras:** the wrapper now sits in front of your
+  `tools/list` handler to read its replies, and passes them on as they are. It left that handler
+  alone before, and still does with `descriptions: false`.
+- **An event over 256 KB loses its tool's description first,** before its result: the description
+  is the same on every call of the tool.
+
+### The contract
+
+- `@lsquare/contract` 0.1.8 checks that `toolDescription` is a string, and the shared cases cover
+  it. An ingestion on an earlier contract stores it as it is, like any field it doesn't know.
+
 ## `lsquare` 0.2.2 on npm, `lsquare` 0.2.0b8 on PyPI
 
 **Before you upgrade:** `shutdown()` can take up to 5 seconds where it took 2, and so can a Python

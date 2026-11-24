@@ -23,8 +23,8 @@ from typing import Any
 
 from . import _fastmcp
 from .._client import _enter_callback, current_depth
-from ._call import Running, State, high_mode, http_session, listed, low_listed, made_session, on_call, sse_message, tap_tools
-from ._lists import Reader, mark
+from ._call import Running, State, high_mode, http_session, listed, low_listed, made_session, note_listed, on_call, sse_message, tap_tools
+from ._lists import Reader, forget, mark
 from ._read import attr, cancelled, in_mro, loaded, wire
 from ._run import in_stdio
 from ._weak import IdentitySet
@@ -121,9 +121,11 @@ def _entry(state: State, key: Any, value: Any, initial: bool) -> Any:
             state.replaced = True
         return _wrap(value, lambda original: _call_handler(state, original))
     if _request_class(key, "ListToolsRequest"):
-        # Another tools/list handler: a snapshot read from the one before is out of date.
+        # Another tools/list handler: a snapshot read from the one before is out of date, and so
+        # are the descriptions it listed.
         if not initial:
             mark(state.lists, False)
+            forget(state.lists)
         return _wrap(value, lambda original: _list_handler(state, original))
     return value
 
@@ -179,6 +181,8 @@ def _nested(state: State, context: Any) -> bool:
 def _list_handler(state: State, original: Callable[..., Any]) -> Callable[..., Any]:
     async def handler(request: Any) -> Any:
         listing = await original(request)
+        # Each tool's description, as the handler listed it: the cache fill's listing too.
+        _note_listed(state, listing)
         # The output-schema cache fill (a None request) keeps the developer's own tools.
         if request is None:
             return listing
@@ -194,6 +198,17 @@ def _list_handler(state: State, original: Callable[..., Any]) -> Callable[..., A
             return listing
 
     return handler
+
+
+def _note_listed(state: State, listing: Any) -> None:
+    """Notes the descriptions a listing gives (see note_listed()). Never raises."""
+    try:
+        if not state.lists.describes:
+            return
+        tools = attr(_unroot(listing)[0], "tools")
+        note_listed(state, tools, lambda tool: wire(tool, "name"), lambda tool: wire(tool, "description"))
+    except Exception:
+        pass
 
 
 def _watch(state: State, context: Any) -> None:

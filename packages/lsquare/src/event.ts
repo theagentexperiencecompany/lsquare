@@ -33,9 +33,13 @@ import type {
   TurnEvent,
 } from './types.js'
 
-/** Parts left out, in order, until an event fits: biggest and least needed first. */
+/**
+ * Parts left out, in order, until an event fits: biggest and least needed first. A call's tool
+ * description goes first of all: it is the same on every call of the tool, so nothing that only
+ * this call has is left out to make room for it.
+ */
 const TURN_ORDER: string[][] = [['toolCalls'], ['answer'], ['question'], ['verification'], ['latency']]
-const CALL_ORDER: string[][] = [['result'], ['input'], ['agent', 'toolCalls'], ['agent']]
+const CALL_ORDER: string[][] = [['toolDescription'], ['result'], ['input'], ['agent', 'toolCalls'], ['agent']]
 
 /** What every event needs, besides its content. */
 export interface Context {
@@ -56,6 +60,8 @@ export interface CallRecord {
   callId: string
   capturedAt: string
   toolName: string
+  /** The tool's description as agents were listed it when the call came, when descriptions are recorded for this tool. */
+  toolDescription?: unknown
   status: 'completed' | 'error'
   durationMs: number
   ids: CallIds
@@ -83,7 +89,7 @@ export interface CallRecord {
 }
 
 const RECORD_FIELDS = [
-  'callId', 'capturedAt', 'toolName', 'status', 'durationMs', 'ids', 'turnRef', 'server', 'client', 'protocolVersion',
+  'callId', 'capturedAt', 'toolName', 'toolDescription', 'status', 'durationMs', 'ids', 'turnRef', 'server', 'client', 'protocolVersion',
   'sessionId', 'sessionSource', 'input', 'result', 'error', 'round', 'task', 'intent', 'extra', 'agent', 'metadata', 'diagnostics',
 ] as const
 const TURN_REF = /^k\/[0-9a-f]{64}$/
@@ -420,6 +426,7 @@ interface ShapedCall {
   result?: { content?: ShapedBlock[]; structuredContent?: Shaped; isError?: boolean }
   error?: { message?: Shaped; type?: string; code?: number | string; category?: ErrorCategory }
   intent?: Shaped
+  toolDescription?: Shaped
   agent?: ShapedTurn
   metadata?: Record<string, string | number | boolean | null>
 }
@@ -494,8 +501,10 @@ function errorFields(fields: Record<string, unknown>, state: ShapeState, notes: 
 
 /**
  * Shaped in a fixed order, which the scan budget makes part of the result: the intent and error
- * first, as the smallest and most telling, then the input, the agent's turn and the result.
- * Oversized metadata drops the event, as for a turn, unless it's diagnostics, which leave it out.
+ * first, as the smallest and most telling, then the input, the agent's turn and the result. The
+ * tool's description comes last: it is the same on every call, so it never takes budget from what
+ * only this call has. Oversized metadata drops the event, as for a turn, unless it's diagnostics,
+ * which leave it out.
  */
 function shapeCall(
   record: CallRecord,
@@ -546,6 +555,10 @@ function shapeCall(
     const result = field('result', () => shapeResult(value, state, notes, false))
     if (result !== undefined) shaped.result = result
   }
+  if (record.toolDescription !== undefined) {
+    const description = field('toolDescription', () => shapeText(record.toolDescription, LIMITS.description, state, notes, 'toolDescription'))
+    if (description !== undefined) shaped.toolDescription = description
+  }
   // identify's metadata, merged with that of the capture() inside the call, which wins per key.
   // Each is read within the budget, and the merged result must fit it too: a value one replaces
   // doesn't count.
@@ -578,7 +591,7 @@ function metadataSize(metadata: Metadata): number {
  * when the message is left out; the agent part keeps its turnId, which the call's turnRef is from.
  */
 function reshapeCall(out: Record<string, unknown>, draft: Draft, state: ShapeState, notes: Notes): ShapedCall | 'too_large' {
-  const input = readFields(out, ['input', 'result', 'error', 'intent', 'agent', 'metadata', 'task', 'client', 'server', 'protocolVersion'], true)
+  const input = readFields(out, ['input', 'result', 'error', 'intent', 'toolDescription', 'agent', 'metadata', 'task', 'client', 'server', 'protocolVersion'], true)
   const shaped: ShapedCall = blank({ fixed: blank() })
   const field = <T>(name: string, run: () => T) => shapeField(state, notes, name, run)
   namedFields(input, shaped.fixed, notes)
@@ -619,6 +632,10 @@ function reshapeCall(out: Record<string, unknown>, draft: Draft, state: ShapeSta
   if (input.result != null) {
     const result = field('result', () => shapeResult(input.result, state, notes, true))
     if (result !== undefined) shaped.result = result
+  }
+  if (input.toolDescription != null) {
+    const description = field('toolDescription', () => shapeText(input.toolDescription, LIMITS.description, state, notes, 'toolDescription'))
+    if (description !== undefined) shaped.toolDescription = description
   }
   const metadata = metadataValue(input.metadata, notes, { remaining: METADATA_BUDGET })
   if (metadata === 'too_large') {
@@ -784,6 +801,7 @@ function callEvent(identity: Record<string, unknown>, shaped: ShapedCall, redact
     put(event, 'error', error)
   }
   if (shaped.intent !== undefined) put(event, 'intent', text(shaped.intent))
+  if (shaped.toolDescription !== undefined) put(event, 'toolDescription', text(shaped.toolDescription))
   if (shaped.task !== undefined) put(event, 'task', { id: text(shaped.task.id), status: text(shaped.task.status) })
   if (shaped.agent !== undefined) put(event, 'agent', finishTurnFields(shaped.agent, redactor, all))
   if (shaped.metadata) put(event, 'metadata', finishMetadata(shaped.metadata, redactor, all) as Metadata)

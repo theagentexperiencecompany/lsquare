@@ -1,6 +1,6 @@
 // A low-level server's tool list as the extras read it (spec section 4, "Low-level servers"): one
 // snapshot per instance, read from its own tools/list handler, every page, and kept until
-// something says the list changed.
+// something says the list changed. And each tool's description, as the instance last listed it.
 import { AsyncResource } from 'node:async_hooks'
 import type { Internal } from '../client.js'
 import { listedOwnership, MISSING_TOOLS, type Ownership } from './extras.js'
@@ -52,6 +52,12 @@ export interface Lists {
    * wait's own, taken out as that wait ends, so none outlives it (see waitOnce()).
    */
   waiting: Set<() => void>
+  /**
+   * Each tool's description as the instance last listed it, by name: from every page its
+   * tools/list handler gave, to a client or to a read of the snapshot. A tool no page has shown
+   * has none. Undefined when descriptions aren't recorded: then none is ever read.
+   */
+  described: Map<string, string> | undefined
 }
 
 export interface Reader {
@@ -61,8 +67,20 @@ export interface Reader {
   callback<T>(run: () => T): T
 }
 
-export function newLists(clock: Internal['clock']): Lists {
-  return { clock, generation: 0, installed: undefined, reading: undefined, pausedUntil: 0, waiting: new Set() }
+export function newLists(clock: Internal['clock'], describes = false): Lists {
+  return { clock, generation: 0, installed: undefined, reading: undefined, pausedUntil: 0, waiting: new Set(), described: describes ? new Map() : undefined }
+}
+
+/**
+ * Notes a listed tool's description, as the page gave it: a string that isn't empty is the tool's
+ * from now on, and anything else means it has none. At most MAX_TOOLS names are kept: past that, a
+ * new one isn't noted. Never throws.
+ */
+export function describe(lists: Lists, name: string, description: unknown): void {
+  const described = lists.described
+  if (!described) return
+  if (typeof description !== 'string' || description === '') described.delete(name)
+  else if (described.size < MAX_TOOLS || described.has(name)) described.set(name, description)
 }
 
 /**
@@ -174,7 +192,7 @@ function startReading(lists: Lists, reader: Reader, context: unknown): Reading {
 async function run(lists: Lists, reading: Reading, reader: Reader, context: unknown): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const collecting = collect(reader, context, reading.abort.signal)
+    const collecting = collect(lists, reader, context, reading.abort.signal)
     collecting.catch(() => {})
     const givenUp = new Promise<undefined>((resolve) => {
       // Done here, not after the race: from another request (Workers), what follows `resolve` may
@@ -214,8 +232,11 @@ function failed(lists: Lists, reading: Reading, context: unknown): void {
   lists.pausedUntil = lists.clock.now() + PAUSE_MS
 }
 
-/** Every page of the instance's own list, read with a copy of the starting request's context. */
-async function collect(reader: Reader, context: unknown, signal: AbortSignal): Promise<Snapshot> {
+/**
+ * Every page of the instance's own list, read with a copy of the starting request's context. Each
+ * tool's description is noted as its page is read, whatever becomes of the read (see describe()).
+ */
+async function collect(lists: Lists, reader: Reader, context: unknown, signal: AbortSignal): Promise<Snapshot> {
   const handler = reader.handler()
   if (typeof handler !== 'function') throw new Error('The server has no tools/list handler.')
   const tools = new Map<string, Ownership>()
@@ -239,6 +260,7 @@ async function collect(reader: Reader, context: unknown, signal: AbortSignal): P
       const name = own(tool, 'name')
       if (typeof name !== 'string' || tools.has(name)) throw new Error('A tool has no name, or the name of another.')
       tools.set(name, listedOwnership(own(tool, 'inputSchema')))
+      if (lists.described) describe(lists, name, own(tool, 'description'))
       if (name === MISSING_TOOLS) ownMissingTools = true
     }
     const next = field(listed, 'nextCursor')
