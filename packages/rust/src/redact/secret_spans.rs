@@ -411,13 +411,17 @@ pub(crate) fn secret_spans(
     with_whole_keys(text, spans)
 }
 
+/// How a value that is spelled out by its units begins.
+const SPELLED: &str = "\u{0}utf16:";
+
 /// A value's identity as a string. One holding a lone surrogate, which a written escape can make
 /// (`"\\ud800"`), is spelled out by its units, so two such values don't become the same string.
+/// So is one that begins as a spelled-out value does: no two values share a string.
 fn identity_text(units: &[u16]) -> String {
     match String::from_utf16(units) {
-        Ok(text) => text,
-        Err(_) => format!(
-            "\u{0}utf16:{}",
+        Ok(text) if !text.starts_with(SPELLED) => text,
+        _ => format!(
+            "{SPELLED}{}",
             units
                 .iter()
                 .map(|unit| format!("{unit:04x}"))
@@ -2215,6 +2219,20 @@ mod tests {
         assert_eq!(
             spans(r#"{"body":"{\"password\":5}"}"#),
             [("5".to_owned(), Some("5".to_owned()), "\\\"".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_value_spelled_like_a_lone_surrogates_identity_is_another_value() {
+        // The first is a lone surrogate, written as an escape; the second is the text its
+        // identity is spelled as. They are two values, and so two identities.
+        let lone = identity_text(&[0xd800]);
+        let lookalike: Vec<u16> = "\u{0}utf16:d800".encode_utf16().collect();
+        assert_eq!(lone, "\u{0}utf16:d800");
+        assert_ne!(identity_text(&lookalike), lone);
+        assert_eq!(
+            identity_text(&"plain".encode_utf16().collect::<Vec<u16>>()),
+            "plain"
         );
     }
 
