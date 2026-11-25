@@ -35,6 +35,8 @@
 
 mod client;
 mod event;
+#[cfg(feature = "rmcp")]
+mod extras;
 mod json;
 #[cfg(feature = "rmcp")]
 pub mod mcp;

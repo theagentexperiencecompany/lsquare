@@ -19,10 +19,16 @@
 //! `list_tools` gives, and passes every other method of this version of `rmcp` on to the handler
 //! it wraps, unchanged. Nothing it does can make a tool call fail: the handler's answer, error or
 //! panic reaches the client as it would without it.
+//!
+//! It also adds two optional inputs to the tools it can, `session_id` and `intent` (see
+//! [`InstrumentOptions::extras`]): `list_tools` shows them, `call_tool` takes them out before the
+//! handler sees the call, and a call that came without a session gets one, told to the agent in a
+//! text block at the end of the tool's result.
 
 use std::any::Any;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::future::Future;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
@@ -46,15 +52,20 @@ use rmcp::model::{
     SubscribeRequestParams, SubscriptionFilter, Tool, UnsubscribeRequestParams, UpdateTaskParams,
 };
 use rmcp::service::{
-    MaybeSendFuture, NotificationContext, RequestContext, RoleServer, SubscriptionContext,
+    MaybeSendFuture, NotificationContext, Peer, RequestContext, RoleServer, SubscriptionContext,
 };
 use rmcp::{ErrorData as McpError, ServerHandler};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 
 use crate::client::{Client, Error, ErrorCode, Inner, Level};
 use crate::event::{BlockIn, CallData, CallHead, CallShaper, ResourceIn, ResultIn, TypedResult};
+use crate::extras::{
+    advertise, id_block, is_session_id, listed_ownership, new_session_id, Ownership, INTENT,
+    SESSION_ID,
+};
 use crate::json::stringify;
 use crate::normalize::is_valid_id;
 use crate::shape::MAX_ENTRIES;
@@ -153,7 +164,8 @@ impl IdentifyInput {
         &self.tool_name
     }
 
-    /// The arguments as the client sent them.
+    /// The arguments as the tool gets them: as the client sent them, without the `session_id`
+    /// and `intent` the wrapper added to the tool's inputs.
     pub fn arguments(&self) -> Option<&Map<String, Value>> {
         self.arguments.as_object()
     }
@@ -194,6 +206,8 @@ pub struct InstrumentOptions {
     results: Choice,
     descriptions: Choice,
     instructions: bool,
+    sessions: bool,
+    intent: bool,
 }
 
 impl Default for InstrumentOptions {
@@ -204,6 +218,8 @@ impl Default for InstrumentOptions {
             results: Choice::All,
             descriptions: Choice::All,
             instructions: true,
+            sessions: true,
+            intent: true,
         }
     }
 }
@@ -290,6 +306,37 @@ impl InstrumentOptions {
         self.instructions = record;
         self
     }
+
+    /// What the wrapper adds to the server's tools, all of it (the default) or none: the
+    /// `session_id` and `intent` inputs. [`sessions`](Self::sessions) and
+    /// [`intent`](Self::intent) choose one by one.
+    ///
+    /// A tool gets an input when the handler's `get_tool` gives its definition (a server made with
+    /// rmcp's `#[tool_handler]` does), its input schema is an object of named properties
+    /// (`type: "object"`, `additionalProperties` absent or false, no `anyOf` and the like), and it
+    /// has no input of that name itself. `call_tool` then takes the input out of the call before
+    /// the handler sees it, and `list_tools` shows it where the schema the tool is listed with
+    /// says the same of the two names. A tool that gets neither is listed and called as it is.
+    pub fn extras(mut self, add: bool) -> InstrumentOptions {
+        self.sessions = add;
+        self.intent = add;
+        self
+    }
+
+    /// Group each task's calls into a session (the default), or not. The agent sends the task's
+    /// ID as `session_id`; a call without one, on a connection that has no session of its own, is
+    /// given a new ID in a text block at the end of the tool's result.
+    pub fn sessions(mut self, add: bool) -> InstrumentOptions {
+        self.sessions = add;
+        self
+    }
+
+    /// Ask the agent why it calls each tool (the default), or not: an optional `intent` input,
+    /// recorded on the call's event whether or not arguments are, cut at 500 characters.
+    pub fn intent(mut self, add: bool) -> InstrumentOptions {
+        self.intent = add;
+        self
+    }
 }
 
 struct Shared {
@@ -301,6 +348,30 @@ struct Shared {
     server: Option<Value>,
     /// The instructions it gives clients, read then too, when they are recorded and it has some.
     instructions: Option<Value>,
+    /// The tools whose warnings about the extras' inputs were given already.
+    noted: Mutex<HashSet<String>>,
+}
+
+/// A connection that started with `initialize` through a wrapper: what stands for a protocol
+/// session, where the protocol has them. An ID of its own, and its peer, which its calls are
+/// known by.
+struct Connection {
+    id: String,
+    peer: Peer<RoleServer>,
+}
+
+/// How many open connections a wrapper keeps an ID for: those past it have no session of their
+/// own, as on a server without sessions.
+const MAX_CONNECTIONS: usize = 1_000;
+
+/// Whether two peers are one connection's. The copies of a `Peer` that rmcp hands out on one
+/// connection share what its client said of itself as it connected, the very same value; two
+/// connections never do, whatever their clients said.
+fn same_connection(one: &Peer<RoleServer>, other: &Peer<RoleServer>) -> bool {
+    matches!(
+        (one.peer_info(), other.peer_info()),
+        (Some(one), Some(other)) if Arc::ptr_eq(&one, &other)
+    )
 }
 
 /// A [`ServerHandler`] whose tool calls are recorded. Made by [`instrument`]; serve it where the
@@ -308,13 +379,18 @@ struct Shared {
 pub struct Instrumented<H> {
     handler: H,
     shared: Arc<Shared>,
+    /// The connections it serves that started with `initialize`.
+    connections: Mutex<Vec<Connection>>,
 }
 
 impl<H: Clone> Clone for Instrumented<H> {
+    /// A copy that records as this one does. It serves connections of its own: those this one
+    /// serves stay with it.
     fn clone(&self) -> Instrumented<H> {
         Instrumented {
             handler: self.handler.clone(),
             shared: self.shared.clone(),
+            connections: Mutex::new(Vec::new()),
         }
     }
 }
@@ -349,8 +425,12 @@ impl<H> Instrumented<H> {
 /// whose `get_info` answers differently later is recorded with what it answered now.
 ///
 /// A server built for each session or request (as `StreamableHttpService` builds them) is
-/// instrumented each time, with the same client. A handler instrumented twice, one wrapper inside
-/// the other, is recorded once, by the inner one and with its options.
+/// instrumented each time, with the same client, or instrumented once and cloned. A handler
+/// instrumented twice, one wrapper inside the other, is recorded once, by the inner one and with
+/// its options.
+///
+/// Unless [`InstrumentOptions::extras`] turns them off, the tools it can add them to get two
+/// optional inputs, `session_id` and `intent`, which never reach the handler.
 pub fn instrument<H: ServerHandler>(
     handler: H,
     client: &Client,
@@ -383,6 +463,7 @@ pub fn instrument<H: ServerHandler>(
         let mut line = Map::new();
         line.insert("server".into(), name.unwrap_or("unnamed").into());
         line.insert("records".into(), "every tools/call".into());
+        line.insert("extras".into(), extras_line(&options));
         inner.log(
             Level::Info,
             &format!("[lsquare dry-run] {}", stringify(&line)),
@@ -396,8 +477,29 @@ pub fn instrument<H: ServerHandler>(
             listed: Mutex::new(HashMap::new()),
             server,
             instructions,
+            noted: Mutex::new(HashSet::new()),
         }),
+        connections: Mutex::new(Vec::new()),
     }
+}
+
+/// What dry run says of the extras: which are on, and for which tools.
+fn extras_line(options: &InstrumentOptions) -> Value {
+    let on: Vec<Value> = [(options.sessions, SESSION_ID), (options.intent, INTENT)]
+        .into_iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, name)| name.into())
+        .collect();
+    if on.is_empty() {
+        return "off".into();
+    }
+    let mut line = Map::new();
+    line.insert("on".into(), on.into());
+    line.insert(
+        "for".into(),
+        "tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name".into(),
+    );
+    Value::Object(line)
 }
 
 /// A call a wrapper has taken to record.
@@ -406,6 +508,10 @@ struct Taken {
     tool_name: String,
     /// A wrapper further in, on the same handler, took the same call: it is that one's to record.
     further_in: AtomicBool,
+    /// The session of the connection the call came on, as this wrapper knows it: a wrapper
+    /// further in records the call with it, so one connection is one session whichever wrapper
+    /// records its calls.
+    connection: Option<String>,
 }
 
 impl Taken {
@@ -419,6 +525,57 @@ tokio::task_local! {
     /// that it took the same call, and the outer one then leaves the call to it. A different call
     /// the handler makes on its way (another tool of an instrumented server) is its own event.
     static TAKEN: Arc<Taken>;
+}
+
+thread_local! {
+    /// Raised by a wrapper's `get_tool` as it passes the question on. A wrapper that asks the
+    /// handler it wraps and finds this raised has another wrapper further in, which records the
+    /// handler's calls: the extras' inputs are that one's to show and to take out.
+    static FURTHER_IN: Cell<bool> = const { Cell::new(false) };
+}
+
+/// What the handler says of a tool now.
+struct Registered {
+    /// Its definition; none for a name the handler has no tool for, or a handler that doesn't
+    /// answer `get_tool`.
+    tool: Option<Tool>,
+    /// A wrapper further in passed the question on.
+    further_in: bool,
+}
+
+/// What the extras took out of a call, and what they may add to its reply.
+#[derive(Default)]
+struct Extra {
+    /// Sessions apply to this call: the option is on, and no wrapper further in has the call.
+    grouping: bool,
+    /// The tool leaves `session_id` to the wrapper: a call without a session can be given one.
+    sessions: bool,
+    /// A session ID in the right format, sent by the agent.
+    sent: Option<String>,
+    /// Why the call was made, as the agent said it: a string that isn't empty.
+    intent: Option<Value>,
+}
+
+/// Whether a protocol version has no sessions: 2026-07-28 and later. One that isn't a date
+/// counts as older, as in TypeScript.
+fn sessionless(version: &str) -> bool {
+    let date = version.len() == 10
+        && version.bytes().enumerate().all(|(index, byte)| {
+            if index == 4 || index == 7 {
+                byte == b'-'
+            } else {
+                byte.is_ascii_digit()
+            }
+        });
+    date && version >= ProtocolVersion::V_2026_07_28.as_str()
+}
+
+/// A connection's ID as events carry it: grouping only needs the same value each time.
+fn session_hash(id: &str) -> String {
+    Sha256::digest(id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// A future that gives a panic of the one it wraps as an error, to be resumed once it's recorded.
@@ -506,6 +663,10 @@ struct Call {
     protocol_version: Option<Value>,
     cancelled: Box<dyn Fn() -> bool + Send + Sync>,
     identification: Option<Identification>,
+    /// What the extras took out of it.
+    extra: Extra,
+    /// The connection's own session, where the protocol version has sessions and sessions apply.
+    protocol_session: Option<String>,
 }
 
 fn named(name: &str, version: &str) -> Value {
@@ -557,14 +718,29 @@ impl<H: ServerHandler> Instrumented<H> {
         }
     }
 
+    /// What the handler says of a tool now, asked once for a call or a listed tool: its
+    /// definition, and whether a wrapper further in passed the question on. `None` when its
+    /// `get_tool` panicked.
+    fn registered(&self, tool_name: &str) -> Option<Registered> {
+        // Lowered, then read once the handler has answered: `get_tool` isn't async and is given
+        // no request, so nothing else looks a tool up on this thread in between.
+        let _ = FURTHER_IN.try_with(|raised| raised.set(false));
+        let tool = catch_unwind(AssertUnwindSafe(|| self.handler.get_tool(tool_name)));
+        let further_in = FURTHER_IN
+            .try_with(|raised| raised.replace(false))
+            .unwrap_or(false);
+        Some(Registered {
+            tool: tool.ok()?,
+            further_in,
+        })
+    }
+
     /// The tool's description as agents are listed it now: the registered tool's, or else the one
     /// this instance last listed, so a tool no page has shown yet has none. A `get_tool` that
     /// panics gives none, and the call is recorded without.
-    fn description(&self, tool_name: &str) -> Option<String> {
-        let registered =
-            catch_unwind(AssertUnwindSafe(|| self.handler.get_tool(tool_name))).ok()?;
-        match registered {
-            Some(tool) => tool.description.map(Cow::into_owned),
+    fn description(&self, tool_name: &str, registered: Option<&Registered>) -> Option<String> {
+        match &registered?.tool {
+            Some(tool) => tool.description.as_deref().map(str::to_owned),
             None => self
                 .shared
                 .listed
@@ -574,6 +750,196 @@ impl<H: ServerHandler> Instrumented<H> {
                 .cloned(),
         }
         .filter(|description| !description.is_empty())
+    }
+
+    /// A tool the extras leave alone, or one with an input of its own of their names, is logged
+    /// once per client.
+    fn note_ownership(&self, tool_name: &str, ownership: Ownership) {
+        let options = &self.shared.options;
+        let own = |name: &str, on: bool| on && ownership.declares(name);
+        let (session_id, intent) = (
+            own(SESSION_ID, options.sessions),
+            own(INTENT, options.intent),
+        );
+        if ownership != Ownership::Unreadable && !session_id && !intent {
+            return;
+        }
+        if !self.first_note(tool_name) {
+            return;
+        }
+        let client = &self.shared.client;
+        let label = Value::from(tool_name).to_string();
+        if ownership == Ownership::Unreadable {
+            client.warn_once_of_tool(&format!("extras-unreadable/{tool_name}"), &format!("[lsquare] Tool {label} gets no session_id or intent: its input schema can't be read safely (it isn't just an object of named properties), so any input could be its own."));
+        }
+        for (own, name) in [(session_id, SESSION_ID), (intent, INTENT)] {
+            if own {
+                client.warn_once_of_tool(
+                    &format!("extras-own/{name}/{tool_name}"),
+                    &format!(
+                        "[lsquare] Tool {label} has its own {name} input: it is left as it is."
+                    ),
+                );
+            }
+        }
+    }
+
+    /// A listed tool the handler gives no definition for is logged once per client.
+    fn note_undefined(&self, tool_name: &str) {
+        if !self.first_note(tool_name) {
+            return;
+        }
+        self.shared.client.warn_once_of_tool(&format!("extras-undefined/{tool_name}"), &format!("[lsquare] Tool {} gets no session_id or intent: the handler's get_tool gives no definition for it. rmcp's #[tool_handler] writes get_tool; a handler written by hand needs its own.", Value::from(tool_name)));
+    }
+
+    /// Whether this wrapper has said nothing of a tool yet, and can still: it remembers the
+    /// first 10,000, so the client isn't asked again on every call.
+    fn first_note(&self, tool_name: &str) -> bool {
+        let mut noted = self
+            .shared
+            .noted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if noted.contains(tool_name) || noted.len() >= MAX_LISTED {
+            return false;
+        }
+        noted.insert(tool_name.to_owned());
+        true
+    }
+
+    /// Takes the extras' inputs out of a call to a tool whose definition, as the handler gives it
+    /// now, leaves them to the wrapper, valid or not. A tool that declares one of them keeps it,
+    /// and one whose schema can't be read, or that the handler gives no definition for, keeps its
+    /// arguments as sent.
+    fn prepare(
+        &self,
+        request: &mut CallToolRequestParams,
+        registered: Option<&Registered>,
+    ) -> Extra {
+        let options = &self.shared.options;
+        let mut extra = Extra::default();
+        if registered.is_some_and(|registered| registered.further_in) {
+            return extra;
+        }
+        // Even a tool the extras leave alone is grouped by its connection's session.
+        extra.grouping = options.sessions;
+        let Some(tool) = registered.and_then(|registered| registered.tool.as_ref()) else {
+            return extra;
+        };
+        let ownership = listed_ownership(&tool.input_schema);
+        self.note_ownership(&request.name, ownership);
+        if ownership == Ownership::Unreadable {
+            return extra;
+        }
+        extra.sessions = options.sessions && !ownership.declares(SESSION_ID);
+        let intents = options.intent && !ownership.declares(INTENT);
+        let Some(arguments) = request.arguments.as_mut() else {
+            return extra;
+        };
+        // The other arguments keep their order.
+        if extra.sessions {
+            if let Some(Value::String(id)) = arguments.shift_remove(SESSION_ID) {
+                extra.sent = Some(id).filter(|id| is_session_id(id));
+            }
+        }
+        if intents {
+            extra.intent = arguments
+                .shift_remove(INTENT)
+                .filter(|intent| intent.as_str().is_some_and(|text| !text.is_empty()));
+        }
+        extra
+    }
+
+    /// The listed tools that get the extras' inputs, by their place in the page, each with the
+    /// schema it is shown with: those the handler gives a definition for now that says of the
+    /// inputs what the listing says, where the listed schema takes them.
+    fn advertised(&self, page: &ListToolsResult) -> Vec<(usize, Arc<Map<String, Value>>)> {
+        let options = &self.shared.options;
+        let mut shown = Vec::new();
+        if !self.shared.client.enabled()
+            || !(options.sessions || options.intent)
+            || page.tools.len() > MAX_LISTED
+        {
+            return shown;
+        }
+        for (index, tool) in page.tools.iter().enumerate() {
+            let Some(registered) = self.registered(&tool.name) else {
+                continue;
+            };
+            // A wrapper further in has this tool, and showed its own already.
+            if registered.further_in {
+                continue;
+            }
+            let Some(current) = registered.tool else {
+                self.note_undefined(&tool.name);
+                continue;
+            };
+            let ownership = listed_ownership(&current.input_schema);
+            self.note_ownership(&tool.name, ownership);
+            if ownership == Ownership::Unreadable
+                || ownership != listed_ownership(&tool.input_schema)
+            {
+                continue;
+            }
+            let adding: Vec<&str> = [(options.sessions, SESSION_ID), (options.intent, INTENT)]
+                .into_iter()
+                .filter(|(on, name)| *on && !ownership.declares(name))
+                .map(|(_, name)| name)
+                .collect();
+            if let Some(schema) = advertise(&tool.input_schema, &adding) {
+                shown.push((index, Arc::new(schema)));
+            }
+        }
+        shown
+    }
+
+    /// Notes the connection an `initialize` starts, with an ID of its own for as long as it is
+    /// open.
+    fn bind(&self, context: &RequestContext<RoleServer>) {
+        if !self.shared.client.enabled() || !self.shared.options.sessions {
+            return;
+        }
+        let mut connections = self
+            .connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Those that have closed are forgotten.
+        connections.retain(|connection| !connection.peer.is_transport_closed());
+        // One that sends `initialize` again is the session it was.
+        let known = connections
+            .iter()
+            .any(|connection| same_connection(&connection.peer, &context.peer));
+        if !known && connections.len() < MAX_CONNECTIONS {
+            connections.push(Connection {
+                id: uuid::Uuid::new_v4().to_string(),
+                peer: context.peer.clone(),
+            });
+        }
+    }
+
+    /// The session of the connection a call came on: where the protocol version has sessions, and
+    /// the connection started with an `initialize` through this wrapper. Any other call has none:
+    /// one to a server built for each request (a stateless HTTP server's), or from a client that
+    /// never sent `initialize`.
+    fn protocol_session(
+        &self,
+        version: Option<&ProtocolVersion>,
+        peer: &Peer<RoleServer>,
+    ) -> Option<String> {
+        let mut connections = self
+            .connections
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        // Those that have closed are forgotten here too, whatever this call's version: nothing
+        // of a client is kept past the next call.
+        connections.retain(|connection| !connection.peer.is_transport_closed());
+        if version.is_some_and(|version| sessionless(version.as_str())) {
+            return None;
+        }
+        connections
+            .iter()
+            .find(|connection| same_connection(&connection.peer, peer))
+            .map(|connection| connection.id.clone())
     }
 
     /// Notes the description of each tool a page lists.
@@ -606,18 +972,33 @@ impl<H: ServerHandler> Instrumented<H> {
     }
 
     /// Reads the call as it arrives, its arguments where they are, and what `identify` will be
-    /// given.
-    fn start(&self, request: &CallToolRequestParams, context: &RequestContext<RoleServer>) -> Call {
+    /// given. `looked` is what the handler said of the tool, if it was asked already; `extra`,
+    /// what the extras took out of the call; `protocol_session`, its connection's session.
+    fn start(
+        &self,
+        request: &CallToolRequestParams,
+        context: &RequestContext<RoleServer>,
+        looked: Option<Option<Registered>>,
+        mut extra: Extra,
+        protocol_session: Option<String>,
+    ) -> Call {
         let options = &self.shared.options;
         let tool_name = request.name.to_string();
         let inputs = self.chooses(&options.inputs, "inputs", &tool_name);
         let results = self.chooses(&options.results, "results", &tool_name);
         let description = if self.chooses(&options.descriptions, "descriptions", &tool_name) {
-            self.description(&tool_name).map(Value::String)
+            let registered = looked.unwrap_or_else(|| self.registered(&tool_name));
+            self.description(&tool_name, registered.as_ref())
+                .map(Value::String)
         } else {
             None
         };
         let mut shaper = CallShaper::new(self.shared.client.context());
+        // The intent first, whether or not arguments are recorded. As it came, it is let go here:
+        // only what was read of it waits for the tool.
+        if let Some(intent) = extra.intent.take() {
+            shaper.intent(&intent);
+        }
         if inputs {
             shaper.arguments(request.arguments.as_ref());
         }
@@ -651,6 +1032,8 @@ impl<H: ServerHandler> Instrumented<H> {
             protocol_version: protocol_version.map(|version| Value::String(version.to_string())),
             cancelled: Box::new(move || cancellation.is_cancelled()),
             identification,
+            extra,
+            protocol_session,
         }
     }
 
@@ -699,21 +1082,60 @@ impl<H: ServerHandler> Instrumented<H> {
         }
         // Wrapped twice, the call is recorded once: here, further in, with these options. The
         // outer wrapper is told so even when this client has been shut down, and records nothing.
-        let _ = TAKEN.try_with(|outer| {
-            if outer.id == context.id && outer.tool_name == request.name.as_ref() {
-                outer.further_in.store(true, Ordering::Release);
-            }
+        let handed = TAKEN
+            .try_with(|outer| {
+                if outer.id == context.id && outer.tool_name == request.name.as_ref() {
+                    outer.further_in.store(true, Ordering::Release);
+                    outer.connection.clone()
+                } else {
+                    None
+                }
+            })
+            .ok()
+            .flatten();
+        // The extras' inputs are taken out whether or not the call is recorded: a client that was
+        // shut down still serves tools listed with them.
+        let options = &self.shared.options;
+        let mut request = request;
+        let looked = (options.sessions || options.intent).then(|| {
+            catch_unwind(AssertUnwindSafe(|| self.registered(&request.name)))
+                .ok()
+                .flatten()
         });
+        let extra = match &looked {
+            Some(registered) => catch_unwind(AssertUnwindSafe(|| {
+                self.prepare(&mut request, registered.as_ref())
+            }))
+            .unwrap_or_default(),
+            None => Extra::default(),
+        };
         if !client.recording() {
             return self.handler.call_tool(request, context).await;
         }
+        // The connection's session: the one a wrapper further out found, or else this one's own.
+        // Looked up for a call a wrapper further in will record too: it is given it there.
+        let connection = handed.or_else(|| {
+            if !options.sessions {
+                return None;
+            }
+            catch_unwind(AssertUnwindSafe(|| {
+                self.protocol_session(context.protocol_version().as_ref(), &context.peer)
+            }))
+            .ok()
+            .flatten()
+        });
         let taken = Arc::new(Taken {
             id: context.id.clone(),
             tool_name: request.name.to_string(),
             further_in: AtomicBool::new(false),
+            connection: connection.clone(),
         });
         // Whatever fails in here, the call goes on as it would without it.
-        let call = catch_unwind(AssertUnwindSafe(|| self.start(&request, &context))).ok();
+        let grouped = connection.filter(|_| extra.grouping);
+        let call = catch_unwind(AssertUnwindSafe(|| {
+            self.start(&request, &context, looked, extra, grouped)
+        }))
+        .ok();
         // Should the MCP SDK let go of the call before the handler answers (its connection
         // closed), it is recorded as it goes.
         let mut unanswered = Unanswered {
@@ -751,18 +1173,31 @@ impl<H: ServerHandler> Instrumented<H> {
                 Err(panic)
             }
         };
+        // A new session's ID, to tell the agent.
+        let mut issued = None;
         if let Some(call) = unanswered.call.take() {
             if taken.further_in() {
                 drop(call);
-            } else if catch_unwind(AssertUnwindSafe(|| self.finish(call, Some(&outcome)))).is_err()
-            {
-                client.report(Error::new(
-                    ErrorCode::InternalError,
-                    "Recording a tool call failed unexpectedly; its event was dropped.",
-                ));
+            } else {
+                match catch_unwind(AssertUnwindSafe(|| self.finish(call, Some(&outcome)))) {
+                    Ok(id) => issued = id,
+                    Err(_) => client.report(Error::new(
+                        ErrorCode::InternalError,
+                        "Recording a tool call failed unexpectedly; its event was dropped.",
+                    )),
+                }
             }
         }
         match outcome {
+            // At the end of the tool's own result, which was read for the event already. Not
+            // once the client was shut down, whenever that was since the call came: it records
+            // none of the calls that would follow.
+            Ok(Ok(CallToolResponse::Complete(mut result))) => {
+                if let Some(id) = issued.filter(|_| client.recording()) {
+                    result.content.push(ContentBlock::text(id_block(&id)));
+                }
+                Ok(CallToolResponse::Complete(result))
+            }
             Ok(answer) => answer,
             Err(panic) => resume_unwind(panic),
         }
@@ -774,7 +1209,10 @@ impl<H: ServerHandler> Instrumented<H> {
     ///
     /// `outcome` is the handler's answer, or its panic; `None` when the call was let go before
     /// either, which is recorded as a cancelled one.
-    fn finish(&self, call: Call, outcome: Option<&Outcome>) {
+    ///
+    /// Returns the ID of the session it started for the call, if it did: the reply tells the
+    /// agent.
+    fn finish(&self, call: Call, outcome: Option<&Outcome>) -> Option<String> {
         let client = &self.shared.client;
         let finished = Instant::now();
         // A failed call's text can quote what the tool would have returned, and what it was sent:
@@ -876,6 +1314,32 @@ impl<H: ServerHandler> Instrumented<H> {
         } else {
             round
         };
+        // The call's session: the ID the agent sent; else, where the protocol has sessions, the
+        // connection's; else a new one, for a tool that leaves `session_id` to the wrapper, told
+        // at the end of a result that is the tool's own: a completed one. Not a task, a round
+        // that asks for input, or an error, which the MCP SDK can have made without the tool. Nor
+        // a result with nothing in it: a client that reads its first block as the tool's value
+        // (rmcp's `into_typed`) would read the ID.
+        let own_result = matches!(
+            answered,
+            Some(Ok(Ok(CallToolResponse::Complete(complete))))
+                if complete.is_error != Some(true)
+                    && !(complete.content.is_empty() && complete.structured_content.is_none())
+        );
+        let mut issued = None;
+        let session = if !call.extra.grouping {
+            None
+        } else if let Some(sent) = call.extra.sent {
+            Some((sent, "sent"))
+        } else if let Some(connection) = call.protocol_session {
+            Some((session_hash(&connection), "protocol"))
+        } else if call.extra.sessions && own_result {
+            let id = new_session_id();
+            issued = Some(id.clone());
+            Some((id, "issued"))
+        } else {
+            None
+        };
         let failure = failure.map(Value::Object);
         let data = CallData {
             tool_description: call.description.as_ref(),
@@ -891,8 +1355,10 @@ impl<H: ServerHandler> Instrumented<H> {
         let shaped = call.shaper.finish(&data);
         // Registered before the reply leaves, so a flush from here on waits for this event.
         let Some(building) = client.admit(&call.call_id, shaped.held_bytes()) else {
-            return;
+            // An event dropped for want of room still leaves the calls that follow their ID.
+            return issued;
         };
+        let (session_id, session_source) = session.unzip();
         let head = CallHead {
             call_id: call.call_id,
             captured_at: call.captured_at,
@@ -906,8 +1372,8 @@ impl<H: ServerHandler> Instrumented<H> {
             server: self.shared.server.clone(),
             client: call.client,
             protocol_version: call.protocol_version,
-            session_id: None,
-            session_source: None,
+            session_id: session_id.map(Value::String),
+            session_source: session_source.map(str::to_owned),
             round: round.map(str::to_owned),
             extra: None,
             metadata: None,
@@ -951,6 +1417,7 @@ impl<H: ServerHandler> Instrumented<H> {
             // Nowhere to finish it: the event is dropped, and counts as failed.
             Err(_) => drop(rest),
         }
+        issued
     }
 }
 
@@ -1119,6 +1586,8 @@ impl<H: ServerHandler> ServerHandler for Instrumented<H> {
         request: InitializeRequestParams,
         context: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<InitializeResult, McpError>> + MaybeSendFuture + '_ {
+        // A connection starts here.
+        let _ = catch_unwind(AssertUnwindSafe(|| self.bind(&context)));
         self.handler.initialize(request, context)
     }
 
@@ -1240,16 +1709,32 @@ impl<H: ServerHandler> ServerHandler for Instrumented<H> {
         request: Option<PaginatedRequestParams>,
         context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let listed = self.handler.list_tools(request, context).await;
-        if let Ok(page) = &listed {
+        let mut listed = self.handler.list_tools(request, context).await;
+        if let Ok(page) = &mut listed {
             // Unnoted, these tools' calls carry the description last noted, or none.
             let _ = catch_unwind(AssertUnwindSafe(|| self.note(page)));
+            // A page that can't be read is listed as it came.
+            let shown =
+                catch_unwind(AssertUnwindSafe(|| self.advertised(page))).unwrap_or_default();
+            for (index, schema) in shown {
+                if let Some(tool) = page.tools.get_mut(index) {
+                    tool.input_schema = schema;
+                }
+            }
         }
         listed
     }
 
+    /// The handler's own definition, without the inputs the wrapper adds to the listing.
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        self.handler.get_tool(name)
+        let tool = self.handler.get_tool(name);
+        // A wrapper further out, asking through here, learns that this one has the tool and
+        // records its calls. One it doesn't have may be the asker's own: a router that asks here
+        // first, then looks among its own tools.
+        if tool.is_some() && self.shared.client.enabled() {
+            let _ = FURTHER_IN.try_with(|raised| raised.set(true));
+        }
+        tool
     }
 
     fn on_custom_request(
@@ -1349,5 +1834,34 @@ impl<H: ServerHandler> ServerHandler for Instrumented<H> {
     ) -> impl Future<Output = Result<ReadResourceDirectoryResult, McpError>> + MaybeSendFuture + '_
     {
         self.handler.read_resource_directory(request, context)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_protocol_version_has_no_sessions_from_2026_07_28_on() {
+        for version in ["2026-07-28", "2026-12-01", "2027-01-01"] {
+            assert!(sessionless(version), "{version}");
+        }
+        // One that isn't a date counts as older, as in TypeScript.
+        for version in [
+            "2025-11-25",
+            "2024-11-05",
+            "2026-07-27",
+            "draft",
+            "2026-07-28x",
+            "2026/07/28",
+            "",
+        ] {
+            assert!(!sessionless(version), "{version}");
+        }
+        // SHA-256, in hex.
+        assert_eq!(
+            session_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 }

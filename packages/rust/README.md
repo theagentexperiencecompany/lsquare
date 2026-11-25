@@ -7,6 +7,8 @@ nothing else yet ([below](#not-yet-supported)). LSquare is an invite-only beta, 
 
 - One line per MCP server. Nothing the SDK does can make a tool call fail: it never panics, and
   the handler's answer, error or panic reaches the client as it would without it.
+- Two optional inputs on your tools, `session_id` and `intent`, say which calls belong to one task
+  and why each was made ([the extras](#the-extras)). `extras(false)` leaves your tools as they are.
 - A tool's reply never waits on the network, and `flush()` waits up to 2 seconds by default.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
 - Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11. Rust 1.88 or later.
@@ -30,7 +32,7 @@ folder.
 
    `lsquare` is a beta: its only version on crates.io is a pre-release, which `cargo add` picks
    while there is no stable one. A requirement written by hand needs the version in full, as
-   `cargo add` writes it (`lsquare = "0.2.0-beta.1"`): one such as `"0.2"` doesn't match a
+   `cargo add` writes it (`lsquare = "0.2.0-beta.2"`): one such as `"0.2"` doesn't match a
    pre-release.
 
 2. **Instrument the server:**
@@ -61,12 +63,13 @@ folder.
    curl -s http://127.0.0.1:3000/mcp -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_forecast","arguments":{"city":"Lisbon"}}}'
    ```
 
-   The reply is your tool's result. The server's terminal shows a line for what `instrument()`
-   did, and one for the call's event: its fields and size, never its content or IDs.
+   The reply is your tool's result, and after it a line that gives the agent an ID for its task
+   ([the extras](#the-extras)). The server's terminal shows a line for what `instrument()` did,
+   and one for the call's event: its fields and size, never its content or IDs.
 
    ```
-   [lsquare dry-run] {"server":"weather","records":"every tools/call"}
-   [lsquare dry-run] {"kind":"tool_call","eventId":"the call","fields":["callId","durationMs","input","protocolVersion","result","server","status","toolDescription","toolName"],"bytes":580}
+   [lsquare dry-run] {"server":"weather","records":"every tools/call","extras":{"on":["session_id","intent"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name"}}
+   [lsquare dry-run] {"kind":"tool_call","eventId":"the call","fields":["callId","durationMs","input","protocolVersion","result","server","sessionId","sessionSource","status","toolDescription","toolName"],"bytes":646}
    ```
 
 4. **Send it.** Stop the server, start it again with your project key instead of dry run, and call
@@ -96,11 +99,11 @@ lsquare.shutdown().await;
 
 `instrument(handler, &client, options)` takes any `rmcp::ServerHandler` and returns one, so it goes
 wherever the handler went: `.serve(transport)`, or the factory of a `StreamableHttpService`. It
-records `call_tool`, reads the descriptions `list_tools` gives, and passes every other method on
-to your handler unchanged. A handler instrumented twice, one wrapper inside the other, is recorded
-once, by the inner one and with its options, also after that one's client was shut down; another
-tool your handler calls on its way is an event of its own. Each `tools/call` becomes one
-`tool_call` event:
+records `call_tool`, reads the descriptions `list_tools` gives, adds [the extras](#the-extras) to
+both, and passes every other method on to your handler unchanged. A handler instrumented twice,
+one wrapper inside the other, is recorded once, by the inner one and with its options, which
+decide the extras too, also after that one's client was shut down; another tool your handler
+calls on its way is an event of its own. Each `tools/call` becomes one `tool_call` event:
 
 | Field | What it holds |
 | --- | --- |
@@ -112,6 +115,7 @@ tool your handler calls on its way is an event of its own. Each `tools/call` bec
 | `error` | For a failed call, its `category`: `protocol` (the handler returned an `ErrorData`; its `code` is kept), `tool_error` (an `isError` result), `timeout` (the request was cancelled), `thrown` (the handler panicked). Its message is kept only when both inputs and results are recorded for the tool, since it can quote either |
 | `client`, `protocolVersion`, `server` | The calling app as it named itself, the protocol version, and your server's name and version. A client that gave no name has none: `rmcp` fills in its own name for a request that came without one, which is left out |
 | `orgId`, `userId`, `conversationId`, `metadata` | What `identify` returns |
+| `sessionId`, `sessionSource`, `intent` | The task the call belongs to, where its ID came from (`sent`, `issued` or `protocol`), and why the agent made the call: [the extras](#the-extras) |
 | `task`, `round` | A task the call created, and whether the call asked for input or brought it |
 
 ### `instrument()` options
@@ -129,11 +133,77 @@ let options = InstrumentOptions::new()
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `identify` | none | Who the call is for. It starts once the tool has, never before it, and is waited for at most a second after the tool returns. If it fails (any error converts with `?`), takes longer, panics or returns an invalid ID, the call is sent as limited diagnostics (its tool, status, duration and error category, nothing that could name anyone) and `on_error` is told (`identify_failed`). It gets its own copy of the arguments, the only copy the SDK makes of a call: without `identify`, arguments and results are read where they are |
+| `identify` | none | Who the call is for. It starts once the tool has, never before it, and is waited for at most a second after the tool returns. If it fails (any error converts with `?`), takes longer, panics or returns an invalid ID, the call is sent as limited diagnostics (its tool, status, duration and error category, nothing that could name anyone) and `on_error` is told (`identify_failed`). It gets its own copy of the arguments, as your handler gets them (without the extras' inputs), the only copy the SDK makes of a call: without `identify`, arguments and results are read where they are |
 | `inputs`, `inputs_for` | everywhere | Record arguments: everywhere, nowhere, or for the tools a function returns true for |
 | `results`, `results_for` | everywhere | Record results, the same way |
 | `descriptions`, `descriptions_for` | everywhere | Record each call's tool description, the same way |
 | `instructions` | on | Record the server's instructions on each call. `instructions(false)` turns it off |
+| `extras`, `sessions`, `intent` | on | [The extras](#the-extras): `extras(false)` turns both off, `sessions(false)` or `intent(false)` one of them |
+
+### The extras
+
+Unless you turn them off, `instrument()` adds two optional inputs to your tools, as the TypeScript
+and Python SDKs do ([what agents do with them](../lsquare/README.md#what-agents-do-with-them)):
+
+- **`session_id`** groups a task's calls. An agent sends the task's ID on every call after the
+  first. A call that comes without one is given a new ID, `ses_` and 22 characters, in a text block
+  at the end of the tool's result: `Task ID: ses_…. Send it as session_id on later calls for this
+  task, and pass it to any subagent working on it.` The event carries the ID as `sessionId`, and
+  where it came from as `sessionSource`: `sent`, `issued` or `protocol`. The `result` it records
+  is your tool's own, without that block.
+- **`intent`** asks the agent why it calls the tool, in one sentence. It is the event's `intent`,
+  cut at 500 characters and redacted like any other text, whether or not arguments are recorded.
+
+`list_tools` shows the inputs, and `call_tool` takes them out of a call before your handler sees
+it, so a tool that refuses inputs it doesn't know (`#[serde(deny_unknown_fields)]`) is called as
+before. `get_tool` still gives your own definition. A client that is disabled (no key, outside dry
+run) changes nothing; one that was shut down still takes the inputs out, since agents were listed
+them, and gives no new IDs.
+
+**Which tools get them.** Your handler's `get_tool` says, each time: a tool gets an input when
+
+- `get_tool` gives the tool's definition. `#[tool_handler]` writes `get_tool` for you; a
+  `ServerHandler` written by hand needs its own, or its tools are left as they are;
+- the definition's input schema is an object of named properties: `type: "object"`,
+  `additionalProperties` absent or `false`, and no `anyOf`, `oneOf`, `patternProperties` or other
+  key that could make any input the tool's own. What `schemars` writes for a struct is one;
+- and the tool has no input of that name itself.
+
+Such a tool's calls have the input taken out, and it is listed with the input wherever the schema
+it is listed with says the same of the two names as its definition. A tool that gets neither is
+listed and called as it is, and the log says why, once for each tool. On the tools that get them
+the two names are the wrapper's: a tool that reads `session_id` or `intent` from its arguments
+without declaring it in its schema no longer receives it.
+
+The wrapper asks `get_tool` once for each tool it lists and once for each call. The one
+`#[tool_handler]` writes builds your whole router every time, about a microsecond for each tool
+in it, so listing 100 tools takes about 12 ms, and 1,000 more than a second. Keep the router in
+your server instead, as rmcp's own examples do (a `tool_router: ToolRouter<Self>` field, and
+`#[tool_handler(router = self.tool_router)]`), and a lookup costs next to nothing.
+
+**A connection that is a session already.** On a protocol version before 2026-07-28, a
+connection that starts with `initialize` is a session: stdio, or one session of an HTTP server
+that keeps sessions. Its calls are grouped by the connection, with the SHA-256 of an ID the
+wrapper makes for it as `sessionId` and `protocol` as `sessionSource`, and no ID is added to its
+results; an ID the agent sends still comes first. A server that keeps no sessions
+(`with_legacy_session_mode(false)`, as in the quickstart) serves each request on a connection of
+its own, so its calls are given IDs in their results.
+
+**Unlike the TypeScript and Python SDKs:**
+
+- A call that ends in an error result (`isError`) is given no new ID: `rmcp` answers some calls
+  that way itself before your tool runs (a required input left out), and the wrapper can't tell
+  those from your tool's own.
+- A result with nothing in it, no content and no structured content, is given no new ID either:
+  a client that reads a result's first block as the tool's value, as `rmcp`'s `into_typed` does,
+  would read the ID.
+- Over HTTP with sessions, the session is the connection the wrapper serves, not the
+  `Mcp-Session-Id`: a session that `rmcp` restores on another server instance is a new one.
+- `get_more_tools` [isn't there yet](#not-yet-supported).
+
+**Upgrading from 0.2.0-beta.1:** the extras are on by default, so your tools are listed with two
+more optional inputs, and some results end with one more text block. `extras(false)` keeps
+everything as it was.
 
 ## What leaves your process
 
@@ -198,8 +268,8 @@ the limit resets, and checks every 15 minutes whether it was raised.
 
 This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and Python SDKs:
 
-- **The extras:** the `session_id` and `intent` inputs and the `get_more_tools` tool. So events
-  carry no `sessionId` and no `intent`, and calls aren't grouped into tasks.
+- **`get_more_tools`**, the tool agents call when none fits. The other two
+  [extras](#the-extras), `session_id` and `intent`, are here.
 - **`capture()` and `turn` events:** agent turns, inside a tool call or outside MCP.
 - **Other Rust MCP libraries.** Only `rmcp`, and only 3.11: `lsquare` forwards each method of
   rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that forwards what
@@ -212,4 +282,5 @@ This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and
 
 ## Licence
 
-MIT, in [LICENSE](LICENSE).
+MIT, in [LICENSE](LICENSE). The crate includes code adapted from AgentCat's TypeScript SDK, also
+MIT: see [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES).
