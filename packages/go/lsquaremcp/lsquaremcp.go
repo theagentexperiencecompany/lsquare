@@ -14,7 +14,8 @@
 //	})
 //
 // Each call that reaches the middleware becomes one event: the tool and its description, the
-// arguments, the result, how it ended and how long it took, and who it was for. The tool runs
+// server's instructions, the arguments, the result, how it ended and how long it took, and who
+// it was for. The tool runs
 // unchanged, and its reply or error goes back as it came. Before the tool, the wrapper reads the
 // call (its tool, the calling app, the protocol version), copies its arguments when they are
 // recorded, and asks the Choice functions; as the tool returns, it reads how the call ended and
@@ -85,8 +86,9 @@ type Options struct {
 	// request ends. Its values are the request's own, shared with the tool: read them, don't
 	// change them. On an HTTP session that outlives one request, the MCP SDK gives every call the
 	// context of the request that opened the session, so what your HTTP middleware put in it is
-	// that request's: read who is calling from call.TokenInfo and call.Header, which are the
-	// current request's.
+	// that request's. Over Streamable HTTP, read who is calling from call.TokenInfo and
+	// call.Header, which are the current request's; over the older SSE transport both are nil
+	// (see Call).
 	Identify func(ctx context.Context, call Call) (*Identity, error)
 
 	// Inputs says which tools' arguments are recorded: nil, every tool's.
@@ -98,6 +100,11 @@ type Options struct {
 	// Descriptions says which tools' descriptions are recorded with their calls, cut at 1,000
 	// characters: nil, every tool's.
 	Descriptions Choice
+	// Instructions says which tools' calls the server's instructions are recorded with, cut at
+	// 2,000 characters: nil, every tool's; Off, none. It is asked like the others, with the
+	// tool's name and before the tool runs, though the instructions are the server's and the same
+	// for every tool: Off is the choice most servers have to make.
+	Instructions Choice
 
 	// Tools are the server's tools, as registered: a call's description comes from here until the
 	// server has listed that tool to a client, and from that listing afterwards. Without it, a
@@ -107,6 +114,15 @@ type Options struct {
 	// learned from the first initialize the server answers, which a client on protocol
 	// 2026-07-28 or later never sends.
 	ServerInfo *mcp.Implementation
+	// ServerInstructions is what the server tells clients about using it, as given to
+	// mcp.NewServer in ServerOptions.Instructions. The MCP SDK doesn't say what a server's
+	// instructions are, so a call's are the ones its own connection was given, in the server's
+	// answer to initialize or server/discover as it passed the middleware; on a connection given
+	// none, which each request of a stateless server is, they are these. Without this, they are
+	// the ones the server last gave any client, and a call that comes before any has none: a
+	// server that tells different clients different things should set it, or turn Instructions
+	// off.
+	ServerInstructions string
 }
 
 // Choice says which tools something is recorded for: a function that is asked once per call,
@@ -130,9 +146,11 @@ type Call struct {
 	// Arguments are the arguments as the client sent them, before the SDK checked them: a copy
 	// of them all, whatever their size, made before the tool runs.
 	Arguments json.RawMessage
-	// Header is the HTTP request's header; nil on other transports.
+	// Header is the HTTP request's header, over Streamable HTTP; nil on other transports, the
+	// older SSE one included.
 	Header http.Header
-	// TokenInfo is the request's verified token, if the server checks one. Its Scopes and its
+	// TokenInfo is the request's verified token, over Streamable HTTP, if the server checks one;
+	// nil on other transports, the older SSE one included. Its Scopes and its
 	// Extra map are copies; a value inside Extra (a list of roles, say) is the one the tool
 	// has, so read it and don't change it.
 	TokenInfo *auth.TokenInfo
@@ -162,38 +180,58 @@ type instrumented struct {
 	// Each tool's description as registered (Options.Tools), until a listing says otherwise.
 	registered map[string]string
 	server     *jsonv.Object
-	// The protocol version each connection's initialize negotiated.
-	versions *versions
+	// The server's instructions for a call on a connection that wasn't given any: the ones
+	// Options said, or without them the ones the server last gave any client.
+	instructions string
+	// Options said what the instructions are: no answer changes them for other connections.
+	seeded bool
+	// What each connection was told.
+	connections *connections
 }
 
-// versions is the protocol version of each connection. It is on its own so that a connection's
-// cleanup holds nothing else: a cleanup that reached the wrapper would reach Identify, and a
-// connection Identify holds on to would then never be collected.
-type versions struct {
+// connections is what each connection was told as it was set up: the protocol version its
+// initialize negotiated, and the instructions it was given. It is on its own so that a
+// connection's cleanup holds nothing else: a cleanup that reached the wrapper would reach
+// Identify, and a connection Identify holds on to would then never be collected.
+type connections struct {
 	mu sync.Mutex
-	of map[weak.Pointer[mcp.ServerSession]]string
+	of map[weak.Pointer[mcp.ServerSession]]*told
 }
 
-func (v *versions) note(session *mcp.ServerSession, version string) {
+type told struct {
+	version string
+	// The instructions the connection was given, and whether it was given any answer that has
+	// them: an answer without instructions says there are none.
+	instructions string
+	answered     bool
+}
+
+// note changes what is known of a connection.
+func (c *connections) note(session *mcp.ServerSession, change func(*told)) {
 	key := weak.Make(session)
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if _, known := v.of[key]; !known {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	known := c.of[key]
+	if known == nil {
+		known = &told{}
+		c.of[key] = known
 		// Forgotten when the connection is: nothing here keeps it alive.
 		runtime.AddCleanup(session, func(key weak.Pointer[mcp.ServerSession]) {
-			v.mu.Lock()
-			delete(v.of, key)
-			v.mu.Unlock()
+			c.mu.Lock()
+			delete(c.of, key)
+			c.mu.Unlock()
 		}, key)
 	}
-	v.of[key] = version
+	change(known)
 }
 
-func (v *versions) get(session *mcp.ServerSession) (string, bool) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	version, ok := v.of[weak.Make(session)]
-	return version, ok
+func (c *connections) get(session *mcp.ServerSession) (told, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if known := c.of[weak.Make(session)]; known != nil {
+		return *known, true
+	}
+	return told{}, false
 }
 
 // The servers already instrumented: the first Instrument of a server is the one that counts.
@@ -239,7 +277,7 @@ func Instrument(server *mcp.Server, client *lsquare.Client, options *Options) {
 }
 
 func newInstrumented(client bridge.Client, options *Options) *instrumented {
-	w := &instrumented{client: client, listed: map[string]string{}, registered: map[string]string{}, versions: &versions{of: map[weak.Pointer[mcp.ServerSession]]string{}}}
+	w := &instrumented{client: client, listed: map[string]string{}, registered: map[string]string{}, connections: &connections{of: map[weak.Pointer[mcp.ServerSession]]*told{}}}
 	if options != nil {
 		w.options = *options
 	}
@@ -249,8 +287,10 @@ func newInstrumented(client bridge.Client, options *Options) *instrumented {
 		}
 	}
 	w.server = named(w.options.ServerInfo)
+	// Made valid UTF-8 once, here, and not on every call.
+	w.instructions, w.seeded = jsonv.ValidString(w.options.ServerInstructions), w.options.ServerInstructions != ""
 	// Read, and let go: a tool the server later drops, with its schemas, isn't kept alive here.
-	w.options.Tools, w.options.ServerInfo = nil, nil
+	w.options.Tools, w.options.ServerInfo, w.options.ServerInstructions = nil, nil, ""
 	return w
 }
 
@@ -281,6 +321,12 @@ func (w *instrumented) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 			result, err := next(ctx, method, request)
 			if err == nil {
 				w.quietly(func() { w.noteInitialize(request, result) })
+			}
+			return result, err
+		case "server/discover":
+			result, err := next(ctx, method, request)
+			if err == nil {
+				w.quietly(func() { w.noteDiscover(request, result) })
 			}
 			return result, err
 		}
@@ -336,9 +382,47 @@ func (w *instrumented) noteInitialize(request mcp.Request, result mcp.Result) {
 		w.server = named(answer.ServerInfo)
 	}
 	w.mu.Unlock()
+	w.noteInstructions(request, answer.Instructions)
 	if session, ok := request.GetSession().(*mcp.ServerSession); ok && session != nil && answer.ProtocolVersion != "" {
-		w.versions.note(session, answer.ProtocolVersion)
+		w.connections.note(session, func(known *told) { known.version = answer.ProtocolVersion })
 	}
+}
+
+// noteDiscover notes the instructions the server gives a client that asks what it is, which a
+// client on protocol 2026-07-28 or later does in place of initialize.
+func (w *instrumented) noteDiscover(request mcp.Request, result mcp.Result) {
+	if answer, ok := result.(*mcp.DiscoverResult); ok && answer != nil {
+		w.noteInstructions(request, answer.Instructions)
+	}
+}
+
+// noteInstructions notes the instructions a connection was just given: they are that
+// connection's from here, whatever another one is given. For calls on connections that are given
+// none (each request of a stateless server is one), they are also the server's, unless Options
+// said what those are.
+func (w *instrumented) noteInstructions(request mcp.Request, instructions string) {
+	instructions = jsonv.ValidString(instructions)
+	if session, ok := request.GetSession().(*mcp.ServerSession); ok && session != nil {
+		w.connections.note(session, func(known *told) { known.instructions, known.answered = instructions, true })
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.seeded {
+		w.instructions = instructions
+	}
+}
+
+// serverInstructions is what the server told the call's client about using it: what its
+// connection was given, else the server's own.
+func (w *instrumented) serverInstructions(request *mcp.CallToolRequest) string {
+	if request.Session != nil {
+		if known, ok := w.connections.get(request.Session); ok && known.answered {
+			return known.instructions
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.instructions
 }
 
 // description is the tool's description as agents are listed it now: the one the server last
@@ -368,8 +452,8 @@ func (w *instrumented) protocolVersion(request *mcp.CallToolRequest) string {
 	if version != asked {
 		return version
 	}
-	if negotiated, ok := w.versions.get(session); ok {
-		return negotiated
+	if known, ok := w.connections.get(session); ok && known.version != "" {
+		return known.version
 	}
 	return version
 }
@@ -404,8 +488,10 @@ type running struct {
 	results bool
 	// The tool's description as agents were listed it when the call arrived.
 	description string
-	client      *jsonv.Object
-	protocol    string
+	// The server's instructions as it gave them to clients when the call arrived.
+	instructions string
+	client       *jsonv.Object
+	protocol     string
 	// The call brings what an earlier round asked for.
 	continued bool
 	// What Identify answers, or why it didn't; nil when there is no Identify.
@@ -491,6 +577,9 @@ func (w *instrumented) start(ctx context.Context, request mcp.Request) *running 
 	if w.choose(w.options.Descriptions, "Descriptions", toolName) {
 		call.description = w.description(toolName)
 	}
+	if w.choose(w.options.Instructions, "Instructions", toolName) {
+		call.instructions = w.serverInstructions(typed)
+	}
 	if call.inputs {
 		// As the client sent them: the tool may change its own. Arguments larger than an event can
 		// hold aren't copied before the call is admitted, as the tool returns.
@@ -524,8 +613,7 @@ func clientOf(request *mcp.CallToolRequest) *jsonv.Object {
 				plain = plain && isText
 			}
 			if icons, has := info["icons"]; has && icons != nil {
-				_, isList := icons.([]any)
-				plain = plain && isList
+				plain = plain && iconsOr(icons)
 			}
 			if plain {
 				return named(&mcp.Implementation{Name: name, Version: version})
@@ -817,6 +905,38 @@ func firstText(content []mcp.Content) (string, int, bool) {
 	return "", 0, false
 }
 
+// iconsOr reports whether a value is a list of icons as the wire gives one: objects whose src,
+// mimeType and theme are text and whose sizes are a list of texts.
+func iconsOr(value any) bool {
+	list, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, entry := range list {
+		icon, ok := entry.(map[string]any)
+		if !ok {
+			return false
+		}
+		for _, key := range []string{"src", "mimeType", "theme"} {
+			if _, isText := textOr(icon[key]); !isText {
+				return false
+			}
+		}
+		if sizes, has := icon["sizes"]; has && sizes != nil {
+			texts, ok := sizes.([]any)
+			if !ok {
+				return false
+			}
+			for _, size := range texts {
+				if _, isText := size.(string); !isText {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 // textOr is a value that is text, or absent: "" then. False for anything else.
 func textOr(value any) (string, bool) {
 	if value == nil {
@@ -913,6 +1033,10 @@ func planResult(result *mcp.CallToolResult) resultPlan {
 	case nil:
 	case json.RawMessage:
 		plan.size += int64(len(structured))
+	case *json.RawMessage:
+		if structured != nil {
+			plan.size += int64(len(*structured))
+		}
 	default:
 		walk := measure{fields: map[reflect.Type]*written{}}
 		if walk.passive(reflect.ValueOf(structured), 0) {
@@ -940,7 +1064,14 @@ func takeResult(result *mcp.CallToolResult, plan resultPlan) *snapshot {
 	case nil:
 	case json.RawMessage:
 		// What mcp.AddTool leaves there: the JSON the client gets.
-		taken.structured = bytes.Clone(structured)
+		taken.structured = rawCopy(structured)
+	case *json.RawMessage:
+		// The same, by its pointer: none is written as null, as for the value.
+		if structured == nil {
+			taken.structured = rawCopy(nil)
+		} else {
+			taken.structured = rawCopy(*structured)
+		}
 	default:
 		taken.opaque = true
 		if plan.passive {
@@ -950,6 +1081,14 @@ func takeResult(result *mcp.CallToolResult, plan resultPlan) *snapshot {
 		}
 	}
 	return taken
+}
+
+// rawCopy is JSON the result holds already, copied: with none there, the client is sent null.
+func rawCopy(raw json.RawMessage) []byte {
+	if len(raw) == 0 {
+		return []byte("null")
+	}
+	return bytes.Clone(raw)
 }
 
 var (
@@ -1397,6 +1536,10 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 	}
 	if call.description != "" {
 		record.Set("toolDescription", jsonv.ValidString(call.description))
+	}
+	if call.instructions != "" {
+		// Valid UTF-8 already: made so once, as they were noted.
+		record.Set("serverInstructions", call.instructions)
 	}
 	if call.inputs {
 		holder := jsonv.NewObject()

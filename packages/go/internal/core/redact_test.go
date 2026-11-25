@@ -284,8 +284,8 @@ func TestLimitsAreTheContracts(t *testing.T) {
 			t.Errorf("%s is %d here, %d in shape.ts", name, have, want)
 		}
 	}
-	want := "{ input: 16_000, agent: 16_000, result: 4_000, intent: 500, description: 1_000 }"
-	if !strings.Contains(string(shape), "LIMITS = "+want) || LimitInput != 16_000 || LimitAgent != 16_000 || LimitResult != 4_000 || LimitIntent != 500 || LimitDescription != 1_000 {
+	want := "{ input: 16_000, agent: 16_000, result: 4_000, intent: 500, description: 1_000, instructions: 2_000 }"
+	if !strings.Contains(string(shape), "LIMITS = "+want) || LimitInput != 16_000 || LimitAgent != 16_000 || LimitResult != 4_000 || LimitIntent != 500 || LimitDescription != 1_000 || LimitInstructions != 2_000 {
 		t.Errorf("the field limits aren't shape.ts's %s", want)
 	}
 }

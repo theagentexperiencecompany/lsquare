@@ -74,6 +74,20 @@ func differentialText(r *rand.Rand) string {
 	return out.String()
 }
 
+// differentialListed gives some calls what is the same on every call of a tool or a server: the
+// tool's description and the server's instructions, some long enough to be cut.
+func differentialListed(r *rand.Rand, call *jsonv.Object) {
+	for _, key := range []string{"toolDescription", "serverInstructions"} {
+		switch r.Intn(6) {
+		case 0:
+			call.Set(key, differentialText(r))
+		case 1:
+			text := differentialText(r)
+			call.Set(key, strings.Repeat(differentialText(r)+" ", 1+2500/(1+len(text)))+text)
+		}
+	}
+}
+
 func differentialValue(r *rand.Rand, depth int) jsonv.Value {
 	switch pick := r.Intn(12); {
 	case pick < 6 || depth >= 3:
@@ -122,6 +136,7 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 				input.Set(differentialKeys[r.Intn(len(differentialKeys))], differentialValue(r, 0))
 			}
 			call.Set("input", input)
+			differentialListed(r, call)
 			c.Set("call", call)
 		default:
 			call := jsonv.NewObject()
@@ -146,6 +161,7 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 				call.Set("error", failure)
 				call.Set("status", "error")
 			}
+			differentialListed(r, call)
 			c.Set("call", call)
 		}
 		if r.Intn(5) == 0 {

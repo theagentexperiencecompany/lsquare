@@ -1670,3 +1670,109 @@ func TestBeforeSendMayShutDown(t *testing.T) {
 		t.Fatal("Shutdown never returned")
 	}
 }
+
+// While a daily limit holds, whether a call's event would be dropped for it is decided as the
+// call replies, before anything of it is kept: dropped, it is only counted; the one whose turn
+// it is to check the limit is taken, and gives the turn to the next if its event never comes.
+func TestADailyLimitIsDecidedAsTheCallReplies(t *testing.T) {
+	in := newIngestion(t)
+	var reported problems
+	c := New(Options{APIKey: "k", Endpoint: in.URL, DryRun: DryRunOff, OnError: reported.onError})
+	b := bridge.Of(c)
+	held := &holdback{until: time.Now().Add(time.Hour), resetsAt: "later", nextCheck: time.Now().Add(time.Hour)}
+	c.mu.Lock()
+	c.holdback = held
+	c.mu.Unlock()
+	if _, ok := b.Track("dropped", 10); ok || held.dropped != 1 {
+		t.Fatalf("a call under the limit was taken, or not counted: %d dropped", held.dropped)
+	}
+	// Its turn to check.
+	c.mu.Lock()
+	held.nextCheck = time.Now().Add(-time.Second)
+	c.mu.Unlock()
+	gaveUp, ok := b.Track("gives up", 10)
+	if !ok {
+		t.Fatal("the call whose turn it was to check was refused")
+	}
+	if _, ok := b.Track("meanwhile", 10); ok {
+		t.Error("a second call was taken as the check")
+	}
+	gaveUp()
+	check := call("the check", "ok")
+	checkID, _ := fieldText(check, "callId")
+	built, ok := b.Track(checkID, 10)
+	if !ok {
+		t.Fatal("the turn wasn't given to the next call")
+	}
+	b.Record(check, nil)
+	built()
+	flush(t, c)
+	events := in.events()
+	if len(events) != 1 || at(events[0], "input", "query") != "the check" {
+		t.Fatalf("sent %v", events)
+	}
+	// Its acceptance ended the limit, and what was dropped meanwhile is reported.
+	c.mu.Lock()
+	over := c.holdback == nil
+	c.mu.Unlock()
+	if codes := strings.Join(reported.codes(), ","); !over || codes != "quota_dropped" {
+		t.Errorf("the limit is over: %v; reported %s", over, codes)
+	}
+}
+
+// A daily limit whose time is up is over as the next call replies: that call is taken, or
+// refused, as any other, and isn't counted against the limit.
+func TestADailyLimitThatHasResetIsOverForTheNextCall(t *testing.T) {
+	var reported problems
+	c := New(Options{DryRun: DryRunOn, Logger: &lines{}, OnError: reported.onError, MaxQueueBytes: 1_024})
+	c.mu.Lock()
+	c.holdback = &holdback{until: time.Now().Add(-time.Second), resetsAt: "earlier", nextCheck: time.Now().Add(time.Hour), dropped: 2}
+	c.mu.Unlock()
+	if _, ok := bridge.Of(c).Track("too large", 1_025); ok {
+		t.Error("a call larger than the queue was taken")
+	}
+	flush(t, c)
+	c.mu.Lock()
+	over := c.holdback == nil
+	c.mu.Unlock()
+	if codes := strings.Join(reported.codes(), ","); !over || codes != "quota_dropped,queue_full" || reported.first(t).Count != 2 {
+		t.Errorf("the limit is over: %v; reported %s", over, codes)
+	}
+}
+
+// Shutdown from BeforeSend with a context that was cancelled before the call doesn't wait.
+func TestShutdownFromAHookWithACancelledContextDoesntWait(t *testing.T) {
+	in := newIngestion(t)
+	release := make(chan struct{})
+	in.answer = func(n int, events []map[string]any) (int, http.Header, string) {
+		<-release
+		return 200, nil, accept(events)
+	}
+	defer close(release)
+	var c *Client
+	took := make(chan time.Duration, 1)
+	c = New(Options{APIKey: "k", Endpoint: in.URL, DryRun: DryRunOff, OnError: func(*Error, *Event) {}, BeforeSendTimeout: 3 * time.Second,
+		BeforeSend: func(ctx context.Context, event *Event) (*Event, error) {
+			if string(event.Input) == `{"query":"shut down"}` {
+				cancelled, cancel := context.WithCancel(ctx)
+				cancel()
+				started := time.Now()
+				c.Shutdown(cancelled)
+				took <- time.Since(started)
+			}
+			return event, nil
+		}})
+	record(c, "on its way", "ok")
+	for len(in.received()) == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	record(c, "shut down", "ok")
+	select {
+	case elapsed := <-took:
+		if elapsed > time.Second {
+			t.Errorf("Shutdown waited %v on a cancelled context", elapsed)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Shutdown never returned")
+	}
+}

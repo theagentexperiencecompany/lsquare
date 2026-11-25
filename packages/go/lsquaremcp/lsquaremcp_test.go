@@ -786,8 +786,10 @@ func TestAfterShutdownNothingIsRead(t *testing.T) {
 			t.Fatalf("the call failed: %v", err)
 		}
 	}
-	if reported := h.reported(); asked || len(h.events()) != 0 || len(reported) != 1 || !strings.HasPrefix(reported[0], "shutdown: ") {
-		t.Errorf("Identify asked: %v; events %d; reported %v", asked, len(h.events()), reported)
+	// The flush first: what was reported has reached OnError once it returns.
+	events := h.events()
+	if reported := h.reported(); asked || len(events) != 0 || len(reported) != 1 || !strings.HasPrefix(reported[0], "shutdown: ") {
+		t.Errorf("Identify asked: %v; events %d; reported %v", asked, len(events), reported)
 	}
 }
 
@@ -1304,7 +1306,10 @@ func TestTheCallingAppIsTheOneTheSDKReads(t *testing.T) {
 		t.Fatal("no session")
 	}
 	for _, info := range []any{nil, map[string]any{}, map[string]any{"name": "agent"}, map[string]any{"name": 5}, map[string]any{"name": "agent", "version": 2}, &mcp.Implementation{Name: "typed", Version: "1"},
-		map[string]any{"name": "agent", "title": 5}, map[string]any{"name": "agent", "icons": "x"}, map[string]any{"name": "agent", "title": "An agent", "icons": []any{}}, "bare", 7.0, []any{"x"}} {
+		map[string]any{"name": "agent", "title": 5}, map[string]any{"name": "agent", "icons": "x"}, map[string]any{"name": "agent", "title": "An agent", "icons": []any{}}, "bare", 7.0, []any{"x"},
+		map[string]any{"name": "agent", "icons": []any{"x"}}, map[string]any{"name": "agent", "icons": []any{map[string]any{"src": 5}}},
+		map[string]any{"name": "agent", "icons": []any{map[string]any{"src": "https://example.com/i.png", "sizes": []any{1.0}}}},
+		map[string]any{"name": "agent", "icons": []any{map[string]any{"src": "https://example.com/i.png", "sizes": []any{"48x48"}, "theme": "dark"}}}} {
 		request := callRequest(`{}`)
 		request.Session = session
 		if info != nil {
@@ -1360,5 +1365,199 @@ func TestTheOptionsToolsAreNotKept(t *testing.T) {
 	w := newInstrumented(bridgeOf(h.client), &Options{Tools: []*mcp.Tool{searchTool}, ServerInfo: &mcp.Implementation{Name: "orders"}})
 	if w.options.Tools != nil || w.options.ServerInfo != nil || w.description("search_orders") == "" || w.server == nil {
 		t.Errorf("tools %v, server info %v, description %q", w.options.Tools, w.options.ServerInfo, w.description("search_orders"))
+	}
+}
+
+// instructed is a server made with instructions, instrumented with the harness's client, and a
+// client connected to it on the given protocol version ("" for the Go client's own).
+func instructed(t *testing.T, h *harness, options *Options, protocol string) *mcp.ClientSession {
+	t.Helper()
+	server := mcp.NewServer(&mcp.Implementation{Name: "orders", Version: "1.2.3"}, &mcp.ServerOptions{Instructions: "Search before you refund. Ask ops@example.com when unsure."})
+	addTools(server)
+	Instrument(server, h.client, options)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = serverSession.Close() })
+	var sessionOptions *mcp.ClientSessionOptions
+	if protocol != "" {
+		sessionOptions = &mcp.ClientSessionOptions{ProtocolVersion: protocol}
+	}
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test-agent", Version: "0.9"}, nil).Connect(context.Background(), clientTransport, sessionOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// A call carries the server's instructions as the server gives them to clients, redacted like
+// any text: learned from its answer to initialize, or to server/discover, which a client on the
+// newer protocol asks in its place.
+func TestACallCarriesTheServersInstructions(t *testing.T) {
+	for name, protocol := range map[string]string{"initialize": "2025-06-18", "server/discover": ""} {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, nil, lsquare.Options{})
+			session := instructed(t, h, nil, protocol)
+			if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "raw", Arguments: map[string]any{}}); err != nil {
+				t.Fatal(err)
+			}
+			event := h.one()
+			if event["serverInstructions"] != "Search before you refund. Ask [EMAIL_1] when unsure." {
+				t.Errorf("serverInstructions is %v", event["serverInstructions"])
+			}
+		})
+	}
+}
+
+// On a connection that was given no instructions, a call's are the ones the options gave, or
+// without them the ones the server last gave anyone; Off records none.
+func TestInstructionsFromTheOptionsAndTheSwitch(t *testing.T) {
+	h := newHarness(t, nil, lsquare.Options{})
+	run := func(options *Options, before func(w *instrumented)) {
+		w := newInstrumented(bridgeOf(h.client), options)
+		if before != nil {
+			before(w)
+		}
+		_, _ = w.middleware(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+		})(context.Background(), "tools/call", callRequest(`{}`))
+	}
+	discover := func(instructions string) func(*instrumented) {
+		return func(w *instrumented) {
+			_, _ = w.middleware(func(context.Context, string, mcp.Request) (mcp.Result, error) {
+				return &mcp.DiscoverResult{Instructions: instructions}, nil
+			})(context.Background(), "server/discover", &mcp.ServerRequest[*mcp.DiscoverParams]{})
+		}
+	}
+	run(nil, nil)
+	run(nil, discover("as answered"))
+	run(nil, discover(""))
+	run(&Options{ServerInstructions: "as made"}, nil)
+	run(&Options{ServerInstructions: "as made"}, discover("as answered"))
+	run(&Options{ServerInstructions: "as made"}, discover(""))
+	run(&Options{ServerInstructions: "as made", Instructions: Off}, nil)
+	seen := map[string]int{}
+	for _, event := range h.events() {
+		seen[fmt.Sprint(event["serverInstructions"])]++
+	}
+	if seen["<nil>"] != 3 || seen["as made"] != 3 || seen["as answered"] != 1 || len(seen) != 3 {
+		t.Errorf("the instructions recorded are %v", seen)
+	}
+}
+
+// A call sent as limited diagnostics has no instructions, as it has no description.
+func TestLimitedDiagnosticsHaveNoInstructions(t *testing.T) {
+	h := newHarness(t, nil, lsquare.Options{})
+	_, _ = direct(h, &Options{ServerInstructions: "as made", Tools: []*mcp.Tool{searchTool},
+		Identify: func(context.Context, Call) (*Identity, error) { return nil, errors.New("no") }}, callRequest(`{}`),
+		func() (mcp.Result, error) { return &mcp.CallToolResult{}, nil })
+	event := h.one()
+	if _, has := event["serverInstructions"]; has || event["identity"] != "failed" {
+		t.Errorf("the event is %v", event)
+	}
+}
+
+// BeforeSend gets the instructions, and what it makes of them is redacted and cut like the rest.
+func TestBeforeSendGetsTheInstructions(t *testing.T) {
+	var got string
+	h := newHarness(t, nil, lsquare.Options{BeforeSend: func(ctx context.Context, event *lsquare.Event) (*lsquare.Event, error) {
+		got = event.ServerInstructions
+		event.ServerInstructions = "Ask zoe@example.com. " + strings.Repeat("x", 2_100)
+		return event, nil
+	}})
+	_, _ = direct(h, &Options{ServerInstructions: "as made"}, callRequest(`{}`), func() (mcp.Result, error) { return &mcp.CallToolResult{}, nil })
+	event := h.one()
+	text, _ := event["serverInstructions"].(string)
+	if got != "as made" || !strings.HasPrefix(text, "Ask [EMAIL_1]. xxx") || !strings.HasSuffix(text, "chars]") || fmt.Sprint(event["truncated"]) != "[serverInstructions]" {
+		t.Errorf("the hook got %q; the event has %.40q… (truncated %v)", got, text, event["truncated"])
+	}
+}
+
+// The instructions a call carries are the ones its own connection was given, where clients are
+// given different ones: another connection's answer changes nothing for it.
+func TestEachConnectionHasTheInstructionsItWasGiven(t *testing.T) {
+	h := newHarness(t, nil, lsquare.Options{})
+	server := mcp.NewServer(&mcp.Implementation{Name: "orders", Version: "1.2.3"}, &mcp.ServerOptions{Instructions: "For everyone."})
+	addTools(server)
+	// Added before Instrument, so it runs inside it: the wrapper sees the reply as the client gets it.
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
+			result, err := next(ctx, method, request)
+			if answer, ok := result.(*mcp.InitializeResult); ok && err == nil {
+				if params, ok := request.GetParams().(*mcp.InitializeParams); ok && params.ClientInfo != nil {
+					answer.Instructions = "Instructions for " + params.ClientInfo.Name + "."
+				}
+			}
+			return result, err
+		}
+	})
+	Instrument(server, h.client, nil)
+	connect := func(name string) *mcp.ClientSession {
+		serverTransport, clientTransport := mcp.NewInMemoryTransports()
+		serverSession, err := server.Connect(context.Background(), serverTransport, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = serverSession.Close() })
+		session, err := mcp.NewClient(&mcp.Implementation{Name: name, Version: "1"}, nil).Connect(context.Background(), clientTransport, &mcp.ClientSessionOptions{ProtocolVersion: "2025-06-18"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = session.Close() })
+		return session
+	}
+	alpha, beta := connect("alpha"), connect("beta")
+	for _, session := range []*mcp.ClientSession{alpha, beta, alpha} {
+		if _, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: "raw", Arguments: map[string]any{}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events := h.events()
+	if len(events) != 3 {
+		t.Fatalf("%d events", len(events))
+	}
+	for _, event := range events {
+		if want := "Instructions for " + fmt.Sprint(at(event, "client", "name")) + "."; event["serverInstructions"] != want {
+			t.Errorf("a call of %v carries %q", at(event, "client", "name"), event["serverInstructions"])
+		}
+	}
+}
+
+// JSON a result holds already is recorded the same by its value and by a pointer to it, at the
+// size it has; with none there, the client is sent null, and so is the event.
+func TestJSONAlreadyWrittenIsTheSameByValueAndByPointer(t *testing.T) {
+	raw := json.RawMessage(`{"html":"` + strings.Repeat("<b>invoice</b> & ", 2_000) + `"}`)
+	var none json.RawMessage
+	for _, content := range []any{raw, &raw} {
+		if plan := planResult(&mcp.CallToolResult{StructuredContent: content}); plan.size != int64(len(raw)) {
+			t.Errorf("%T: measured %d bytes, for %d", content, plan.size, len(raw))
+		}
+	}
+	h := newHarness(t, nil, lsquare.Options{MaxQueueBytes: 128 << 10})
+	for _, content := range []any{raw, &raw, none, &none, (*json.RawMessage)(nil)} {
+		_, _ = direct(h, nil, callRequest(`{}`), func() (mcp.Result, error) {
+			return &mcp.CallToolResult{StructuredContent: content}, nil
+		})
+	}
+	events := h.events()
+	if len(events) != 5 || len(h.reported()) != 0 {
+		t.Fatalf("%d events, reported %v", len(events), h.reported())
+	}
+	html, null := 0, 0
+	for _, event := range events {
+		result, _ := event["result"].(map[string]any)
+		structured, has := result["structuredContent"]
+		switch {
+		case has && structured == nil:
+			null++
+		case at(event, "result", "structuredContent", "html") != nil:
+			html++
+		}
+	}
+	if html != 2 || null != 3 {
+		t.Errorf("%d events with the content, %d with null", html, null)
 	}
 }

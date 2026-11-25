@@ -169,7 +169,10 @@ type finishingCall struct {
 	// What the wrapper holds of the call until its event is built, as the queue's limits count it.
 	bytes int
 	// Its bytes still count: until its event is queued or dropped.
-	holding  bool
+	holding bool
+	// While a daily limit holds, the call was told its event is the one that checks whether it
+	// still does: the hold-back it checks, until its event is queued or the call gives up.
+	probe    *holdback
 	done     chan struct{}
 	finished bool
 	// Its event, once queued: kept here so a flush counts it even after it leaves the queue.
@@ -502,14 +505,28 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 		c.mu.Unlock()
 		return nil, false
 	}
-	// Within the queue's limits, with the events it holds: room is made as for a new event, and
-	// a call that can't fit even so (alone, or with what can't be dropped) is refused. While a
-	// daily limit holds, its event will most likely be dropped: nothing is dropped for it then,
-	// least of all the event that checks whether the limit still holds.
-	room := false
+	// While a daily limit holds, whether the call's event would be dropped for it is decided now,
+	// before anything of the call is kept: dropped, it is counted and nothing more is done for
+	// it. A limit whose time is up ends here, and the call goes on as any other.
 	if h := c.holdback; h != nil {
+		decision := "drop"
+		c.guardLocked(func() { decision = c.admit(h) })
+		switch decision {
+		case "drop":
+			c.mu.Unlock()
+			return nil, false
+		case "check":
+			call.probe = h
+		}
+	}
+	// Within the queue's limits, with the events it holds: room is made as for a new event, and
+	// a call that can't fit even so (alone, or with what can't be dropped) is refused. The call
+	// that checks a daily limit drops nothing to make room: without room it gives its turn up,
+	// and is counted as dropped for the limit.
+	room := false
+	if h := call.probe; h != nil {
 		if !c.fits(call.bytes) {
-			// Its event would have been dropped for the limit: counted as that.
+			h.checking = false
 			h.dropped++
 			c.mu.Unlock()
 			return nil, false
@@ -533,6 +550,11 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 			c.mu.Lock()
 			call.finished = true
 			c.releaseCall(call)
+			if call.probe != nil {
+				// Its event was never recorded: the next one checks the limit instead.
+				call.probe.checking = false
+				call.probe = nil
+			}
 			if c.finishing[callID] == call {
 				delete(c.finishing, callID)
 			}
@@ -576,7 +598,8 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 			diagnostic = nil
 		}
 	}
-	admitted, said, probe := c.admitNew()
+	callID, _ := fieldText(record, "callId")
+	admitted, said, probe := c.admitNew(callID)
 	if !admitted {
 		if said {
 			say()
@@ -691,12 +714,20 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 // refusal is then reported, instead of what the call says of its identify. Not while a daily
 // limit holds (said: the call's own report is still made), unless it is the one that checks
 // whether the limit still holds: probe is then the hold-back it checks.
-func (c *Client) admitNew() (admitted, said bool, probe *holdback) {
+func (c *Client) admitNew(callID string) (admitted, said bool, probe *holdback) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		c.refuseClosed()
 		return false, false, nil
+	}
+	// Decided already, as the call replied: its event is the check, if that limit still holds.
+	if call := c.finishing[callID]; call != nil && call.probe != nil {
+		probe, call.probe = call.probe, nil
+		if c.holdback == probe {
+			return true, false, probe
+		}
+		probe.checking = false
 	}
 	h := c.holdback
 	if h == nil {
@@ -1808,10 +1839,14 @@ func (c *Client) Flush(ctx context.Context) (result FlushResult) {
 	return result
 }
 
-// Shutdown ends the client: it drops events still waiting for BeforeSend or inside it, waits for the rest
-// (until ctx's deadline, or 5 seconds, or Options.FlushTimeout when that is longer), then drops
-// whatever is left, cancelling requests and retries. Calls recorded afterwards are dropped. Its
-// result counts the events outstanding when it was called. Call it before the process exits.
+// Shutdown ends the client: it drops events still waiting for BeforeSend or inside it, waits for
+// the rest (until ctx's deadline, or 5 seconds, or Options.FlushTimeout when that is longer),
+// then drops whatever is left, cancelling requests and retries. Calls recorded afterwards are
+// dropped. Its result counts the events outstanding when it was called. Call it before the
+// process exits.
+//
+// Called from BeforeSend or Identify with the context they were given, it waits until that
+// context's deadline: the context itself ends as Shutdown drops the caller's own event.
 func (c *Client) Shutdown(ctx context.Context) (result FlushResult) {
 	if c == nil {
 		return result
@@ -1828,10 +1863,11 @@ func (c *Client) Shutdown(ctx context.Context) (result FlushResult) {
 		c.reports.wait(ctx, deadline)
 	}()
 	inCallback := bridge.InCallback(ctx, c) || c.reports.inHandler()
-	if bridge.InCallback(ctx, c) {
+	if bridge.InCallback(ctx, c) && ctx.Err() == nil {
 		// Called from BeforeSend or Identify with their context, which ends as soon as Shutdown
 		// drops the caller's own event: what it waits for next is waited for until the same
-		// deadline, not until that.
+		// deadline, not until that. (So a context derived from it and cancelled while Shutdown
+		// waits doesn't cut the wait short; one cancelled before the call does.)
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
 		defer cancel()

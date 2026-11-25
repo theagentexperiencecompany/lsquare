@@ -528,6 +528,8 @@ func limitOf(kind string, path []string) int {
 	switch path[0] {
 	case "toolDescription":
 		return LimitDescription
+	case "serverInstructions":
+		return LimitInstructions
 	case "intent":
 		return LimitIntent
 	case "input":

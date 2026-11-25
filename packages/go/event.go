@@ -59,6 +59,7 @@ func publicEvent(event *jsonv.Object, limited bool) *Event {
 		LimitedDiagnostics: limited || textOf(event, "identity") == "failed",
 		Round:              textOf(event, "round"),
 		ToolDescription:    textOf(event, "toolDescription"),
+		ServerInstructions: textOf(event, "serverInstructions"),
 		Client:             namedOf(event, "client"),
 		Server:             namedOf(event, "server"),
 		ProtocolVersion:    textOf(event, "protocolVersion"),
@@ -182,6 +183,9 @@ func hookOutput(event *Event) *jsonv.Object {
 	}
 	if event.ToolDescription != "" {
 		out.Set("toolDescription", jsonv.ValidString(event.ToolDescription))
+	}
+	if event.ServerInstructions != "" {
+		out.Set("serverInstructions", jsonv.ValidString(event.ServerInstructions))
 	}
 	if event.Input != nil {
 		out.Set("input", rawValue(event.Input))

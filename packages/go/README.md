@@ -6,10 +6,10 @@ LSquare is an invite-only beta, so [request access](https://lsquare.io) to get a
 
 - One line per MCP server. Recording never fails a tool call or changes its reply, never makes
   the reply wait on `Identify`, redaction or the network, and never panics into your app. (The
-  one exception is an error whose text changes each time it is read: see
+  one exception is an error whose methods answer differently each time they are called: see
   [below](#mcp-servers).)
-- `Flush` waits up to 2 seconds by default for events to be sent, then up to 50 ms more for
-  `OnError` and the `Logger` to be told of what wasn't.
+- `Flush` waits up to 2 seconds by default: for events to be sent, then for `OnError` and the
+  `Logger` to have been told of what wasn't, which get 50 ms more if the time has run out.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
 - The root package uses only Go's standard library. Go 1.25 or later, which the MCP SDK needs.
 - Events are stored in the United States. If you serve customers in the EU, take that into account.
@@ -122,9 +122,10 @@ Where it sits among your own MCP middleware matters. Middleware you added before
 inside it, so what it changes in a reply is recorded. Middleware you add after runs outside it: what
 it puts in the context reaches `Identify`, and a call it refuses is never recorded.
 
-Each `tools/call` that reaches the middleware becomes one `tool_call` event: the tool's name, its
-arguments (`input`), its result, how it ended (`status`, and an `error` with its `category`), how
-long it took, the calling app and protocol version, and the IDs `Identify` returns. Results are
+Each `tools/call` that reaches the middleware becomes one `tool_call` event: the tool's name and
+description, the server's instructions, the call's arguments (`input`), its result, how it ended
+(`status`, and an `error` with its `category`), how long it took, the calling app and protocol
+version, and the IDs `Identify` returns. Results are
 sent by default, each string cut at 4,000 characters and files kept as their size only; turn inputs
 or results off everywhere, or for chosen tools, with `Inputs` and `Results`. An event that can't
 be kept is dropped and reported to `OnError`, as when the queue is full. After `Shutdown`, calls
@@ -133,8 +134,8 @@ run unrecorded, which is reported once.
 The tool runs unchanged, and its reply or error goes back as it came. Before the tool, the wrapper
 reads the call (its tool, the calling app, the protocol version), copies its arguments when they
 are recorded (up to 256 KB; larger ones are read as the tool returns), copies them all for
-`Identify` when you set one, and asks your `Inputs`, `Results` and `Descriptions` functions,
-which must answer at once. As the tool returns, it reads how the call ended and notes what the result holds. The event
+`Identify` when you set one, and asks your `Inputs`, `Results`, `Descriptions` and `Instructions`
+functions, which must answer at once. As the tool returns, it reads how the call ended and notes what the result holds. The event
 is built from there, in a goroutine of its own, so the reply never waits for `Identify`, redaction
 or the network. A call the SDK refuses before the middleware, such as one whose JSON it can't
 read, makes no event.
@@ -152,9 +153,10 @@ To read a call, the wrapper runs as little of your code as it can:
   Go's JSON leaves out. Plain data is written once more as the tool returns, which takes about
   as long as the MCP SDK then takes to write it for the reply.
 - **An error** that is a `*jsonrpc.Error` is read by its fields. Any other is asked for its text
-  once (`Error()`), only when the text is recorded, and is passed to `errors.As`; the MCP SDK then
-  does the same to write the reply. An error whose text changes each time it is asked gives the
-  event one text and the client the next.
+  once (`Error()`), only when the text is recorded, and is passed to `errors.As`, which calls its
+  `As` and `Unwrap` methods; the MCP SDK then does the same to write the reply. An error whose
+  methods answer differently each time they are called gives the event one answer and the client
+  the next.
 
 ### Options
 
@@ -164,8 +166,10 @@ To read a call, the wrapper runs as little of your code as it can:
 | `Inputs` | every tool | `lsquaremcp.Off` for none, or your own `func(toolName string) bool` |
 | `Results` | every tool | The same |
 | `Descriptions` | every tool | The same |
+| `Instructions` | every tool | `lsquaremcp.Off` leaves the server's instructions out of its calls' events; a function of your own chooses per tool, as for the others ([below](#server-instructions)) |
 | `Tools` | | The tools you registered, for their descriptions ([below](#tool-descriptions)) |
 | `ServerInfo` | | What you gave `mcp.NewServer`, for the event's `server`. Without it, the server's name is learned from the first `initialize` it answers, which a client on protocol 2026-07-28 never sends |
+| `ServerInstructions` | | What you gave `mcp.NewServer` in `ServerOptions.Instructions`, for the event's `serverInstructions` ([below](#server-instructions)) |
 
 ### How a call failed
 
@@ -240,20 +244,51 @@ The last listing is the server's, not the caller's: a server that lists a tool u
 descriptions to different callers records the one it listed last, to anyone. Turn `Descriptions`
 off for such a tool. Listed descriptions are kept for 10,000 tools at most.
 
+### Server instructions
+
+Each event carries the instructions the server gives clients (`serverInstructions`, cut at 2,000
+characters), so you can tell which wording of them a call was made under. A server made without
+instructions has none, and neither does a call sent as limited diagnostics.
+
+The Go MCP SDK doesn't say what a server's instructions are, so the wrapper learns them in two ways:
+
+```go
+options := &mcp.ServerOptions{Instructions: "Search before you refund."}
+server := mcp.NewServer(info, options)
+lsquaremcp.Instrument(server, client, &lsquaremcp.Options{ServerInfo: info, ServerInstructions: options.Instructions})
+```
+
+- **From the server's own answers** to `initialize` and `server/discover`, read as they go to the
+  client and left unchanged. A call carries the instructions its own connection was given.
+- **From `ServerInstructions`,** what you gave `mcp.NewServer`, for a call on a connection that was
+  given none. On a stateless server every request is such a connection, so set it there: with it,
+  every call has the instructions from the first one.
+
+Without `ServerInstructions`, a call on a connection that was given none carries the ones the
+server last gave any client, and none before the server has answered one. So a server that tells
+different clients different things, from middleware of its own, should set `ServerInstructions`
+or turn `Instructions` off, or one client's wording can be recorded on another's call.
+
+As for replies to calls, the wrapper sees an answer as it passes its place among your MCP
+middleware: what middleware added before `Instrument` changes in the instructions is recorded,
+what middleware added after it changes is not.
+
+`Instructions: lsquaremcp.Off` records none.
+
 ## What leaves your process
 
-- Strings in a call's `input` are cut at 16,000 characters, in its result at 4,000, and a tool's
-  description at 1,000; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
+- Strings in a call's `input` are cut at 16,000 characters, in its result at 4,000, the server's
+  instructions at 2,000 and a tool's description at 1,000; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
   budget for reading strings is spent. Lists and objects keep their first 100 entries, and nesting
   stops at 10 levels. Images, audio and binary resources are kept as their size only, and so is a
   file sent as text: a `data:` URI in base64, or 1,000 characters or more of nothing but base64.
-- An event still over 256 KB loses parts, in this order: its tool's description, then its result,
-  then its input. The event's `truncated` field names what was shortened or left out. Metadata is
+- An event still over 256 KB loses parts, in this order: the server's instructions, its tool's
+  description, then its result, then its input. The event's `truncated` field names what was shortened or left out. Metadata is
   never shortened: an event whose metadata is too large for it is dropped, and reported as
   `too_large`.
 - Common formats of emails, phone numbers, card numbers, API keys and tokens, credentials in URLs,
-  and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors and
-  tool descriptions alike. Each pattern can be turned off: `SkipRedaction: []lsquare.Pattern{lsquare.IP}`,
+  and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors,
+  tool descriptions and server instructions alike. Each pattern can be turned off: `SkipRedaction: []lsquare.Pattern{lsquare.IP}`,
   or `lsquare.AllPatterns()` for all.
 - Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole, in
   structured data and in JSON held in a string, such as a text block or an error message:
@@ -264,8 +299,8 @@ off for such a tool. Listed descriptions are kept for 10,000 tools at most.
   change it or drop it by returning `nil`. (An event dropped while it waits for the hook, at the
   hook's deadline or for room in the queue, is never shown to it.) Values under secret key names are already replaced, and
   a string cut for length has had its kept part redacted. What it returns is shortened and
-  redacted again, and is what is sent: an input, result or description it adds is sent even where
-  `Inputs`, `Results` or `Descriptions` left it out.
+  redacted again, and is what is sent: an input, result, description or instructions it adds are
+  sent even where `Inputs`, `Results`, `Descriptions` or `Instructions` left them out.
 - The wrapper never records HTTP headers, tokens, environment variables or anything else of the
   request by itself, except the calling app and the protocol version. `Identify` can read the
   rest; only what it returns is sent.
@@ -322,8 +357,13 @@ This is a first beta. The TypeScript and Python SDKs also have these, and this o
 ## Differences from the other SDKs
 
 For the same input, this SDK builds the event the TypeScript SDK builds, field for field, apart
-from `sdk`. What differs comes from Go and its MCP SDK:
+from `sdk`. (An event is measured with its `sdk`, which isn't the same length in each SDK, so
+right at the 256 KB limit one SDK can keep a part another leaves out.) What differs comes from Go
+and its MCP SDK:
 
+- The server's instructions come from the server's answers to `initialize` and `server/discover`,
+  or from `ServerInstructions` ([above](#server-instructions)), where the other SDKs read them
+  from the server as each call arrives.
 - A tool added with `mcp.AddTool` that returns an error other than a `*jsonrpc.Error`, or whose
   arguments are refused, is a `tool_error`, where the TypeScript SDK says `thrown` and `protocol`
   ([above](#how-a-call-failed)).

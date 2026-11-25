@@ -21,6 +21,8 @@ const (
 	LimitResult      = 4_000
 	LimitIntent      = 500
 	LimitDescription = 1_000
+	// LimitInstructions is for a server's instructions.
+	LimitInstructions = 2_000
 
 	// MaxEntries is how many entries a list or an object keeps.
 	MaxEntries = 100

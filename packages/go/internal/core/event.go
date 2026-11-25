@@ -8,12 +8,12 @@ import (
 	"github.com/theagentexperiencecompany/lsquare/packages/go/internal/jsonv"
 )
 
-// Parts left out, in order, until an event fits: biggest and least needed first. A call's tool
-// description goes first of all: it is the same on every call of the tool, so nothing that only
-// this call has is left out to make room for it.
+// Parts left out, in order, until an event fits: biggest and least needed first. A call's server
+// instructions and tool description go first of all: they are the same on every call of the
+// server or the tool, so nothing that only this call has is left out to make room for them.
 var (
 	turnOrder = [][]string{{"toolCalls"}, {"answer"}, {"question"}, {"verification"}, {"latency"}}
-	callOrder = [][]string{{"toolDescription"}, {"result"}, {"input"}, {"agent", "toolCalls"}, {"agent"}}
+	callOrder = [][]string{{"serverInstructions"}, {"toolDescription"}, {"result"}, {"input"}, {"agent", "toolCalls"}, {"agent"}}
 )
 
 // Context is what every event needs, besides its content.
@@ -130,7 +130,8 @@ func pending(draft *Draft, hook bool, ctx *Context) (*Draft, *Failure) {
 }
 
 // BuildCall builds a call from its record: an object with callId, capturedAt, toolName,
-// toolDescription, status, durationMs, ids, turnRef, server, client, protocolVersion, sessionId,
+// toolDescription, serverInstructions, status, durationMs, ids, turnRef, server, client,
+// protocolVersion, sessionId,
 // sessionSource, input and result (each { value }), error, round, task, intent, extra, agent,
 // metadata and diagnostics. Values from the app or the client are checked and shaped here.
 func BuildCall(record *jsonv.Object, ctx *Context, hook bool) (*Draft, *Failure) {
@@ -524,9 +525,9 @@ func errorFields(fields *jsonv.Object, st *state, n *notes) *jsonv.Object {
 
 // shapeCall shapes a call in a fixed order, which the scan budget makes part of the result: the
 // intent and error first, as the smallest and most telling, then the input, the agent's turn and
-// the result. The tool's description comes last: it is the same on every call, so it never takes
-// budget from what only this call has. Oversized metadata drops the event, as for a turn, unless
-// it's diagnostics, which leave it out.
+// the result. The tool's description and the server's instructions come last, in that order: they
+// are the same on every call, so they never take budget from what only this call has. Oversized
+// metadata drops the event, as for a turn, unless it's diagnostics, which leave it out.
 func shapeCall(record, failure *jsonv.Object, category string, st *state, n *notes, diagnostic bool) (*jsonv.Object, bool) {
 	shaped := jsonv.NewObject()
 	shaped.Set("fixed", jsonv.NewObject())
@@ -585,6 +586,13 @@ func shapeCall(record, failure *jsonv.Object, category string, st *state, n *not
 		shapeField(st, n, "toolDescription", func() {
 			if description, ok := shapeText(field(record, "toolDescription"), LimitDescription, st, n, "toolDescription"); ok {
 				shaped.Set("toolDescription", description)
+			}
+		})
+	}
+	if record.Has("serverInstructions") {
+		shapeField(st, n, "serverInstructions", func() {
+			if instructions, ok := shapeText(field(record, "serverInstructions"), LimitInstructions, st, n, "serverInstructions"); ok {
+				shaped.Set("serverInstructions", instructions)
 			}
 		})
 	}
@@ -703,6 +711,13 @@ func reshapeCall(out *jsonv.Object, draft *Draft, st *state, n *notes) (*jsonv.O
 		shapeField(st, n, "toolDescription", func() {
 			if description, ok := shapeText(value, LimitDescription, st, n, "toolDescription"); ok {
 				shaped.Set("toolDescription", description)
+			}
+		})
+	}
+	if value := field(out, "serverInstructions"); value != nil {
+		shapeField(st, n, "serverInstructions", func() {
+			if instructions, ok := shapeText(value, LimitInstructions, st, n, "serverInstructions"); ok {
+				shaped.Set("serverInstructions", instructions)
 			}
 		})
 	}
@@ -924,7 +939,7 @@ func callEvent(identity, shaped *jsonv.Object, r *Redactor, all bool) *jsonv.Obj
 		}
 		event.Set("error", failure)
 	}
-	for _, key := range []string{"intent", "toolDescription"} {
+	for _, key := range []string{"intent", "toolDescription", "serverInstructions"} {
 		if value, ok := shaped.Get(key); ok {
 			event.Set(key, text(value))
 		}
