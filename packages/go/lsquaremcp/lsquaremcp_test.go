@@ -94,6 +94,15 @@ func newHarness(t *testing.T, options *Options, before lsquare.Options) *harness
 // newHarnessOn is newHarness with the client's own choice of protocol version.
 func newHarnessOn(t *testing.T, options *Options, before lsquare.Options, session *mcp.ClientSessionOptions) *harness {
 	t.Helper()
+	return newHarnessWith(t, before, session, func(h *harness) {
+		addTools(h.server)
+		Instrument(h.server, h.client, options)
+	})
+}
+
+// newHarnessWith is a harness whose server build sets up: it adds the tools and instruments it.
+func newHarnessWith(t *testing.T, before lsquare.Options, session *mcp.ClientSessionOptions, build func(h *harness)) *harness {
+	t.Helper()
 	h := &harness{t: t}
 	ingestion := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -123,8 +132,7 @@ func newHarnessOn(t *testing.T, options *Options, before lsquare.Options, sessio
 	}
 	h.client = lsquare.New(before)
 	h.server = mcp.NewServer(&mcp.Implementation{Name: "orders", Version: "1.2.3"}, nil)
-	addTools(h.server)
-	Instrument(h.server, h.client, options)
+	build(h)
 
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	ctx := context.Background()
@@ -239,7 +247,7 @@ func TestACallBecomesOneEvent(t *testing.T) {
 		t.Fatalf("the call failed: %v %+v", err, result)
 	}
 	event := h.one()
-	if got, want := keys(event), "callId,capturedAt,client,conversationId,durationMs,eventId,input,kind,metadata,orgId,protocolVersion,redactions,result,schemaVersion,sdk,server,source,status,toolDescription,toolName,userId"; got != want {
+	if got, want := keys(event), "callId,capturedAt,client,conversationId,durationMs,eventId,input,kind,metadata,orgId,protocolVersion,redactions,result,schemaVersion,sdk,server,sessionId,sessionSource,source,status,toolDescription,toolName,userId"; got != want {
 		t.Errorf("the event's fields are %s, want %s", got, want)
 	}
 	for path, want := range map[string]any{
@@ -437,8 +445,9 @@ func (quiet) Info(string) {}
 func (quiet) Warn(string) {}
 
 func TestADescriptionIsTheOneLastListed(t *testing.T) {
-	h := newHarness(t, nil, lsquare.Options{})
-	// Before any listing, and without Options.Tools, a call has none.
+	// With the extras off the wrapper never lists the tools itself: before any listing, and
+	// without Options.Tools, a call has no description.
+	h := newHarness(t, &Options{Extras: Extras{DisableSessions: true, DisableIntent: true, DisableMissingTools: true}}, lsquare.Options{})
 	_, _ = h.call("search_orders", map[string]any{"query": "x"})
 	if _, err := h.session.ListTools(context.Background(), nil); err != nil {
 		t.Fatal(err)
@@ -619,7 +628,13 @@ func TestBeforeSendGetsTheCall(t *testing.T) {
 // direct runs one tools/call through the wrapper's middleware with a handler of the test's own,
 // for what a real server and client can't be made to do.
 func direct(h *harness, options *Options, request *mcp.CallToolRequest, next func() (mcp.Result, error)) (mcp.Result, error) {
-	handler := newInstrumented(bridgeOf(h.client), options).middleware(func(context.Context, string, mcp.Request) (mcp.Result, error) { return next() })
+	handler := newInstrumented(bridgeOf(h.client), options).middleware(func(ctx context.Context, method string, request mcp.Request) (mcp.Result, error) {
+		if method != "tools/call" {
+			// The wrapper's own look at the server's tools: this one lists none.
+			return &mcp.ListToolsResult{}, nil
+		}
+		return next()
+	})
 	return handler(context.Background(), "tools/call", request)
 }
 
@@ -769,7 +784,7 @@ func TestAListingOverrulesWhatWasRegistered(t *testing.T) {
 	if w.description("search_orders") == "" || w.description("files") != "Lists files." {
 		t.Fatalf("before any listing: %q and %q", w.description("search_orders"), w.description("files"))
 	}
-	w.noteList(&mcp.ListToolsResult{Tools: []*mcp.Tool{{Name: "search_orders", Description: "Finds orders."}, {Name: "files"}}})
+	w.describe([]*mcp.Tool{{Name: "search_orders", Description: "Finds orders."}, {Name: "files"}})
 	if w.description("search_orders") != "Finds orders." || w.description("files") != "" {
 		t.Errorf("after the listing: %q and %q", w.description("search_orders"), w.description("files"))
 	}
@@ -1288,7 +1303,7 @@ func TestAnErrorTextMadeValidIsCountedTwice(t *testing.T) {
 	text := strings.Repeat("\xff", 2_048)
 	result := &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: text}}}
 	h := newHarness(t, nil, lsquare.Options{})
-	how := newInstrumented(bridgeOf(h.client), nil).outcomeOf(context.Background(), &running{inputs: true, results: true}, result, nil, false)
+	how := newInstrumented(bridgeOf(h.client), nil).outcomeOf(&running{inputs: true, results: true}, result, nil, false)
 	if held := int64(how.text) + planResult(result).size; held < 2*3*2_048 {
 		t.Errorf("room for %d bytes, for two texts of %d", held, 3*2_048)
 	}

@@ -58,6 +58,10 @@ func publicEvent(event *jsonv.Object, limited bool) *Event {
 		Status:             textOf(event, "status"),
 		LimitedDiagnostics: limited || textOf(event, "identity") == "failed",
 		Round:              textOf(event, "round"),
+		SessionID:          textOf(event, "sessionId"),
+		SessionSource:      textOf(event, "sessionSource"),
+		Extra:              textOf(event, "extra"),
+		Intent:             textOf(event, "intent"),
 		ToolDescription:    textOf(event, "toolDescription"),
 		ServerInstructions: textOf(event, "serverInstructions"),
 		Client:             namedOf(event, "client"),
@@ -180,6 +184,9 @@ func hookOutput(event *Event) *jsonv.Object {
 	}
 	if event.ProtocolVersion != "" {
 		out.Set("protocolVersion", jsonv.ValidString(event.ProtocolVersion))
+	}
+	if event.Intent != "" {
+		out.Set("intent", jsonv.ValidString(event.Intent))
 	}
 	if event.ToolDescription != "" {
 		out.Set("toolDescription", jsonv.ValidString(event.ToolDescription))

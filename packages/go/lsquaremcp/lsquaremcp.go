@@ -16,7 +16,10 @@
 // Each call that reaches the middleware becomes one event: the tool and its description, the
 // server's instructions, the arguments, the result, how it ended and how long it took, and who
 // it was for. The tool runs
-// unchanged, and its reply or error goes back as it came. Before the tool, the wrapper reads the
+// unchanged, and its reply or error goes back as it came, but for what the extras do (see Extras):
+// a tool whose listed schema refuses the inputs it doesn't name takes two more, session_id and
+// intent, which never reach its handler, and its result may end with a line giving the agent a
+// task ID. Before the tool, the wrapper reads the
 // call (its tool, the calling app, the protocol version), copies its arguments when they are
 // recorded, and asks the Choice functions; as the tool returns, it reads how the call ended and
 // notes what the result holds, without waiting on anything; the event is built from there, in a
@@ -44,6 +47,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"os"
 	"reflect"
 	"regexp"
 	"runtime"
@@ -123,6 +127,11 @@ type Options struct {
 	// server that tells different clients different things should set it, or turn Instructions
 	// off.
 	ServerInstructions string
+
+	// Extras turns off, each by itself, what the wrapper adds to the server's tools: the
+	// session_id and intent inputs, and the get_more_tools tool. The zero value leaves all three
+	// on, for the tools whose listed schema refuses the inputs it doesn't name.
+	Extras Extras
 }
 
 // Choice says which tools something is recorded for: a function that is asked once per call,
@@ -144,7 +153,8 @@ func Off(toolName string) bool { return false }
 type Call struct {
 	ToolName string
 	// Arguments are the arguments as the client sent them, before the SDK checked them: a copy
-	// of them all, whatever their size, made before the tool runs.
+	// of them all, whatever their size, made before the tool runs. They are without the
+	// session_id and intent the wrapper takes out of a call, as the tool gets them.
 	Arguments json.RawMessage
 	// Header is the HTTP request's header, over Streamable HTTP; nil on other transports, the
 	// older SSE one included.
@@ -187,6 +197,10 @@ type instrumented struct {
 	seeded bool
 	// What each connection was told.
 	connections *connections
+
+	extras Extras
+	// The tools the server has listed: under mu.
+	catalog catalog
 }
 
 // connections is what each connection was told as it was set up: the protocol version its
@@ -204,6 +218,8 @@ type told struct {
 	// them: an answer without instructions says there are none.
 	instructions string
 	answered     bool
+	// The ID the wrapper gave the connection, to group its calls by: made on its first call.
+	id string
 }
 
 // note changes what is known of a connection.
@@ -281,6 +297,7 @@ func newInstrumented(client bridge.Client, options *Options) *instrumented {
 	if options != nil {
 		w.options = *options
 	}
+	w.extras = w.options.Extras
 	for _, tool := range w.options.Tools {
 		if tool != nil && tool.Name != "" && tool.Description != "" {
 			w.registered[tool.Name] = tool.Description
@@ -312,11 +329,7 @@ func (w *instrumented) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 		case "tools/call":
 			return w.onCall(ctx, next, method, request)
 		case "tools/list":
-			result, err := next(ctx, method, request)
-			if err == nil {
-				w.quietly(func() { w.noteList(result) })
-			}
-			return result, err
+			return w.onList(ctx, next, method, request)
 		case "initialize":
 			result, err := next(ctx, method, request)
 			if err == nil {
@@ -348,16 +361,12 @@ func (w *instrumented) quietly(step func()) {
 	step()
 }
 
-// noteList notes the description of each tool on a page the server lists: the listing is what
+// describe notes the description of each tool the server lists: the listing is what
 // agents see, so it also overrules what the tool was registered with.
-func (w *instrumented) noteList(result mcp.Result) {
-	page, ok := result.(*mcp.ListToolsResult)
-	if !ok || page == nil {
-		return
-	}
+func (w *instrumented) describe(tools []*mcp.Tool) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, tool := range page.Tools {
+	for _, tool := range tools {
 		if tool == nil || tool.Name == "" {
 			continue
 		}
@@ -504,7 +513,27 @@ type running struct {
 	deadline time.Time
 	// Stops Identify at that deadline, whatever the building of the event is doing by then.
 	expiry *time.Timer
+
+	// What the tool leaves to the wrapper, as its listing says: nil for a tool that is left
+	// alone. The arguments above are the call's without it.
+	takes *plan
+	// A session ID the agent sent, in the right format, and why it made the call.
+	sent, intent string
+	// The ID the transport gave the call's connection, if it gave one, and the ID its calls are
+	// grouped by, if they are: see connection.
+	transport, connection string
+	// The session the call belongs to, once settled.
+	session *session
+	settled bool
+	// The wrapper answered the call itself (get_more_tools), and refused its arguments.
+	answered, refused bool
+	// The request was cancelled before the tool returned.
+	cancelled bool
 }
+
+// session is the session a call is grouped into, and where its ID came from: the agent sent it,
+// the wrapper issued it with this call, or it is the connection's.
+type session struct{ id, source string }
 
 // stop ends Identify: at its deadline, or once nothing waits for its answer.
 func (call *running) stop() {
@@ -525,41 +554,233 @@ type identified struct {
 	at time.Time
 }
 
-// onCall is one tools/call. The tool runs unchanged and its reply goes back as it came; the
-// event is built after it returns. If the tool panics, the panic goes on as it would have.
-func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, method string, request mcp.Request) (result mcp.Result, err error) {
-	// After Shutdown nothing is recorded, so nothing is read either.
-	if w.client.Closed() {
+// onCall is one tools/call. The tool runs unchanged, and its reply goes back as it came, but for
+// what the extras do for a tool whose listing says they can: session_id and intent are taken out
+// of the call before the SDK checks it, in a copy of the request, and the reply may end with a
+// line that gives the agent a task ID. The event is built after the tool returns. If the tool
+// panics, the panic goes on as it would have.
+func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, method string, request mcp.Request) (mcp.Result, error) {
+	arrived := time.Now()
+	typed, _ := request.(*mcp.CallToolRequest)
+	if typed == nil || typed.Params == nil {
 		return next(ctx, method, request)
+	}
+	// Also after Shutdown: a tool that was listed with the inputs still gets calls with them.
+	took, forward, takes := w.prepare(ctx, next, typed)
+	// After Shutdown nothing is recorded, so nothing else is read, and nothing is answered.
+	if w.client.Closed() {
+		return next(ctx, method, forward)
+	}
+	// A call to get_more_tools, which the wrapper may answer: until the server has said it has
+	// no such tool, the call is the server's, as it came.
+	answers := takes != nil && takes.answers
+	if answers {
+		takes = nil
 	}
 	var call *running
-	w.quietly(func() { call = w.start(ctx, request) })
+	w.quietly(func() { call = w.start(ctx, typed, arrived, took, takes) })
 	if call == nil {
-		return next(ctx, method, request)
+		return next(ctx, method, forward)
 	}
-	returned := false
-	defer func() {
-		// Also on a panic of the tool's, which this doesn't stop.
-		took := time.Since(call.started)
-		// Identify's second starts now, before anything of the result is read, and ends on its own.
+	dispatch := func() (mcp.Result, error) { return next(ctx, method, forward) }
+	if answers && call.inputs {
+		dispatch = func() (mcp.Result, error) {
+			// The server first: a tool of its own under that name, listed or not, is the one
+			// that answers. Only what the SDK says of a tool it doesn't have is the wrapper's to
+			// answer, and only where what the agent asks for is recorded.
+			result, err := next(ctx, method, forward)
+			if !unknownTool(err) {
+				return result, err
+			}
+			sessions := !w.extras.DisableSessions
+			need := takeInputs(typed.Params.Arguments, sessions, false)
+			reply := answer(need.arguments, typed.Session)
+			call.takes, call.sent = &plan{read: true, sessions: sessions, answers: true}, need.sessionID
+			call.arguments, call.copied = bytes.Clone(need.arguments), true
+			call.answered, call.refused = true, reply.IsError
+			return reply, nil
+		}
+	}
+	var (
+		result mcp.Result
+		err    error
+		lasted time.Duration
+		ended  bool
+	)
+	// The call ends when the tool returns, or panics: how long it took, whether it was cancelled
+	// by then, and Identify's second are all counted from here, before anything of the result is
+	// read or added to.
+	end := func() {
+		lasted, ended = time.Since(call.started), true
+		call.cancelled = ctx.Err() != nil
 		call.deadline = time.Now().Add(identifyWait)
 		if call.cancel != nil {
 			call.expiry = time.AfterFunc(identifyWait, call.cancel)
 		}
-		w.quietly(func() { w.finish(ctx, call, result, err, !returned, took) })
+	}
+	defer func() {
+		panicked := !ended
+		if panicked {
+			end()
+		}
+		// The tool's own result: the task ID line, if the reply has one, isn't the tool's.
+		w.quietly(func() { w.finish(call, result, err, panicked, lasted) })
 	}()
-	result, err = next(ctx, method, request)
-	returned = true
-	return result, err
+	result, err = dispatch()
+	end()
+	reply := result
+	w.quietly(func() {
+		if issued := w.issue(call, result, err); issued != nil {
+			reply = issued
+		}
+	})
+	return reply, err
 }
 
-// start reads the call as it arrives. Nil: it isn't a tools/call the wrapper can read.
-func (w *instrumented) start(ctx context.Context, request mcp.Request) *running {
-	typed, ok := request.(*mcp.CallToolRequest)
-	if !ok || typed == nil || typed.Params == nil {
+// prepare takes what the call's tool leaves to the wrapper out of its arguments, and returns the
+// request to pass on: the call's own, unless something was taken out, and then a copy whose
+// arguments are its own. When the wrapper hasn't seen the server's whole tool listing, it reads
+// it first (see discover). Whatever goes wrong, the call goes on as it came.
+func (w *instrumented) prepare(ctx context.Context, next mcp.MethodHandler, request *mcp.CallToolRequest) (took taken, forward mcp.Request, takes *plan) {
+	unchanged := func() { took, forward, takes = taken{arguments: request.Params.Arguments}, request, nil }
+	unchanged()
+	if !w.extras.any() {
+		return
+	}
+	defer func() {
+		if recover() != nil {
+			unchanged()
+		}
+	}()
+	name := request.Params.Name
+	entry := w.planOf(name)
+	if entry == nil {
+		// Also after Shutdown: an agent that was listed the inputs still sends them.
+		w.discover(ctx, next, request.Session, request.Extra, request.Params.Meta)
+		entry = w.planOf(name)
+	}
+	if entry == nil && name == missingTools && w.offers() {
+		// The wrapper's own, which it answers if the server has none: the call goes to the
+		// server as it came.
+		takes = &plan{read: true, answers: true}
+		return
+	}
+	if entry == nil || (!entry.sessions && !entry.intents) {
+		return
+	}
+	takes = entry
+	if took = takeInputs(request.Params.Arguments, entry.sessions, entry.intents); took.cut {
+		forward = withArguments(request, took.arguments)
+	}
+	return
+}
+
+// unknownTool reports whether err is what the MCP SDK answers a call to a tool the server
+// doesn't have.
+func unknownTool(err error) bool {
+	wire, ok := err.(*jsonrpc.Error)
+	// As the SDK writes it, with nothing more: an error with data of its own is the app's.
+	return ok && wire != nil && wire.Code == jsonrpc.CodeInvalidParams && len(wire.Data) == 0 && wire.Message == `unknown tool "`+missingTools+`"`
+}
+
+// clientNamedSessions reports whether the MCP SDK was told to take a client's word for its
+// session's ID on a server that keeps no sessions (MCPGODEBUG=allowsessionsinstateless=1, read
+// as the SDK reads it): such an ID is whatever the client sent, so calls aren't grouped by it.
+var clientNamedSessions = func() bool {
+	value := ""
+	for setting := range strings.SplitSeq(os.Getenv("MCPGODEBUG"), ",") {
+		if key, is, ok := strings.Cut(setting, "="); ok && strings.TrimSpace(key) == "allowsessionsinstateless" {
+			value = strings.TrimSpace(is)
+		}
+	}
+	return value == "1"
+}()
+
+// connection is what the transport says of the call's connection. transport is the ID it gave
+// the connection, if it gave one: a Streamable HTTP session's. grouped is the ID the connection's
+// calls are grouped by: that one, when the server issued it, or, on a connection that has none
+// (stdio, the older SSE transport, an in-memory one), an ID the wrapper gives it with its first
+// call. Both are empty on protocol 2026-07-28 and later, which has no sessions, and grouped is
+// over HTTP on a server that keeps none.
+func (w *instrumented) connection(request *mcp.CallToolRequest, version string) (transport, grouped string) {
+	if sessionless(version) || request.Session == nil {
+		return "", ""
+	}
+	overHTTP := request.Extra != nil && request.Extra.Header != nil
+	if transport = request.Session.ID(); transport != "" {
+		// A request can't say whether its server keeps sessions: where the SDK takes a client's
+		// word for the ID, no HTTP session's is trusted.
+		if overHTTP && clientNamedSessions {
+			return transport, ""
+		}
+		return transport, transport
+	}
+	if overHTTP {
+		return "", ""
+	}
+	w.connections.note(request.Session, func(known *told) {
+		if known.id == "" {
+			known.id = core.NewUUID()
+		}
+		grouped = known.id
+	})
+	return "", grouped
+}
+
+// settle decides which session the call belongs to: the one whose ID the agent sent; else its
+// connection's, as a hash of its ID, which can be a live handle to the session. The connection's
+// own ID, sent back, is still that session, and never leaves as it is.
+func (w *instrumented) settle(call *running) {
+	if call.settled {
+		return
+	}
+	call.settled = true
+	if w.extras.DisableSessions {
+		return
+	}
+	sent := call.sent
+	if sent != "" && sent == call.transport {
+		sent = ""
+	}
+	if sent != "" {
+		call.session = &session{sent, "sent"}
+	} else if call.connection != "" {
+		call.session = &session{sessionHash(call.connection), "protocol"}
+	}
+}
+
+// issue gives the agent a new session ID for a call that has no session, in a text block at the
+// end of a copy of the result: the result itself is never changed. Nil: the reply is the result.
+// Only a tool that leaves session_id to the wrapper gets one, and only on a result that says
+// something and isn't an error: an error result can be the SDK's own, for arguments it refused,
+// which nothing tells from the tool's. A cancelled call and a round that asks the client for
+// more get none either.
+func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Result {
+	w.settle(call)
+	if w.extras.DisableSessions || call.session != nil || err != nil || call.cancelled || call.takes == nil || !call.takes.sessions {
 		return nil
 	}
-	now := time.Now()
+	// Shut down while the tool ran: the call's event is lost, and so would its task be.
+	if w.client.Ended() {
+		return nil
+	}
+	typed, _ := result.(*mcp.CallToolResult)
+	if typed == nil || typed.IsError || len(typed.Content) == 0 || typed.NeedsInput() || typed.InputRequests != nil {
+		return nil
+	}
+	id := newSessionID()
+	reply := *typed
+	// A list of its own: the tool's may have room at its end, which the tool still owns.
+	reply.Content = slices.Concat(typed.Content, []mcp.Content{&mcp.TextContent{Text: idLine(id)}})
+	// The SDK adds to a reply's metadata as it sends it.
+	reply.Meta = maps.Clone(typed.Meta)
+	call.session = &session{id, "issued"}
+	return &reply
+}
+
+// start reads the call as it arrives. took is its arguments without what its tool leaves to the
+// wrapper, which is what the event and Identify get.
+func (w *instrumented) start(ctx context.Context, typed *mcp.CallToolRequest, now time.Time, took taken, takes *plan) *running {
 	toolName := typed.Params.Name
 	call := &running{
 		callID:     core.NewUUID(),
@@ -573,6 +794,16 @@ func (w *instrumented) start(ctx context.Context, request mcp.Request) *running 
 		continued: typed.Params.InputResponses != nil || typed.Params.RequestState != "",
 		protocol:  w.protocolVersion(typed),
 		client:    clientOf(typed),
+		takes:     takes,
+		sent:      took.sessionID,
+		intent:    took.intent,
+	}
+	// The connection's own ID is known whatever the extras: it is kept out of the event either
+	// way. Calls are grouped by it only with sessions on.
+	transport, grouped := w.connection(typed, call.protocol)
+	call.transport = transport
+	if !w.extras.DisableSessions {
+		call.connection = grouped
 	}
 	if w.choose(w.options.Descriptions, "Descriptions", toolName) {
 		call.description = w.description(toolName)
@@ -583,12 +814,19 @@ func (w *instrumented) start(ctx context.Context, request mcp.Request) *running 
 	if call.inputs {
 		// As the client sent them: the tool may change its own. Arguments larger than an event can
 		// hold aren't copied before the call is admitted, as the tool returns.
-		call.arguments = typed.Params.Arguments
-		if len(call.arguments) <= core.DefaultMaxEventBytes {
-			call.arguments, call.copied = bytes.Clone(call.arguments), true
+		// A copy of the event's own: the request passed on is the app's to change.
+		switch {
+		case len(took.arguments) <= core.DefaultMaxEventBytes:
+			call.arguments, call.copied = bytes.Clone(took.arguments), true
+		case took.cut:
+			// Too large to copy before the call is admitted: the copy that was passed on is
+			// copied then, as the tool left it.
+			call.arguments = took.arguments
+		default:
+			call.arguments = typed.Params.Arguments
 		}
 	}
-	w.identify(ctx, call, typed)
+	w.identify(ctx, call, typed, took.arguments)
 	return call
 }
 
@@ -633,7 +871,7 @@ func clientOf(request *mcp.CallToolRequest) *jsonv.Object {
 }
 
 // identify starts Identify, alongside the tool, with a copy of the call: nothing the tool holds.
-func (w *instrumented) identify(ctx context.Context, call *running, request *mcp.CallToolRequest) {
+func (w *instrumented) identify(ctx context.Context, call *running, request *mcp.CallToolRequest, arguments []byte) {
 	hook := w.options.Identify
 	if hook == nil {
 		return
@@ -653,7 +891,7 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 			release()
 		}
 	}()
-	input := Call{ToolName: call.toolName, Arguments: bytes.Clone(request.Params.Arguments)}
+	input := Call{ToolName: call.toolName, Arguments: bytes.Clone(arguments)}
 	if request.Session != nil {
 		input.SessionID = request.Session.ID()
 	}
@@ -738,7 +976,7 @@ type outcome struct {
 
 // finish reads how the call ended, and hands the rest to a goroutine of its own: nothing below
 // waits on Identify or the network before the reply goes out.
-func (w *instrumented) finish(ctx context.Context, call *running, result mcp.Result, err error, panicked bool, took time.Duration) {
+func (w *instrumented) finish(call *running, result mcp.Result, err error, panicked bool, took time.Duration) {
 	// Whatever fails here, Identify is told to stop: nothing would wait for its answer.
 	handed := false
 	defer func() {
@@ -746,11 +984,14 @@ func (w *instrumented) finish(ctx context.Context, call *running, result mcp.Res
 			call.stop()
 		}
 	}()
+	// Also when the tool panicked, or the reply couldn't be read: the session a call belongs to
+	// doesn't depend on how it ended.
+	w.settle(call)
 	typed, _ := result.(*mcp.CallToolResult)
-	how := w.outcomeOf(ctx, call, typed, err, panicked)
+	how := w.outcomeOf(call, typed, err, panicked)
 	// Room is taken before anything of the call is kept, and tracked before the reply: a Flush
 	// right after it waits for this call's event.
-	held := int64(len(call.arguments)) + int64(how.text)
+	held := int64(len(call.arguments)) + int64(len(call.intent)) + int64(how.text)
 	var plan resultPlan
 	if how.recorded {
 		plan = planResult(typed)
@@ -770,6 +1011,7 @@ func (w *instrumented) finish(ctx context.Context, call *running, result mcp.Res
 	if !call.copied {
 		call.arguments, call.copied = bytes.Clone(call.arguments), true
 	}
+
 	if how.recorded {
 		how.result = takeResult(typed, plan)
 	}
@@ -811,7 +1053,7 @@ func errorType(err error) (string, bool) {
 //
 // The error is read as the MCP SDK reads it to write its reply: a JSON-RPC error by its fields,
 // any other by errors.As and, when its text is recorded, one call of Error.
-func (w *instrumented) outcomeOf(ctx context.Context, call *running, result *mcp.CallToolResult, err error, panicked bool) outcome {
+func (w *instrumented) outcomeOf(call *running, result *mcp.CallToolResult, err error, panicked bool) outcome {
 	how := outcome{status: "completed"}
 	fail := func(category string) *jsonv.Object {
 		how.status = "error"
@@ -824,7 +1066,7 @@ func (w *instrumented) outcomeOf(ctx context.Context, call *running, result *mcp
 	} else if call.continued {
 		how.round = "continuation"
 	}
-	if ctx.Err() != nil {
+	if call.cancelled {
 		// The SDK's own sentence, which quotes nothing.
 		fail("timeout").Set("message", "The request was cancelled before the tool finished.")
 		return how
@@ -876,7 +1118,12 @@ func (w *instrumented) outcomeOf(ctx context.Context, call *running, result *mcp
 	}
 	how.recorded = call.results
 	if result.IsError {
-		failure := fail("tool_error")
+		category := "tool_error"
+		if call.refused {
+			// The wrapper's own get_more_tools refuses arguments as the SDK does.
+			category = "protocol"
+		}
+		failure := fail(category)
 		how.recorded = errorText(call)
 		if how.recorded {
 			if text, index, ok := firstText(result.Content); ok {
@@ -1534,12 +1781,24 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 	if call.protocol != "" {
 		record.Set("protocolVersion", jsonv.ValidString(call.protocol))
 	}
-	if call.description != "" {
+	if call.session != nil {
+		record.Set("sessionId", call.session.id)
+		record.Set("sessionSource", call.session.source)
+	}
+	// Recorded whether or not inputs are: turning the extra off is what stops it.
+	if call.intent != "" {
+		record.Set("intent", jsonv.ValidString(masked(call.intent, call.transport).(string)))
+	}
+	// The wrapper's own tool has the wrapper's description, which says nothing of the server.
+	if call.description != "" && !call.answered {
 		record.Set("toolDescription", jsonv.ValidString(call.description))
 	}
 	if call.instructions != "" {
 		// Valid UTF-8 already: made so once, as they were noted.
 		record.Set("serverInstructions", call.instructions)
+	}
+	if call.answered {
+		record.Set("extra", "missing_tools")
 	}
 	if call.inputs {
 		holder := jsonv.NewObject()
@@ -1548,7 +1807,7 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 			if err != nil {
 				arguments = jsonv.NotJSON{}
 			}
-			holder.Set("value", arguments)
+			holder.Set("value", masked(arguments, call.transport))
 		}
 		record.Set("input", holder)
 	}
@@ -1569,4 +1828,29 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 		record.Set("result", holder)
 	}
 	w.client.Record(record, diagnostic)
+}
+
+// masked is a call's input, or its intent, without the ID of the connection it came on: that ID
+// is a live handle to the session, so wherever a text repeats it, the event has its hash, as it
+// does for the session. Only what a text says changes: no key, and nothing of the JSON.
+func masked(value jsonv.Value, id string) jsonv.Value {
+	if id == "" {
+		return value
+	}
+	switch v := value.(type) {
+	case string:
+		if strings.Contains(v, id) {
+			return strings.ReplaceAll(v, id, sessionHash(id))
+		}
+	case []jsonv.Value:
+		for i, item := range v {
+			v[i] = masked(item, id)
+		}
+	case *jsonv.Object:
+		for _, key := range slices.Clone(v.Keys()) {
+			item, _ := v.Get(key)
+			v.Set(key, masked(item, id))
+		}
+	}
+	return value
 }

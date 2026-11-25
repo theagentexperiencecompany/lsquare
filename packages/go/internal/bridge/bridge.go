@@ -18,8 +18,11 @@ type Report struct {
 type Client interface {
 	// Enabled reports whether the client records anything: false without an API key, outside dry run.
 	Enabled() bool
-	// Closed reports whether Shutdown was called.
+	// Closed reports whether Shutdown was called, as a call arrives: the call then runs
+	// unrecorded, which is reported once.
 	Closed() bool
+	// Ended reports whether Shutdown was called, and reports nothing.
+	Ended() bool
 	// Record builds a call's event from its record (see core.BuildCall) and queues it. diagnostic,
 	// if any, is reported once the event is admitted, before anything else about it.
 	Record(record *jsonv.Object, diagnostic *Report)

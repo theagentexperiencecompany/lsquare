@@ -212,9 +212,9 @@ func (e *Error) Error() string { return "lsquare: " + string(e.Code) + ": " + e.
 
 // Event is a tool call's event, as BeforeSend and OnError get it.
 //
-// BeforeSend may change ToolDescription, ServerInstructions, Client, Server, ProtocolVersion,
-// Input, Result, Error and Metadata. The other fields say which call this is and how it went:
-// changes to them are ignored.
+// BeforeSend may change Intent, ToolDescription, ServerInstructions, Client, Server,
+// ProtocolVersion, Input, Result, Error and Metadata. The other fields say which call this is
+// and how it went: changes to them are ignored.
 type Event struct {
 	// EventID is the event's ID, which is the call's.
 	EventID string
@@ -239,7 +239,16 @@ type Event struct {
 	// Round is "input_required" for a call that asked the client for input, "continuation" for
 	// the call that brought it, and empty for a call of one round.
 	Round string
+	// SessionID is the task the call belongs to, with the extras, and SessionSource where the ID
+	// came from: "sent" by the agent, "issued" with this call, or "protocol", the connection's.
+	SessionID     string
+	SessionSource string
+	// Extra is "missing_tools" for a call to the wrapper's own get_more_tools tool.
+	Extra string
 
+	// Intent is why the agent made the call, as it said in the intent input, cut at 500
+	// characters. Empty: the event has none, so BeforeSend takes it out by clearing it.
+	Intent string
 	// ToolDescription is the tool's description as agents were listed it, cut at 1,000 characters.
 	ToolDescription string
 	// ServerInstructions is the server's instructions as it gives them to clients, cut at 2,000

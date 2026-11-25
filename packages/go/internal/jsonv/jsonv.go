@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -497,17 +498,19 @@ func ValidString(text string) string {
 	if utf8.ValidString(text) {
 		return text
 	}
-	out := make([]byte, 0, len(text)+8)
+	var out strings.Builder
+	// At least as long: each byte that isn't valid becomes three.
+	out.Grow(len(text))
 	for i := 0; i < len(text); {
 		r, size := utf8.DecodeRuneInString(text[i:])
 		if r == utf8.RuneError && size == 1 {
-			out = append(out, "\uFFFD"...)
+			out.WriteString("\uFFFD")
 		} else {
-			out = append(out, text[i:i+size]...)
+			out.WriteString(text[i : i+size])
 		}
 		i += size
 	}
-	return string(out)
+	return out.String()
 }
 
 // Marshal writes the value as JavaScript's JSON.stringify does: compact, non-ASCII characters as

@@ -455,6 +455,12 @@ func (b bridged) Closed() bool {
 	return false
 }
 
+func (b bridged) Ended() bool {
+	b.c.mu.Lock()
+	defer b.c.mu.Unlock()
+	return b.c.closed || b.c.closing
+}
+
 func (b bridged) Record(record *jsonv.Object, diagnostic *bridge.Report) {
 	b.c.guard(func() { b.c.enqueue(record, diagnostic) })
 }
