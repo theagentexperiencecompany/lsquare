@@ -40,7 +40,7 @@ export interface V1Turn extends Checked {
 }
 
 /** The SDKs that send 0.2 events, by the language they are written in. */
-export type SdkLanguage = 'js' | 'python' | 'go'
+export type SdkLanguage = 'js' | 'python' | 'go' | 'rust'
 
 /** A 0.2 event: every ID is optional, except a call's tool. */
 interface V2Event extends Checked {
@@ -100,7 +100,7 @@ export const byteLength = (text: string): number => encoder.encode(text).length
 // Records, not lists, so the compiler fails if the types gain or lose a member; the SDKs' tests
 // check that theirs are these.
 const PATTERN_NAMES: Record<PatternName, true> = { email: true, phone: true, card: true, secret: true, ip: true }
-const SDK_LANGUAGES: Record<SdkLanguage, true> = { js: true, python: true, go: true }
+const SDK_LANGUAGES: Record<SdkLanguage, true> = { js: true, python: true, go: true, rust: true }
 const DROPPED_REASONS: Record<DroppedReason, true> = {
   wrong_type: true,
   not_json: true,
