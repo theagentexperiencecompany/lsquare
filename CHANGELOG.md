@@ -3,6 +3,35 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
+## Not released yet
+
+For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
+this heading. `@lsquare/node` doesn't change.
+
+**Before you upgrade:** on a server made with instructions, each tool call's event now carries
+them, so events are larger, by the instructions' length (up to 2,000 characters), and use more of a
+project's daily bytes. `instructions: false` (`instructions=False`) keeps events as they were. A
+server without instructions sends the same events as before.
+
+### Server instructions
+
+- **Each `tool_call` event has `serverInstructions`:** the instructions the server gives clients,
+  cut at 2,000 characters and redacted like any text. It tells you which wording of the
+  instructions a call was made under. `beforeSend` (`before_send`) gets it, and can change it or
+  take it out. A server made without instructions has none, and neither does a limited-diagnostics
+  event.
+- **They are read from the server as each call arrives,** on high-level and low-level servers
+  alike. They need no `initialize` or listing first, so a stateless server built per request has
+  them on every call. Every call carries them, whichever the tool, `get_more_tools` included.
+- **`instructions` turns it off,** with `false` (`False`).
+- **An event over 256 KB loses its server's instructions first,** then its tool's description: both
+  are the same on every call.
+
+### The contract
+
+- `@lsquare/contract` 0.1.9 checks that `serverInstructions` is a string, and the shared cases
+  cover it. An ingestion on an earlier contract stores it as it is, like any field it doesn't know.
+
 ## `lsquare` 0.2.3 on npm, `lsquare` 0.2.0b9 on PyPI
 
 **Before you upgrade:** each tool call's event now carries the tool's description, so events are

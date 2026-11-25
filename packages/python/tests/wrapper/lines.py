@@ -72,19 +72,19 @@ def client(**options: Any) -> tuple[LSquare, Events]:
     return LSquare(_transport=events, **options), events
 
 
-def high(name: str = "test") -> Any:
-    """The line's high-level server."""
+def high(name: str = "test", **options: Any) -> Any:
+    """The line's high-level server. `options`: its constructor's own, as `instructions`."""
     if LINE == "mcp1":
         from mcp.server.fastmcp import FastMCP
 
-        return FastMCP(name)
+        return FastMCP(name, **options)
     if LINE == "mcp2":
         from mcp.server.mcpserver import MCPServer
 
-        return MCPServer(name)
+        return MCPServer(name, **options)
     from fastmcp import FastMCP as Fast
 
-    return Fast(name)
+    return Fast(name, **options)
 
 
 def tool(app: Any, fn: Callable[..., Any], name: str | None = None, **options: Any) -> Any:
@@ -168,14 +168,15 @@ async def connect(app: Any, mode: str | None = None) -> AsyncIterator[Connection
         yield Connection(session)
 
 
-def low(name: str, tools: list[dict[str, Any]], call: Callable[..., Any]) -> Any:
+def low(name: str, tools: list[dict[str, Any]], call: Callable[..., Any], **options: Any) -> Any:
     """A low-level server listing `tools` (wire dicts) and answering calls with `call(name,
-    arguments)`, which returns content blocks as dicts, or a whole result dict."""
+    arguments)`, which returns content blocks as dicts, or a whole result dict. `options`: its
+    constructor's own, as `instructions`."""
     if MAJOR == 1:
         import mcp.types as types
         from mcp.server.lowlevel import Server
 
-        server: Any = Server(name)
+        server: Any = Server(name, **options)
 
         @server.list_tools()
         async def list_tools() -> list[Any]:
@@ -199,4 +200,4 @@ def low(name: str, tools: list[dict[str, Any]], call: Callable[..., Any]) -> Any
         out = await call(params.name, params.arguments or {})
         return mcp_types.CallToolResult.model_validate(out if isinstance(out, dict) else {"content": out})
 
-    return Low(name, on_list_tools=on_list_tools, on_call_tool=on_call_tool)
+    return Low(name, on_list_tools=on_list_tools, on_call_tool=on_call_tool, **options)

@@ -116,7 +116,9 @@ protocol version, and the IDs below. Results are sent by default, each string cu
 characters; turn inputs or results off everywhere, or for chosen tools, with `inputs` and `results`.
 The event also carries the tool's description as agents were listed it (`toolDescription`, cut at
 1,000 characters), so you can tell which wording a call was made under; `descriptions` turns that
-off the same way ([where it comes from](REFERENCE.md#tool-descriptions)).
+off the same way ([where it comes from](REFERENCE.md#tool-descriptions)). And it carries the
+instructions your server gives clients, when it has some (`serverInstructions`, cut at 2,000
+characters); `instructions: false` turns that off ([details](REFERENCE.md#server-instructions)).
 A failed call's text, in `error.message` and in an `isError` result, can quote what the tool was
 sent and what it would have returned, so it's recorded only with both on. The event still says how
 the call failed: `category`, `type` and `code`. A cancelled call's fixed sentence stays.
@@ -161,6 +163,7 @@ they're off unless you turn them on ([in the reference](REFERENCE.md#low-level-s
 | `inputs` | `true` | `false`, or `(toolName) => boolean`. Off for `get_more_tools`, the server doesn't get that tool |
 | `results` | `true` | `false`, or `(toolName) => boolean` |
 | `descriptions` | `true` | `false`, or `(toolName) => boolean`. On a low-level `Server`, a call has the description its instance last listed ([details](REFERENCE.md#tool-descriptions)) |
+| `instructions` | `true` | `false`: calls don't carry the server's instructions ([details](REFERENCE.md#server-instructions)) |
 | `extras` | all on (high-level), all off (low-level) | `{ sessions, intent, missingTools }`; one left out keeps its default. `false`: all off |
 | `waitUntil` | | The current request's `waitUntil`: each call's sending is handed to it ([serverless hosts](REFERENCE.md#serverless-hosts-and-frameworks)) |
 | `flushBeforeReply` | `false` | Wait for each call's event to be sent, up to `flushTimeoutMs`, before replying |
@@ -218,7 +221,7 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 ## What leaves your process
 
 - Strings in a call's `input` and `agent`, and in a turn, are cut at 16,000 characters, results at
-  4,000, a tool's description at 1,000 and `intent` at 500; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
+  4,000, a server's instructions at 2,000, a tool's description at 1,000 and `intent` at 500; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
   budget for reading strings is spent. Lists and objects keep their first
   100 entries, and nesting stops at 10 levels. Images, audio, binary resources and files sent as
   base64 text are kept as their size only.
@@ -226,13 +229,13 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   objects afterwards changes nothing. A getter that throws as it's read drops that event; inside a
   call, a top-level one drops that capture and the call goes without it, and one nested deeper
   drops the call's event. A call's arguments and result are read when its event is built.
-- An event still over 256 KB loses parts, biggest and least needed first: a call its tool's
-  description (the same on every call), then its result, then its
+- An event still over 256 KB loses parts, biggest and least needed first: a call its server's
+  instructions, then its tool's description (both the same on every call), then its result, then its
   input, then its agent's tool calls, then its agent part; a turn its tool calls, then its answer,
   question, verification and latency. The event's `truncated` field names what was shortened or left out.
 - Common formats of emails, phone numbers, card numbers, API keys and tokens, credentials in URLs,
   and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors,
-  intents, tool descriptions and agent details alike. Each pattern can be turned off: `redact: { ip: false }`, or
+  intents, tool descriptions, server instructions and agent details alike. Each pattern can be turned off: `redact: { ip: false }`, or
   `redact: false` for all.
 - Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole, in
   structured data and in JSON held in a string, such as a text block, an input or an error message:
@@ -265,6 +268,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
 - Turn results off for tools that return customer records: `results: (tool) => tool !== 'get_customer'`.
 - Tool descriptions are sent as you wrote them, redacted like any text. If one names an internal
   system you'd rather keep to yourself, leave it out: `descriptions: (tool) => tool !== 'admin_sql'`.
+- Your server's instructions are sent with each call, redacted like any text. To keep them to
+  yourself: `instructions: false`.
 - Use `redactKeys` for personal data in inputs and results, whether structured or JSON in a text
   block, and `beforeSend` for anything finer. To omit sensitive inputs or results, use `inputs` and
   `results`.

@@ -425,10 +425,187 @@ def test_an_event_too_large_loses_its_description_first() -> None:
     assert event["truncated"] == ["toolDescription"] and "toolDescription" not in event
 
 
+# The server's instructions.
+
+INSTRUCTIONS = "Search a customer's orders before you refund one. Never refund an order twice."
+
+
+def instructed() -> dict[str, Any]:
+    return call(
+        input={"value": {"q": "late orders"}},
+        intent="find late orders",
+        task={"id": "task_1", "status": "working"},
+        toolDescription=DESCRIPTION,
+        serverInstructions=INSTRUCTIONS,
+    ).event
+
+
+def test_a_call_carries_the_servers_instructions_as_given_after_its_tools_description() -> None:
+    event = instructed()
+    assert event["serverInstructions"] == INSTRUCTIONS and event["toolDescription"] == DESCRIPTION
+    assert "truncated" not in event and "dropped" not in event
+    # Python only: TypeScript's field order (see test_writes_the_event_in_typescripts_field_order).
+    keys = list(event)
+    assert keys[keys.index("intent") : keys.index("intent") + 4] == ["intent", "toolDescription", "serverInstructions", "task"]
+    # Without a description: where one would be.
+    alone = call(intent="find late orders", task={"id": "task_1", "status": "working"}, serverInstructions=INSTRUCTIONS).event
+    keys = list(alone)
+    assert keys[keys.index("intent") : keys.index("intent") + 3] == ["intent", "serverInstructions", "task"]
+    assert "serverInstructions" not in call().event
+
+
+def cut_instructions() -> dict[str, Any]:
+    return call(serverInstructions=prose(2_500)).event
+
+
+def test_instructions_are_cut_at_2000_characters_and_named_as_truncated() -> None:
+    event = cut_instructions()
+    assert event["serverInstructions"] == f"{prose(2_000)}…[+500 chars]"
+    assert event["truncated"] == ["serverInstructions"]
+    whole = call(serverInstructions=prose(2_000)).event
+    assert whole["serverInstructions"] == prose(2_000) and "truncated" not in whole
+    # Counted in code points, as every limit is.
+    assert call(serverInstructions="😀" * 2_001).event["serverInstructions"] == "😀" * 2_000 + "…[+1 chars]"
+
+
+def test_instructions_that_are_not_a_string_are_dropped_as_wrong_type() -> None:
+    event = call(serverInstructions=["Search first"]).event
+    assert "serverInstructions" not in event
+    assert event["dropped"] == {"serverInstructions": "wrong_type"}
+    assert "serverInstructions" not in call(serverInstructions=None).event
+    assert "dropped" not in call(serverInstructions=None).event
+
+
+def test_instructions_are_redacted_as_the_calls_other_text_is() -> None:
+    event = call(
+        serverInstructions="Mail ops@acme.io, or jane@acme.io, before you refund.",
+        toolDescription="Ask jane@acme.io for access, then search.",
+        input={"value": {"to": "jane@acme.io"}},
+    ).event
+    # Numbered in the event's order: the input, the description, then the instructions.
+    assert event["input"] == {"to": "[EMAIL_1]"}
+    assert event["toolDescription"] == "Ask [EMAIL_1] for access, then search."
+    assert event["serverInstructions"] == "Mail [EMAIL_2], or [EMAIL_1], before you refund."
+    assert event["redactions"] == {"email": 4}
+
+
+def test_limited_diagnostics_never_carry_the_instructions() -> None:
+    assert "serverInstructions" not in failed(serverInstructions=INSTRUCTIONS).event
+    assert failed(serverInstructions=INSTRUCTIONS).event == failed().event
+    # Nor ones a hook adds, or leaves in.
+    pending = failed(True, serverInstructions=INSTRUCTIONS)
+    assert pending.event["serverInstructions"] == INSTRUCTIONS
+    finished = after_hook({**pending.event, "serverInstructions": "added"}, pending, CONTEXT)
+    assert isinstance(finished, BuiltOk)
+    assert "serverInstructions" not in finished.draft.event and finished.draft.event["identity"] == "failed"
+
+
+def test_before_send_sees_the_instructions_and_can_change_them_or_remove_them() -> None:
+    pending = call(True, serverInstructions="Ask jane@acme.io before you refund.", input={"value": {"q": 1}})
+    # Not redacted yet: the hook sees the text.
+    assert pending.event["serverInstructions"] == "Ask jane@acme.io before you refund."
+    kept = after_hook(dict(pending.event), pending, CONTEXT)
+    assert isinstance(kept, BuiltOk) and kept.draft.event["serverInstructions"] == "Ask [EMAIL_1] before you refund."
+
+    pending = call(True, serverInstructions=INSTRUCTIONS)
+    changed = after_hook({**pending.event, "serverInstructions": prose(2_200)}, pending, CONTEXT)
+    assert isinstance(changed, BuiltOk)
+    assert changed.draft.event["serverInstructions"] == f"{prose(2_000)}…[+200 chars]"
+    assert changed.draft.event["truncated"] == ["serverInstructions"]
+
+    # Cut before the hook, and returned as it got them: they stay as they are.
+    pending = call(True, serverInstructions=prose(2_500))
+    assert pending.event["serverInstructions"] == f"{prose(2_000)}…[+500 chars]"
+    same = after_hook(dict(pending.event), pending, CONTEXT)
+    assert isinstance(same, BuiltOk)
+    assert same.draft.event["serverInstructions"] == f"{prose(2_000)}…[+500 chars]"
+    assert same.draft.event["truncated"] == ["serverInstructions"]
+
+    pending = call(True, serverInstructions=INSTRUCTIONS)
+    removed = after_hook({key: value for key, value in pending.event.items() if key != "serverInstructions"}, pending, CONTEXT)
+    assert isinstance(removed, BuiltOk) and "serverInstructions" not in removed.draft.event
+
+    # A hook can add them to an event that had none.
+    pending = call(True)
+    added = after_hook({**pending.event, "serverInstructions": "Ask jane@acme.io first."}, pending, CONTEXT)
+    assert isinstance(added, BuiltOk) and added.draft.event["serverInstructions"] == "Ask [EMAIL_1] first."
+
+    pending = call(True, serverInstructions=INSTRUCTIONS)
+    wrong = after_hook({**pending.event, "serverInstructions": 7}, pending, CONTEXT)
+    assert isinstance(wrong, BuiltOk) and "serverInstructions" not in wrong.draft.event
+    assert wrong.draft.event["dropped"] == {"beforeSend.serverInstructions": "wrong_type"}
+
+
+def test_the_instructions_are_shaped_last_after_the_description_so_they_never_take_scan_budget_from_it() -> None:
+    # Instructions far past the budget: the input, the result and the description are read first, whole.
+    rows = {"rows": [prose(900) for _ in range(40)]}
+    result = {"content": [{"type": "text", "text": prose(3_000)}]}
+    without = call(input={"value": rows}, result={"value": result}, toolDescription=DESCRIPTION).event
+    with_them = call(input={"value": rows}, result={"value": result}, toolDescription=DESCRIPTION, serverInstructions=prose(1_200_000)).event
+    assert with_them["input"] == without["input"] == rows
+    assert with_them["result"] == without["result"] == result
+    assert with_them["toolDescription"] == without["toolDescription"] == DESCRIPTION
+    assert "truncated" not in without
+    # Counting what was cut would use the budget up: marked as cut, without a count.
+    assert with_them["serverInstructions"] == f"{prose(2_000)}…[cut]"
+    assert with_them["truncated"] == ["serverInstructions"]
+
+    # A description that uses the budget up leaves none for the instructions.
+    spent = call(toolDescription=prose(1_200_000), serverInstructions=INSTRUCTIONS).event
+    assert spent["toolDescription"] == f"{prose(1_000)}…[cut]" and spent["serverInstructions"] == "…[cut]"
+    assert spent["truncated"] == ["toolDescription", "serverInstructions"]
+
+    # So does a result: everything else is as it would be without them.
+    big = {"content": [{"type": "text", "text": prose(1_200_000)}]}
+    without = call(input={"value": rows}, result={"value": big}, toolDescription=DESCRIPTION).event
+    with_them = call(input={"value": rows}, result={"value": big}, toolDescription=DESCRIPTION, serverInstructions=INSTRUCTIONS).event
+    assert with_them["serverInstructions"] == "…[cut]"
+    assert with_them["truncated"] == ["result", "toolDescription", "serverInstructions"]
+    assert without["truncated"] == ["result", "toolDescription"]
+    rest = {key: value for key, value in with_them.items() if key not in ("serverInstructions", "truncated")}
+    assert rest == {key: value for key, value in without.items() if key != "truncated"}
+
+
+def test_an_event_too_large_loses_its_instructions_first_then_its_description() -> None:
+    def built(max_bytes: int, **over: Any) -> dict[str, Any]:
+        context = Context(sdk=CONTEXT.sdk, patterns=CONTEXT.patterns, redact_keys=[], max_event_bytes=max_bytes)
+        made = build_call(record(**over), context, False)
+        assert isinstance(made, BuiltOk), made
+        return made.draft.event
+
+    values: dict[str, Any] = {
+        "input": {"value": {"q": prose(600)}},
+        "result": {"value": {"content": [{"type": "text", "text": prose(600)}]}},
+        "agent": {"question": prose(600)},
+        "toolDescription": prose(600),
+        "serverInstructions": prose(600),
+    }
+    whole = built(256 * 1024, **values)
+    size = len(dumps(whole).encode("utf-8"))
+    assert size > 3_000 and "truncated" not in whole
+    # Just under its size: the instructions are left out, and nothing else.
+    event = built(size - 1, **values)
+    assert event["truncated"] == ["serverInstructions"] and "serverInstructions" not in event
+    rest = {key: value for key, value in whole.items() if key != "serverInstructions"}
+    assert {key: value for key, value in event.items() if key != "truncated"} == rest
+    # Smaller: then the description, and only then what is the call's own, in the order it always went.
+    event = built(size - 700, **values)
+    assert event["truncated"] == ["serverInstructions", "toolDescription"]
+    assert event["result"] == whole["result"] and event["input"] == whole["input"]
+    event = built(1_100, **values)
+    assert event["truncated"] == ["serverInstructions", "toolDescription", "result", "input"]
+    assert event["agent"] == whole["agent"] and len(dumps(event).encode("utf-8")) <= 1_100
+    # An event that fitted without instructions is never dropped for having them.
+    alone = len(dumps(built(256 * 1024)).encode("utf-8"))
+    event = built(alone + 40, serverInstructions=prose(600))
+    assert event["truncated"] == ["serverInstructions"] and "serverInstructions" not in event
+
+
 def test_the_ingestion_accepts_every_event() -> None:
     require_node()
     events = [
         outlined(), *errors(), call(agent=AGENT).event, oversized_call()[0], oversized_turn(), failed().event, reduced_after_hook(),
         described(), cut_description(), failed(toolDescription=DESCRIPTION).event,
+        instructed(), cut_instructions(), failed(serverInstructions=INSTRUCTIONS).event,
     ]  # fmt: skip
     assert ingestion(events) == ["valid"] * len(events)

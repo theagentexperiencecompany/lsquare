@@ -339,13 +339,15 @@ class _Watched:
         self.internal = internal
         self.waited: list[weakref.ref[concurrent.futures.Future[None]]] = []
         self.give_ups: list[Callable[[], None]] = []
+        #: While set, a wait ends after this long, as one whose request's deadline has come does.
+        self.cut_short: float | None = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.internal, name)
 
     async def wait(self, future: concurrent.futures.Future[None], timeout_s: float) -> None:
         self.waited.append(weakref.ref(future))
-        await self.internal.wait(future, timeout_s)
+        await self.internal.wait(future, timeout_s if self.cut_short is None else min(timeout_s, self.cut_short))
 
     def timer(self, delay_s: float, fn: Callable[[], None]) -> Callable[[], None]:
         self.give_ups.append(fn)
@@ -355,7 +357,10 @@ class _Watched:
 # A read kept each wait's waker until it was over, and after: a listing that won't stop when the
 # read is given up keeps the read, so every wait that ever ended on it stayed alive with it.
 async def test_waits_on_a_read_whose_listing_ignores_its_cancellation_keep_nothing_once_they_end(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(_lists, "WAIT_S", 0.05)
+    # Long enough that every wait below starts inside it, however slow the machine: a wait that
+    # starts after it doesn't wait at all, and with 0.05 s here a stalled runner let only 10 of the
+    # first 100 start in time. The first 100 are ended by the test instead (cut_short).
+    monkeypatch.setattr(_lists, "WAIT_S", 30.0)
     lsquare, _ = client()
     watched = _Watched(lsquare._lsquare_internal())
     lists = _lists.Lists()
@@ -375,14 +380,15 @@ async def test_waits_on_a_read_whose_listing_ignores_its_cancellation_keep_nothi
         return asyncio.gather(*(_lists.wait_once(lists, cast(Any, watched), _reader(stubborn), _lists.Wait()) for _ in range(count)))
 
     try:
-        # 100 calls in the first second (here 0.05 s) of the read: each times out, none woken.
+        # 100 calls in the first second of the read: each times out (here after 0.05 s), none woken.
+        watched.cut_short = 0.05
         assert set(await waits(100)) == {False}
         reading = lists.reading
         assert reading is not None and not reading.over and len(watched.waited) == 100
         assert await acollected(*watched.waited)
         # 100 more, with all the time they need, are woken as the read is given up, its task asked
         # to cancel, which it ignores.
-        monkeypatch.setattr(_lists, "WAIT_S", 30.0)
+        watched.cut_short = None
         waiting = waits(100)
         for _ in range(500):
             if len(watched.waited) == 200:
