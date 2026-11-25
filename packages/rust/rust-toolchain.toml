@@ -1,0 +1,8 @@
+# The toolchain this package is built, checked and tested with, here and in CI, so that a new
+# Rust's lints don't fail a change that didn't cause them. Raised on purpose, with whatever its
+# clippy and rustfmt then ask for. The package itself builds from Rust 1.88 on (`rust-version` in
+# Cargo.toml, which is rmcp's).
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

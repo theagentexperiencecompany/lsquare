@@ -57,6 +57,30 @@ makes them fail instead. The tests find the contract in `packages/contract`, or 
 `LSQUARE_CONTRACT_DIR` says: a checkout's, with its sources (`src/validate.ts`), and with the
 TypeScript SDK's sources next to it in `lsquare/src`.
 
+## Rust
+
+The toolchain `packages/rust/rust-toolchain.toml` pins, which rustup installs, and Node 22.18+,
+24.11+ or 26+ with the root's `npm ci` done (the shared cases' events are checked by the
+contract's validator, and compared with what TypeScript writes):
+
+```sh
+cd packages/rust
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+`cargo test -- --nocapture` also prints how many shared cases give the expected event, and how
+many are written byte for byte as TypeScript writes them. The tests find the contract through
+`LSQUARE_CONTRACT_DIR` (`../contract` by default).
+
+One test makes 1,500 inputs and fails if any event differs from the one TypeScript writes for it.
+After a change to shaping or redaction, run it on more, from other seeds:
+
+```sh
+LSQUARE_GENERATED_CASES=20000 LSQUARE_GENERATED_SEED=7 cargo test generated_inputs -- --nocapture
+```
+
 ## Pull requests
 
 Pull requests go into `main`. CI runs the checks above, on the Node, Python and Go versions each

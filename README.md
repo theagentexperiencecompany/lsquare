@@ -9,11 +9,14 @@ to get an API key.
 | [`lsquare`](packages/lsquare) | TypeScript and JavaScript: Node 18+, Cloudflare Workers, Bun | `npm install lsquare` | [README](packages/lsquare/README.md), [reference](packages/lsquare/REFERENCE.md) |
 | [`lsquare`](packages/python) | Python 3.10+ | `pip install lsquare` | [README](packages/python/README.md), [reference](packages/python/REFERENCE.md) |
 | [`lsquare`](packages/go) | Go 1.25+, a first beta: MCP servers only | `go get github.com/theagentexperiencecompany/lsquare/packages/go` | [README](packages/go/README.md) |
+| [`lsquare`](packages/rust) | Rust 1.88+, a first beta: `rmcp` servers only | not on crates.io yet | [README](packages/rust/README.md) |
 | [`@lsquare/node`](packages/node) | Node, 0.1 | `npm install @lsquare/node` | [README](packages/node/README.md) |
 
 The `lsquare` packages send the same events, and `@lsquare/node` is the 0.1 SDK, kept for the
-code already using it: new servers use `lsquare`. The Go package records MCP tool calls, and
-[doesn't yet do](packages/go/README.md#not-yet-supported) everything the other two do.
+code already using it: new servers use `lsquare`. The Go package and the Rust crate record MCP
+tool calls, and don't yet do everything the other two do: see what
+[Go](packages/go/README.md#not-yet-supported) and
+[Rust](packages/rust/README.md#not-yet-supported) leave out.
 
 ## What leaves your process
 
@@ -28,7 +31,7 @@ in the United States.
 
 ## In this repository
 
-- `packages/lsquare`, `packages/python`, `packages/go`, `packages/node`: the SDKs.
+- `packages/lsquare`, `packages/python`, `packages/go`, `packages/rust`, `packages/node`: the SDKs.
 - `packages/contract`: the event format the `lsquare` packages share, with its validator and the
   test cases every SDK runs.
 - `tests/frameworks`: the TypeScript SDK on Workers, Node frameworks and Bun.

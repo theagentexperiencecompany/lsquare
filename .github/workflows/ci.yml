@@ -3,13 +3,15 @@
 # packed), its types under each module resolution, the wrapper on each MCP SDK's, every workspace's
 # tests, the frameworks in workerd and Node, and Bun; and the Python package (Python spec, sections
 # 7 and 8): the built wheel on each Python version, the wrapper and the frameworks on each MCP SDK
-# line, its types, and clean installs; and the Go package (packages/go): go vet and its tests under
-# the race detector, on the oldest Go it supports and the newest. A pull request that changes
-# packages/contract raises its version (LSquare's ingestion takes it by its version). A pull
-# request into main that changes Markdown alone builds and checks the two packages (the READMEs are
-# packed, and the Python one rendered as PyPI will) and skips the test suites, unless it changes
-# packages/contract/REDACTION.md, which the TypeScript packages' tests read; every push to main
-# runs them all. The regular tests stay on the pinned MCP SDKs; the weekly job tries new ones. And
+# line, its types, and clean installs; the Go package (packages/go): go vet and its tests under
+# the race detector, on the oldest Go it supports and the newest; and the Rust package
+# (packages/rust): its formatting, clippy and tests, on the toolchain it pins. A pull request
+# that changes packages/contract raises its version (LSquare's ingestion takes it by its
+# version). A pull request into main that changes Markdown alone builds and checks the two
+# packages (the READMEs are packed, and the Python one rendered as PyPI will) and skips the test
+# suites, unless it changes packages/contract/REDACTION.md, which the TypeScript packages' tests
+# read; every push to main runs them all. The regular tests stay on the pinned MCP SDKs; the
+# weekly job tries new ones. And
 # as the gate of a Python release (pypi-release.yml), whose upload is the wheel and sdist built here
 # (python-build's artifact, by the ID and SHA-256s this workflow outputs): everything, always,
 # restoring no cache. One last job, all checks passed, stands for all the others in a branch rule.
@@ -561,6 +563,40 @@ jobs:
           "$RUNNER_TEMP/venv/bin/pip" install dist/lsquare-*.whl ${WITH:+"$WITH"}
       - run: '"$RUNNER_TEMP/venv/bin/python" scripts/clean_install.py ${{ matrix.case }}'
 
+  # The Rust package (packages/rust): its formatting, clippy with warnings as errors, and every
+  # test. The shared cases' events are checked by the contract's validator and compared with what
+  # TypeScript writes, both through Node from their source, so the root's npm ci comes first and
+  # nothing is built. The toolchain is the one packages/rust/rust-toolchain.toml pins, which rustup
+  # installs: a new Rust's lints don't fail a pull request that didn't cause them. Nothing of
+  # cargo's is cached between runs.
+  rust:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: ${{ !inputs.release && 'npm' || '' }}
+          package-manager-cache: false
+      - run: npm ci
+      - name: The pinned toolchain, with rustfmt and clippy
+        working-directory: packages/rust
+        run: rustup toolchain install
+      - working-directory: packages/rust
+        run: cargo fmt --check
+      - working-directory: packages/rust
+        run: cargo clippy --locked --all-targets -- -D warnings
+      # Without the wrapper too: the crate builds, and warns of nothing, with its feature off.
+      - working-directory: packages/rust
+        run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
+      - working-directory: packages/rust
+        run: cargo test --locked
+
   # What a branch rule requires: green only if no other job failed or was cancelled, and a skipped
   # one is fine. A rule can't require the matrix jobs here: on a pull request that skips one, it
   # reports under its unexpanded name, so the rule would wait for its real name forever. It runs whatever
@@ -583,6 +619,7 @@ jobs:
       - python-wrapper
       - python-types
       - python-clean-install
+      - rust
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

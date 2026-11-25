@@ -1,0 +1,59 @@
+[package]
+name = "lsquare"
+version = "0.2.0-beta.1"
+edition = "2021"
+rust-version = "1.88"
+description = "Record every tool call of your MCP server in LSquare"
+license = "MIT"
+authors = ["The Agent Experience Company"]
+homepage = "https://lsquare.io"
+repository = "https://github.com/theagentexperiencecompany/lsquare"
+readme = "README.md"
+keywords = ["mcp", "model-context-protocol", "agents", "analytics", "observability"]
+categories = ["development-tools::debugging", "api-bindings"]
+include = ["src/**/*", "examples/**/*.rs", "README.md", "LICENSE", "Cargo.toml"]
+
+[features]
+default = ["rmcp"]
+# The wrapper for the official Rust MCP SDK, in `lsquare::mcp`. On by default: it is what records
+# events in this version.
+rmcp = ["dep:rmcp"]
+
+[dependencies]
+httpdate = "1"
+regex = "1.11"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+serde = "1"
+# Insertion order: an event's objects keep the order the JSON arrived in. Cargo unifies features,
+# so this is so for every `serde_json::Map` of a build that has this crate in it.
+serde_json = { version = "1.0.140", features = ["float_roundtrip", "preserve_order"] }
+sha2 = "0.11"
+tokio = { version = "1.44", features = ["rt", "sync", "time", "macros"] }
+uuid = { version = "1.16", features = ["v4"] }
+rmcp = { version = "~3.11", default-features = false, features = ["server"], optional = true }
+
+[dev-dependencies]
+axum = "0.8"
+rmcp = { version = "~3.11", features = ["server", "client", "macros", "transport-io", "transport-streamable-http-server"] }
+serde = { version = "1", features = ["derive"] }
+schemars = "1"
+tokio = { version = "1.44", features = ["full"] }
+
+[[example]]
+name = "weather"
+required-features = ["rmcp"]
+
+[[test]]
+name = "client"
+required-features = ["rmcp"]
+
+[[test]]
+name = "wrapper"
+required-features = ["rmcp"]
+
+[[test]]
+name = "forwarding"
+required-features = ["rmcp"]
+
+[package.metadata.docs.rs]
+all-features = true
