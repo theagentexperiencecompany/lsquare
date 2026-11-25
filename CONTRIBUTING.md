@@ -40,9 +40,33 @@ uv run --group mcp1 pytest tests/wrapper
 The other lines are `mcp2`, `fastmcp3` and `fastmcp4`. Add `--group frameworks` for
 `tests/frameworks`.
 
+## Rust
+
+The toolchain `packages/rust/rust-toolchain.toml` pins, which rustup installs, and Node 22.18+,
+24.11+ or 26+ with the root's `npm ci` done (the shared cases' events are checked by the
+contract's validator, and compared with what TypeScript writes):
+
+```sh
+cd packages/rust
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
+
+`cargo test -- --nocapture` also prints how many shared cases give the expected event, and how
+many are written byte for byte as TypeScript writes them. The tests find the contract through
+`LSQUARE_CONTRACT_DIR` (`../contract` by default).
+
+One test makes 1,500 inputs and fails if any event differs from the one TypeScript writes for it.
+After a change to shaping or redaction, run it on more, from other seeds:
+
+```sh
+LSQUARE_GENERATED_CASES=20000 LSQUARE_GENERATED_SEED=7 cargo test generated_inputs -- --nocapture
+```
+
 ## Pull requests
 
 Pull requests go into `main`. CI runs the checks above, on the Node and Python versions each
-package supports. A change to what the SDKs send changes both of them, and the shared cases in
+package supports. A change to what the SDKs send changes each of them, and the shared cases in
 `packages/contract/cases`. A change under `packages/contract`, other than `REDACTION.md` and its
 tests, raises its version in `packages/contract/package.json`.

@@ -9,9 +9,11 @@ to get an API key.
 | [`lsquare`](packages/lsquare) | TypeScript and JavaScript: Node 18+, Cloudflare Workers, Bun | `npm install lsquare` | [README](packages/lsquare/README.md), [reference](packages/lsquare/REFERENCE.md) |
 | [`lsquare`](packages/python) | Python 3.10+ | `pip install lsquare` | [README](packages/python/README.md), [reference](packages/python/REFERENCE.md) |
 | [`@lsquare/node`](packages/node) | Node, 0.1 | `npm install @lsquare/node` | [README](packages/node/README.md) |
+| [`lsquare`](packages/rust) | Rust 1.88+, with `rmcp`: a first beta | not on crates.io yet | [README](packages/rust/README.md) |
 
-Both `lsquare` packages send the same events, and `@lsquare/node` is the 0.1 SDK, kept for the
-code already using it: new servers use `lsquare`.
+Both `lsquare` packages on npm and PyPI send the same events, and `@lsquare/node` is the 0.1 SDK,
+kept for the code already using it: new servers use `lsquare`. The Rust crate records tool calls
+only, by the same rules: its README says what it doesn't do yet.
 
 ## What leaves your process
 
@@ -24,8 +26,8 @@ and what it never sends: each README says what leaves your process and has a pri
 
 ## In this repository
 
-- `packages/lsquare`, `packages/python`, `packages/node`: the SDKs.
-- `packages/contract`: the event format both `lsquare` packages share, with its validator and the
+- `packages/lsquare`, `packages/python`, `packages/node`, `packages/rust`: the SDKs.
+- `packages/contract`: the event format the `lsquare` packages share, with its validator and the
   test cases every SDK runs.
 - `tests/frameworks`: the TypeScript SDK on Workers, Node frameworks and Bun.
 
