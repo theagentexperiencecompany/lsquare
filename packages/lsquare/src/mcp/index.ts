@@ -64,6 +64,11 @@ export interface InstrumentOptions {
    * instance last listed, so a call that comes before any listing has none.
    */
   descriptions?: boolean | ((toolName: string) => boolean) | undefined
+  /**
+   * Record the server's instructions on each call, as the server gives them to clients: `false`
+   * turns it off. Cut at 2,000 characters.
+   */
+  instructions?: boolean | undefined
   /** The current request's `waitUntil` (Cloudflare Workers, Vercel): each call's sending is handed to it. */
   waitUntil?: ((promise: Promise<unknown>) => void) | undefined
   /** Wait for each call's event to be sent, up to `flushTimeoutMs`, before replying. */
@@ -92,6 +97,7 @@ interface LowLevel {
   setRequestHandler: (...args: unknown[]) => unknown
   _requestHandlers: Map<string, Handler>
   _serverInfo?: unknown
+  _instructions?: unknown
   getClientVersion?: () => unknown
   _negotiatedProtocolVersion?: unknown
   _onclose?: (...args: unknown[]) => unknown
@@ -143,6 +149,8 @@ interface Settings {
   descriptions: (toolName: string) => boolean
   /** How `descriptions` was given: `off` reads no description at all, from a registry or a listing. */
   descriptionsMode: 'off' | 'asked' | 'on'
+  /** Each call carries the server's instructions: on unless passed as false. */
+  instructions: boolean
   waitUntil: InstrumentOptions['waitUntil']
   flushBeforeReply: boolean
   /** Each extra on unless passed as false: a high-level server's defaults. */
@@ -382,6 +390,7 @@ function readOptions(options: InstrumentOptions, internal: Internal): Settings {
     results: choice('results', option('results')),
     descriptions: choice('descriptions', descriptions),
     descriptionsMode: descriptions === false ? 'off' : typeof descriptions === 'function' ? 'asked' : 'on',
+    instructions: option('instructions') !== false,
     waitUntil: typeof waitUntil === 'function' ? (waitUntil as Settings['waitUntil']) : undefined,
     flushBeforeReply: flushBeforeReply && typeof waitUntil !== 'function',
     extras: { sessions: extra('sessions'), intent: extra('intent'), missingTools: extra('missingTools') },
@@ -688,6 +697,21 @@ function descriptionOf(state: Instrumented, toolName: string): string | undefine
         declared(own(declared(state.high, '_registeredTools'), toolName), 'description')
       : state.lists.described.get(toolName)
     return typeof description === 'string' && description !== '' ? description : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The server's instructions as it gives them to clients now, in `initialize` and `server/discover`:
+ * what the instance was made with, which both SDK lines keep on the low-level server and answer
+ * with. Only a string that isn't empty, as the SDK sends no other. Never throws.
+ */
+function instructionsOf(state: Instrumented): string | undefined {
+  try {
+    // The instance's own field, never a polluted Object.prototype's (see declared()).
+    const instructions = declared(state.low, '_instructions')
+    return typeof instructions === 'string' && instructions !== '' ? instructions : undefined
   } catch {
     return undefined
   }
@@ -1160,6 +1184,8 @@ interface Running {
   results: boolean
   /** The tool's description as agents were listed it when the call arrived, when it is recorded and known. */
   description: string | undefined
+  /** The server's instructions when the call arrived, when they are recorded and it has some. */
+  instructions: string | undefined
   /** Who called and how, read when the call arrived: a reconnect meanwhile doesn't change them. */
   client: unknown
   protocolVersion: unknown
@@ -1371,6 +1397,8 @@ function start(state: Instrumented, prepared: Prepared, extra: unknown, arrived:
     // Asked of every call, as the other two. The wrapper's own get_more_tools has none: its text
     // is LSquare's, the same on every server.
     description: state.options.descriptions(toolName) && !prepared.answer ? descriptionOf(state, toolName) : undefined,
+    // The server's, whichever tool is called: get_more_tools' calls carry them too.
+    instructions: state.options.instructions ? instructionsOf(state) : undefined,
     client: clientInfo(state.low, request, extra),
     protocolVersion: version,
     continued: continued(request, extra),
@@ -1886,6 +1914,7 @@ function buildRecord(
   // Recorded whether or not inputs are: turning the extra off is what stops it.
   if (call.extras.intent !== undefined) record.intent = call.extras.intent
   if (call.description !== undefined) record.toolDescription = call.description
+  if (call.instructions !== undefined) record.serverInstructions = call.instructions
   if (call.extras.answer) record.extra = 'missing_tools'
   if (call.inputs) record.input = { value: call.args }
   if (outcome.error) record.error = outcome.error

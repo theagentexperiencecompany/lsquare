@@ -142,6 +142,8 @@ class ToolCallEvent(EventBase, total=False):
     intent: str
     #: The tool's description, as agents are listed it: cut at 1,000 characters.
     toolDescription: str
+    #: The server's instructions, as it gives them to clients: cut at 2,000 characters.
+    serverInstructions: str
     extra: Literal["missing_tools"]
     #: What ``capture()`` sent from inside the call before the tool returned.
     agent: TurnFields

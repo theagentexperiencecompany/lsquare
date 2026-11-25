@@ -113,6 +113,28 @@ A tool without a description has none. Neither do the wrapper's own `get_more_to
 limited-diagnostics event. With `descriptions: false` and the extras off, a low-level server's
 `tools/list` handler is left as it is.
 
+### Server instructions
+
+Each call's event carries the instructions your server gives clients, as `serverInstructions`: the
+text you passed as `instructions` when you made the server, which clients put in front of the agent
+with the tools. When you reword them, you can then compare the calls made under each wording. They
+are cut at 2,000 characters, redacted like any text, and given to `beforeSend`, which can change
+them or take them out. `instructions: false` turns it off:
+
+```ts
+instrument(server, lsquare, { instructions: false })
+```
+
+They are read from the server as each call arrives, on an `McpServer` and on a low-level `Server`
+alike. They need no `initialize` or listing first, so a stateless HTTP server built per request has
+them on every call. Every call carries them, whichever the tool, the wrapper's own `get_more_tools`
+included. A server made without instructions has none, and neither does a limited-diagnostics
+event.
+
+The wrapper reads what the server was made with, not what a client was sent: if you replaced the
+server's `initialize` handler to answer with other instructions, events still carry the ones the
+server was made with.
+
 ## The extras
 
 Each extra can be turned off by itself (`extras: { intent: false }`), and `extras: false` turns all

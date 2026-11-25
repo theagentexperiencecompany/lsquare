@@ -62,9 +62,9 @@ T = TypeVar("T")
 
 #: Parts left out, in order, until an event fits: biggest and least needed first.
 TURN_ORDER: Final = (("toolCalls",), ("answer",), ("question",), ("verification",), ("latency",))
-#: A call's description of its tool goes first: it's the same on every call of the tool, so nothing
-#: that only this call has is left out to make room for it.
-CALL_ORDER: Final = (("toolDescription",), ("result",), ("input",), ("agent", "toolCalls"), ("agent",))
+#: A call's server instructions and its tool's description go first: they're the same on every call
+#: of the server or the tool, so nothing that only this call has is left out to make room for them.
+CALL_ORDER: Final = (("serverInstructions",), ("toolDescription",), ("result",), ("input",), ("agent", "toolCalls"), ("agent",))
 
 
 @dataclass
@@ -137,6 +137,9 @@ class CallRecord(_CallRecordRequired, total=False):
     intent: Any
     #: The tool's description, as agents are listed it, when descriptions are recorded for this tool.
     toolDescription: Any
+    #: The server's instructions, as it gives them to clients, read when the call came, when
+    #: instructions are recorded.
+    serverInstructions: Any
     extra: Literal["missing_tools"]
     #: What `capture()` sent from inside the call: from the client, a `Captured`, read and shaped then.
     agent: Mapping[str, Any]
@@ -144,7 +147,7 @@ class CallRecord(_CallRecordRequired, total=False):
 
 
 RECORD_FIELDS: Final = (
-    "callId", "capturedAt", "toolName", "toolDescription", "status", "durationMs", "ids", "turnRef", "server", "client", "protocolVersion",
+    "callId", "capturedAt", "toolName", "toolDescription", "serverInstructions", "status", "durationMs", "ids", "turnRef", "server", "client", "protocolVersion",
     "sessionId", "sessionSource", "input", "result", "error", "round", "task", "intent", "extra", "agent", "metadata", "diagnostics",
 )  # fmt: skip
 _TURN_REF: Final = re.compile(r"k/[0-9a-f]{64}", re.ASCII)
@@ -546,6 +549,7 @@ class ShapedCall(_ShapedCallRequired, total=False):
     error: ShapedCallError
     intent: Shaped
     toolDescription: Shaped
+    serverInstructions: Shaped
     agent: ShapedTurn
     metadata: Metadata
 
@@ -640,9 +644,9 @@ def _shape_call(
 ) -> ShapedCall | Literal["too_large"]:
     """Shaped in a fixed order, which the scan budget makes part of the result: the intent and error
     first, as the smallest and most telling, then the input, the agent's turn and the result, and
-    the tool's description last: it's the same on every call, so it never takes budget from what
-    is the call's own. Oversized metadata drops the event, as for a turn, unless it's diagnostics,
-    which leave it out."""
+    the tool's description and the server's instructions last, in that order: they're the same on
+    every call, so they never take budget from what is the call's own. Oversized metadata drops the
+    event, as for a turn, unless it's diagnostics, which leave it out."""
     shaped: ShapedCall = {"fixed": {}}
 
     def field(name: str, run: Callable[[], T]) -> T:
@@ -705,6 +709,12 @@ def _shape_call(
         description = field("toolDescription", lambda: shape_text(rec["toolDescription"], LIMITS.description, state, notes, "toolDescription"))
         if description is not MISSING:
             shaped["toolDescription"] = description
+    if "serverInstructions" in rec:
+        instructions = field(
+            "serverInstructions", lambda: shape_text(rec["serverInstructions"], LIMITS.instructions, state, notes, "serverInstructions")
+        )
+        if instructions is not MISSING:
+            shaped["serverInstructions"] = instructions
     # identify's metadata, merged with that of the capture() inside the call, which wins per key.
     # Each is read within the budget, and the merged result must fit it too: a value one replaces
     # doesn't count.
@@ -751,7 +761,7 @@ def _reshape_call(out: Mapping[str, Any], draft: Draft, state: ShapeState, notes
     # A field whose read raises drops the event, as for capture()'s fields.
     source = read_fields(
         out,
-        ("input", "result", "error", "intent", "toolDescription", "agent", "metadata", "task", "client", "server", "protocolVersion"),
+        ("input", "result", "error", "intent", "toolDescription", "serverInstructions", "agent", "metadata", "task", "client", "server", "protocolVersion"),
         strict=True,
     )
     shaped: ShapedCall = {"fixed": {}}
@@ -808,6 +818,13 @@ def _reshape_call(out: Mapping[str, Any], draft: Draft, state: ShapeState, notes
         )
         if description is not MISSING:
             shaped["toolDescription"] = description
+    if source.get("serverInstructions") is not None:
+        instructions = field(
+            "serverInstructions",
+            lambda: shape_text(source["serverInstructions"], LIMITS.instructions, state, notes, "serverInstructions"),
+        )
+        if instructions is not MISSING:
+            shaped["serverInstructions"] = instructions
     metadata = metadata_value(source.get("metadata", MISSING), notes, Budget(METADATA_BUDGET))
     if metadata == "too_large":
         if not draft.diagnostics:
@@ -1008,6 +1025,8 @@ def _call_event(identity: Mapping[str, Any], shaped: ShapedCall, redactor: Redac
         event["intent"] = text_(shaped["intent"])
     if "toolDescription" in shaped:
         event["toolDescription"] = text_(shaped["toolDescription"])
+    if "serverInstructions" in shaped:
+        event["serverInstructions"] = text_(shaped["serverInstructions"])
     if "task" in shaped:
         event["task"] = {"id": text_(shaped["task"]["id"]), "status": text_(shaped["task"]["status"])}
     if "agent" in shaped:

@@ -50,7 +50,7 @@ from ._extras import (
 )
 from ._boundary import tap, watches
 from ._lists import Lists, Reader, Snapshot, Wait, describe, described, fresh, mark, wait_once, with_snapshot
-from ._read import attr, cancelled, close, item, scope_cancelled, wire
+from ._read import attr, cancelled, close, item, plain_text, scope_cancelled, wire
 from ._registry import Read, Registry
 from ._weak import ByIdentity
 
@@ -106,6 +106,8 @@ class Settings:
     #: How `descriptions` was given: "off" (passed False: no listed tool's description is ever
     #: read), "asked" (a function) or "on".
     descriptions_mode: str
+    #: Whether a call carries the server's instructions: off (passed False), they are never read.
+    instructions: bool
     wait_until: Callable[[Any], Any] | None
     flush_before_reply: bool
     #: Each extra on unless passed as False: a high-level server's defaults.
@@ -220,6 +222,7 @@ def read_options(
     wait_until: Any,
     flush_before_reply: Any,
     descriptions: Any = True,
+    instructions: Any = True,
 ) -> Settings:
     # A function that raises, or answers with an awaitable (which can't be waited for), records
     # nothing for that call: the field stays out of its event, and one warning per option says so.
@@ -271,6 +274,8 @@ def read_options(
         results=choice("results", results),
         descriptions=choice("descriptions", descriptions),
         descriptions_mode="off" if descriptions is False else "asked" if callable(descriptions) else "on",
+        # Only False turns them off: no function is asked, as the instructions are the server's, not a tool's.
+        instructions=instructions is not False,
         wait_until=wait_until if callable(wait_until) else None,
         flush_before_reply=flush and not callable(wait_until),
         extras=Extras(extra("sessions"), extra("intent"), extra("missing_tools")),
@@ -444,6 +449,9 @@ class Running:
     #: The tool's description, as agents are listed it, read when the call arrived; None when
     #: descriptions aren't recorded for the tool, or none is known.
     description: str | None = None
+    #: The server's instructions, as it gives them to clients, read when the call arrived; None
+    #: when instructions aren't recorded, or the server has none.
+    instructions: str | None = None
     #: The server the call came to: on fastmcp, its `call_tool()` records this call's steps.
     owner: State | None = None
     #: An `isError` result whose function wasn't entered is the SDK's (see `tap_tools`).
@@ -809,6 +817,9 @@ async def on_call(state: State, dispatch: Dispatch, tap: Callable[[State, str, R
             # arrives. The wrapper's own get_more_tools has none of the server's.
             if recorded[2] and not prepared.answer:
                 running.description = description_of(state, running.tool_name, read)
+            # The server's own, so a call of get_more_tools carries them too.
+            if state.settings.instructions:
+                running.instructions = instructions_of(state)
             if tap is not None and high_mode(state) and not prepared.answer:
                 running.watched = tap(state, running.tool_name, read) is not False
     except Exception:
@@ -922,6 +933,14 @@ def description_of(state: State, tool_name: str, read: Read | None = None) -> st
         return described(state.lists, tool_name)
     except Exception:
         return None
+
+
+def instructions_of(state: State) -> str | None:
+    """The server's instructions as it gives them to clients now: its low-level server's
+    `instructions`, which every supported class answers `initialize` from (mcp 2.x and fastmcp 4.x
+    `server/discover` too), and where `FastMCP`, `MCPServer` and fastmcp keep theirs. Only a string
+    that isn't empty. Never raises."""
+    return plain_text(attr(state.low, "instructions"))
 
 
 def note_listed(state: State, tools: Any, name_of: Callable[[Any], Any], description_of_: Callable[[Any], Any]) -> None:
@@ -1572,6 +1591,8 @@ def build_record(
         record["intent"] = call.extras.intent
     if call.description is not None:
         record["toolDescription"] = call.description
+    if call.instructions is not None:
+        record["serverInstructions"] = call.instructions
     if call.extras.answer:
         record["extra"] = "missing_tools"
     if call.inputs:

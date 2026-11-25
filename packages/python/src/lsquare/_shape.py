@@ -46,6 +46,7 @@ class LIMITS:
     result: Final = 4_000
     intent: Final = 500
     description: Final = 1_000
+    instructions: Final = 2_000
 
 
 MAX_ENTRIES: Final = 100

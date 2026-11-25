@@ -134,6 +134,9 @@ protocol version, and the IDs below. Results are recorded as the SDK sends them,
 `results`. The event also carries the tool's description as agents were listed it
 (`toolDescription`, cut at 1,000 characters), so you can tell which wording a call was made under;
 `descriptions` turns that off the same way ([where it comes from](REFERENCE.md#tool-descriptions)).
+It carries the server's instructions too, as the server gives them to clients
+(`serverInstructions`, cut at 2,000 characters); `instructions=False` leaves them out
+([details](REFERENCE.md#server-instructions)).
 A failed call's text, in `error.message` and in an `isError` result, can quote what the
 tool was sent and what it would have returned, so it's recorded only with both on. The event still
 says how the call failed: `category`, `type` and `code`. A cancelled call's fixed sentence stays.
@@ -177,6 +180,7 @@ they're off ([in the reference](REFERENCE.md#low-level-servers)), whose
 | `inputs` | `True` | `False`, or `(tool_name) -> bool`. Off for `get_more_tools`, the server doesn't get that tool |
 | `results` | `True` | `False`, or `(tool_name) -> bool` |
 | `descriptions` | `True` | `False`, or `(tool_name) -> bool`. On a low-level `Server`, a call has the description its instance last listed ([details](REFERENCE.md#tool-descriptions)) |
+| `instructions` | `True` | `False` leaves the server's instructions out of every call's event ([details](REFERENCE.md#server-instructions)) |
 | `extras` | all on (high-level), off (low-level) | `{"sessions", "intent", "missing_tools"}` to booleans; one left out keeps its default. `False`: all off. On a low-level server only `True` turns one on ([in the reference](REFERENCE.md#low-level-servers)) |
 | `wait_until` | | A callable taking an awaitable: each call's sending is handed to it ([serverless hosts](REFERENCE.md#serverless-hosts-and-shutting-down)) |
 | `flush_before_reply` | `False` | Wait for each call's event to be sent, up to `flush_timeout_ms`, before replying |
@@ -245,21 +249,21 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   its objects afterwards changes nothing. A call's arguments and result are read when its event is
   built, at the reply, or up to a second later while `identify` runs.
 - Strings in a call's `input` and `agent`, and in a turn, are cut at 16,000 characters, results at
-  4,000, a tool's description at 1,000 and `intent` at 500; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
+  4,000, a server's instructions at 2,000, a tool's description at 1,000 and `intent` at 500; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
   budget for reading strings is spent. That budget also bounds how long building an event holds
   your loop or thread: about a quarter of a second on a current laptop for one that uses all of
   it, and up to twice that for a call with a `capture()` inside it, whose agent part is read with a
   budget of its own. Lists and objects keep their first 100 entries, and nesting stops at 10
   levels. Images, audio, binary resources and files sent as base64 text are kept as their size
   only.
-- An event still over 256 KB loses parts, biggest and least needed first: a call its tool's
-  description (the same on every call), then its result, then its
+- An event still over 256 KB loses parts, biggest and least needed first: a call its server's
+  instructions, then its tool's description (both the same on every call), then its result, then its
   input, then its agent's tool calls, then its agent part; a turn its tool calls, then its answer,
   question, verification and latency. The event's `truncated` field names what was shortened or left
   out.
 - Common formats of emails, phone numbers, card numbers, API keys and tokens, credentials in URLs,
   and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors,
-  intents, tool descriptions and agent details alike. Each pattern can be turned off: `redact={"ip": False}`, or
+  intents, tool descriptions, server instructions and agent details alike. Each pattern can be turned off: `redact={"ip": False}`, or
   `redact=False` for all.
 - Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole, in
   structured data and in JSON held in a string, such as a text block, an input or an error message:
@@ -299,6 +303,8 @@ conversation). Cursor, Claude desktop and ChatGPT aren't checked yet, and nothin
   `results`.
 - Tool descriptions are sent as you wrote them, redacted like any text. If one names an internal
   system you'd rather keep to yourself, leave it out: `descriptions=lambda tool: tool != "admin_sql"`.
+- The server's instructions are sent as you wrote them too, redacted like any text.
+  `instructions=False` leaves them out.
 - Send `userId`, as an internal ID rather than an email address or phone number: LSquare deletes a
   person's events by it, and finds only events that carry it. A `userId` that looks like an email
   address or phone number is still sent as given, since masking it would stop deletion, and the SDK

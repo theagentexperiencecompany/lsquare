@@ -361,3 +361,129 @@ describe("a call's tool description", () => {
     expect(kept).toEqual(smaller.draft.event)
   })
 })
+
+describe("a call's server instructions", () => {
+  const event = (over: Partial<CallRecord>) => call(over).event as ToolCallEvent
+
+  it('are kept as given, after the tool description, and the ingestion takes them', () => {
+    const built = event({ toolDescription: 'Search orders by customer.', serverInstructions: 'Search orders before refunding one.' })
+    expect(built.serverInstructions).toBe('Search orders before refunding one.')
+    expect(built).not.toHaveProperty('truncated')
+    const keys = Object.keys(built)
+    expect(keys.indexOf('serverInstructions')).toBe(keys.indexOf('toolDescription') + 1)
+    expect(ingestion(built)).toBe('valid')
+  })
+
+  it('are cut at 2,000 characters, counted as code points, and marked', () => {
+    const built = event({ serverInstructions: prose(2_500) })
+    expect(built.serverInstructions).toBe(`${prose(2_000)}…[+500 chars]`)
+    expect(built.truncated).toEqual(['serverInstructions'])
+    expect(event({ serverInstructions: prose(2_000) }).serverInstructions).toBe(prose(2_000))
+    // A pair outside the Basic Multilingual Plane is one character.
+    expect(event({ serverInstructions: '😀'.repeat(2_001) }).serverInstructions).toBe(`${'😀'.repeat(2_000)}…[+1 chars]`)
+  })
+
+  it('are redacted as any text, with the placeholders the tool description has', () => {
+    const built = event({ toolDescription: 'Mail billing@acme.io.', serverInstructions: 'Mail ops@acme.io or billing@acme.io, or call +1 415 555 0134.' })
+    expect(built.toolDescription).toBe('Mail [EMAIL_1].')
+    expect(built.serverInstructions).toBe('Mail [EMAIL_2] or [EMAIL_1], or call [PHONE_1].')
+    expect(built.redactions).toEqual({ email: 3, phone: 1 })
+  })
+
+  it.each([[42], [{ text: 'Search first' }], [['Search first']], [true]])('are left out, and recorded as dropped, when they are %j', (value) => {
+    const built = event({ serverInstructions: value })
+    expect(built).not.toHaveProperty('serverInstructions')
+    expect(built.dropped).toEqual({ serverInstructions: 'wrong_type' })
+    expect(ingestion(built)).toBe('valid')
+  })
+
+  it('are left out, without a word, when there are none', () => {
+    for (const none of [undefined, null]) {
+      const built = event({ serverInstructions: none })
+      expect(built).not.toHaveProperty('serverInstructions')
+      expect(built).not.toHaveProperty('dropped')
+    }
+  })
+
+  it('are never in a limited-diagnostics event, before the hook or after it', () => {
+    const built = event({ diagnostics: true, serverInstructions: 'Look a person up before refunding them.' })
+    expect(built).toMatchObject({ identity: 'failed' })
+    expect(built).not.toHaveProperty('serverInstructions')
+    expect(ingestion(built)).toBe('valid')
+    const pending = call({ diagnostics: true, serverInstructions: 'Look a person up before refunding them.' }, true)
+    const finished = afterHook({ ...pending.event, serverInstructions: 'Put back by the hook.' }, pending, context)
+    if (!finished.ok) throw new Error(finished.code)
+    expect(finished.draft.event).not.toHaveProperty('serverInstructions')
+    expect(ingestion(finished.draft.event)).toBe('valid')
+  })
+
+  it('reach beforeSend, which may change them, take them out, or put some in', () => {
+    const hooked = (given: Partial<CallRecord>, change: (event: ToolCallEvent) => Record<string, unknown>) => {
+      const pending = call(given, true)
+      const finished = afterHook(change(pending.event as ToolCallEvent), pending, context)
+      if (!finished.ok) throw new Error(finished.code)
+      return { seen: pending.event as ToolCallEvent, event: finished.draft.event as ToolCallEvent }
+    }
+    // Not redacted yet: the hook sees the text, as for any field.
+    const changed = hooked({ serverInstructions: 'Mail billing@acme.io.' }, (seen) => ({ ...seen, serverInstructions: `${seen.serverInstructions} Or ops@acme.io.` }))
+    expect(changed.seen.serverInstructions).toBe('Mail billing@acme.io.')
+    expect(changed.event.serverInstructions).toBe('Mail [EMAIL_1]. Or [EMAIL_2].')
+    const removed = hooked({ serverInstructions: 'Internal.' }, ({ serverInstructions, ...rest }) => rest)
+    expect(removed.event).not.toHaveProperty('serverInstructions')
+    expect(removed.event).not.toHaveProperty('dropped')
+    const added = hooked({}, (seen) => ({ ...seen, serverInstructions: prose(2_200) }))
+    expect(added.event.serverInstructions).toBe(`${prose(2_000)}…[+200 chars]`)
+    expect(added.event.truncated).toEqual(['serverInstructions'])
+    const wrong = hooked({ serverInstructions: 'Search first.' }, (seen) => ({ ...seen, serverInstructions: 7 }))
+    expect(wrong.event).not.toHaveProperty('serverInstructions')
+    expect(wrong.event.dropped).toEqual({ 'beforeSend.serverInstructions': 'wrong_type' })
+    // Ones this SDK cut keep their marker when the hook hands them back.
+    const cut = hooked({ serverInstructions: prose(2_500) }, (seen) => ({ ...seen }))
+    expect(cut.seen.serverInstructions).toBe(`${prose(2_000)}…[+500 chars]`)
+    expect(cut.event.serverInstructions).toBe(`${prose(2_000)}…[+500 chars]`)
+  })
+
+  it('are read last, after the tool description: a result that uses the scan budget up leaves both cut', () => {
+    const big = { input: { value: { q: prose(20_000) } }, result: { value: { content: [{ type: 'text', text: prose(1_200_000) }] } }, toolDescription: 'Search orders.' }
+    const without = event(big)
+    const { serverInstructions, truncated, ...rest } = event({ ...big, serverInstructions: 'Search orders before refunding one.' })
+    expect(without.toolDescription).toBe('…[cut]')
+    expect(serverInstructions).toBe('…[cut]')
+    expect(truncated).toEqual([...(without.truncated ?? []), 'serverInstructions'])
+    const { truncated: _, ...plain } = without
+    expect(rest).toEqual(plain)
+  })
+
+  it('are the first part left out to make an event fit, before the tool description', () => {
+    const base = record({
+      ids: { orgId: 'org_1' },
+      toolDescription: 'Search orders by customer.',
+      input: { value: { q: 'late orders' } },
+      result: { value: { content: [{ type: 'text', text: '3 orders' }] } },
+    })
+    const small = buildCall(base, context, false)
+    if (!small.ok) throw new Error(small.code)
+    // Room for the event without instructions, and for saying they were left out; none for them.
+    const tight = { ...context, maxEventBytes: new TextEncoder().encode(JSON.stringify(small.draft.event)).length + 45 }
+    const built = buildCall({ ...base, serverInstructions: prose(1_800) }, tight, false)
+    if (!built.ok) throw new Error(built.code)
+    const { truncated, ...fitted } = built.draft.event as ToolCallEvent
+    expect(truncated).toEqual(['serverInstructions'])
+    expect(fitted).toEqual(small.draft.event)
+    expect(ingestion(built.draft.event)).toBe('valid')
+    // An event too large without them too loses them, then its tool description, then its result.
+    const { toolDescription: _d, result: _r, ...bare } = base
+    const smaller = buildCall(bare, context, false)
+    if (!smaller.ok) throw new Error(smaller.code)
+    const tighter = { ...context, maxEventBytes: new TextEncoder().encode(JSON.stringify(smaller.draft.event)).length + 70 }
+    const less = buildCall(
+      { ...base, toolDescription: prose(900), result: { value: { content: [{ type: 'text', text: prose(2_000) }] } }, serverInstructions: 'Search orders before refunding one.' },
+      tighter,
+      false,
+    )
+    if (!less.ok) throw new Error(less.code)
+    const { truncated: left, ...kept } = less.draft.event as ToolCallEvent
+    expect(left).toEqual(['serverInstructions', 'toolDescription', 'result'])
+    expect(kept).toEqual(smaller.draft.event)
+  })
+})
