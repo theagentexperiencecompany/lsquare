@@ -4,10 +4,13 @@ Record every tool call your MCP server handles in LSquare. A first beta, for ser
 the official Go MCP SDK ([`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)).
 LSquare is an invite-only beta, so [request access](https://lsquare.io) to get an API key.
 
-- One line per MCP server. Recording never fails a tool call or changes its reply, never makes
-  the reply wait on `Identify`, redaction or the network, and never panics into your app. (The
-  one exception is an error whose methods answer differently each time they are called: see
+- One line per MCP server. Recording never fails a tool call, never makes the reply wait on
+  `Identify`, redaction or the network, and never panics into your app. (The one exception is
+  an error whose methods answer differently each time they are called: see
   [below](#mcp-servers).)
+- Three [extras](#the-extras), on by default: calls grouped into tasks, why each call was made,
+  and what agents looked for and didn't find. They are the one thing that changes what your
+  server shows its callers ([what they change](#what-the-defaults-change-in-your-server)).
 - `Flush` waits up to 2 seconds by default: for events to be sent, then for `OnError` and the
   `Logger` to have been told of what wasn't, which get 50 ms more if the time has run out.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
@@ -60,7 +63,7 @@ A server with one tool, served over HTTP on your machine, and one call to it wit
    		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "Tomorrow in " + input.City + ": sunny, 21°C."}}}, nil, nil
    	})
 
-   	lsquaremcp.Instrument(server, client, &lsquaremcp.Options{Tools: []*mcp.Tool{forecast}, ServerInfo: info})
+   	lsquaremcp.Instrument(server, client, &lsquaremcp.Options{ServerInfo: info})
 
    	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
    	http.Handle("/mcp", handler)
@@ -81,11 +84,12 @@ A server with one tool, served over HTTP on your machine, and one call to it wit
    curl -s http://localhost:3000/mcp -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_forecast","arguments":{"city":"Paris"}}}'
    ```
 
-   The reply is your tool's result, unchanged. The server's terminal shows one line for the call's
-   event: its fields and size, never its content or IDs.
+   The reply is your tool's result, followed by one line that gives the agent a task ID to send
+   back on its later calls: one of [the extras](#the-extras). The server's terminal shows one
+   line for the call's event: its fields and size, never its content or IDs.
 
    ```
-   [lsquare dry-run] {"kind":"tool_call","eventId":"the call","fields":["callId","durationMs","input","protocolVersion","result","server","status","toolDescription","toolName"],"bytes":580}
+   [lsquare dry-run] {"kind":"tool_call","eventId":"the call","fields":["callId","durationMs","input","protocolVersion","result","server","sessionId","sessionSource","status","toolDescription","toolName"],"bytes":646}
    ```
 
 4. **Send it.** Stop the server, start it again with your project key instead of dry run, and call
@@ -125,13 +129,15 @@ it puts in the context reaches `Identify`, and a call it refuses is never record
 Each `tools/call` that reaches the middleware becomes one `tool_call` event: the tool's name and
 description, the server's instructions, the call's arguments (`input`), its result, how it ended
 (`status`, and an `error` with its `category`), how long it took, the calling app and protocol
-version, and the IDs `Identify` returns. Results are
+version, the IDs `Identify` returns, and, with the extras, the task the call belongs to and why it
+was made. Results are
 sent by default, each string cut at 4,000 characters and files kept as their size only; turn inputs
 or results off everywhere, or for chosen tools, with `Inputs` and `Results`. An event that can't
 be kept is dropped and reported to `OnError`, as when the queue is full. After `Shutdown`, calls
 run unrecorded, which is reported once.
 
-The tool runs unchanged, and its reply or error goes back as it came. Before the tool, the wrapper
+The tool runs unchanged, and its reply or error goes back as it came, but for what
+[the extras](#what-the-defaults-change-in-your-server) do. Before the tool, the wrapper
 reads the call (its tool, the calling app, the protocol version), copies its arguments when they
 are recorded (up to 256 KB; larger ones are read as the tool returns), copies them all for
 `Identify` when you set one, and asks your `Inputs`, `Results`, `Descriptions` and `Instructions`
@@ -158,6 +164,33 @@ To read a call, the wrapper runs as little of your code as it can:
   methods answer differently each time they are called gives the event one answer and the client
   the next.
 
+### What the defaults change in your server
+
+Three extras are on by default, so calls are grouped into tasks, each call says why it was made,
+and agents can tell you what they couldn't find. They change what your server shows its callers:
+
+- most tools gain two optional inputs, `session_id` and `intent`, which the wrapper takes out of
+  each call before the SDK checks it, so your code never sees them
+  ([which tools](#which-tools-get-the-inputs));
+- some results gain one text block at the end, giving the agent a task ID;
+- the server gains a tool, `get_more_tools`, which the wrapper answers itself.
+
+Clients and scanners that flag changed tool definitions may warn your server's users once when you
+add the SDK. Each extra can be turned off by itself:
+
+```go
+lsquaremcp.Instrument(server, client, &lsquaremcp.Options{
+	Extras: lsquaremcp.Extras{
+		DisableSessions:     true, // no session_id, no task ID line, no grouping by connection
+		DisableIntent:       true, // no intent
+		DisableMissingTools: true, // no get_more_tools
+	}, // leave any of them out to keep it on
+})
+```
+
+With all three off, the wrapper never changes a listing, a call's arguments or a result, and never
+asks your server for its tools. [The extras](#the-extras) says exactly what each one does.
+
 ### Options
 
 | Option | Default | |
@@ -170,6 +203,7 @@ To read a call, the wrapper runs as little of your code as it can:
 | `Tools` | | The tools you registered, for their descriptions ([below](#tool-descriptions)) |
 | `ServerInfo` | | What you gave `mcp.NewServer`, for the event's `server`. Without it, the server's name is learned from the first `initialize` it answers, which a client on protocol 2026-07-28 never sends |
 | `ServerInstructions` | | What you gave `mcp.NewServer` in `ServerOptions.Instructions`, for the event's `serverInstructions` ([below](#server-instructions)) |
+| `Extras` | all on | `lsquaremcp.Extras{DisableSessions, DisableIntent, DisableMissingTools}` turns each of [the extras](#the-extras) off; `OpenSchemas` gives the inputs to more tools ([below](#which-tools-get-the-inputs)) |
 
 ### How a call failed
 
@@ -237,8 +271,10 @@ is left out too.)
 Each event carries the tool's description as agents were listed it (`toolDescription`, cut at
 1,000 characters), so you can tell which wording a call was made under. It is the one the server
 last listed: the wrapper reads each `tools/list` reply as it goes to the client, and changes
-nothing in it. The Go MCP SDK doesn't say which tools a server has, so a call that comes before any
-listing has no description unless you pass your tools as `Tools`.
+nothing of a tool's description in it. The Go MCP SDK doesn't say which tools a server has, so
+for a call to a tool it hasn't seen listed the wrapper lists the tools itself
+([below](#how-the-wrapper-knows-your-tools)). With the extras all off it doesn't, and such a call
+has no description unless you pass your tools as `Tools`.
 
 The last listing is the server's, not the caller's: a server that lists a tool under different
 descriptions to different callers records the one it listed last, to anyone. Turn `Descriptions`
@@ -275,10 +311,124 @@ what middleware added after it changes is not.
 
 `Instructions: lsquaremcp.Off` records none.
 
+## The extras
+
+### `session_id`: calls grouped into tasks
+
+A tool that gets the inputs takes an optional `session_id`, described to the agent as: "The ID of
+the task this call belongs to. Leave it out on your first call. On every later call for the same
+task, send the ID an earlier result gave you, and pass it to any subagent working on that task."
+The event's `sessionId` is the task, and its `sessionSource` says where the ID came from:
+
+- **`sent`**: the call came with a valid ID (`ses_` and 22 letters, digits, `-` or `_`). Any
+  other value is taken out and ignored.
+- **`protocol`**: the call came from a client on a protocol version before 2026-07-28, and is
+  grouped by its connection: a Streamable HTTP server's own session, recorded as a hash of its
+  ID, or one ID per stdio, SSE or in-memory connection. Every tool's calls are grouped this way,
+  the ones that don't get the inputs included. A stateless server has no connection to group
+  by; neither has an HTTP server run with `MCPGODEBUG=allowsessionsinstateless=1`, where a
+  session's ID can be one the client chose.
+- **`issued`**: any other call to a tool that gets `session_id` gets a new ID, in a text block at
+  the end of the result: "Task ID: ses_…. Send it as session_id on later calls for this task,
+  and pass it to any subagent working on it." The block goes at the end, so code that reads the
+  first block still gets your tool's output, and the recorded result is your tool's, without it.
+  A result marked as an error never gets one (it can be the SDK's own, for arguments it
+  refused), and neither does a result with no content, a JSON-RPC error, a cancelled call, a
+  panic, or a round that asks the client for more.
+
+Clients that read only `structuredContent` don't see the text block, so they never learn an ID to
+send back; their calls are still grouped by their connection where there is one. Agents decide
+for themselves whether to send the ID back:
+[what agents do with them](../lsquare/README.md#what-agents-do-with-them) says what the ones
+checked so far did, on the TypeScript and Python SDKs.
+
+### `intent`: why each call was made
+
+Described as: "In one sentence, why you're calling this tool and what the user is trying to do.
+No personal data or secrets." When it's a non-empty string it's recorded, redacted and cut at 500
+characters, whether or not the call's inputs are; anything else sent as `intent` is taken out and
+ignored. It stays optional, so strict clients never refuse a call that leaves it out.
+
+### `get_more_tools`: what agents looked for
+
+A server with at least one tool of its own gets one more, `get_more_tools`, marked as read-only,
+since nothing on your server changes, and as reaching outside the server, since what the agent
+writes leaves it, with a required `need` input (and the optional `session_id`): "Call this when
+none of the available tools fits what you need, or one fits only in part. It doesn't return new
+tools: it tells the server's developers what to add." The wrapper answers it ("Noted. No other
+tools are available right now.") and records the request as a `tool_call` event with
+`extra: "missing_tools"`, which is queued and sent like any other event. With `Inputs` off for it, the server doesn't get the tool, since the
+request wouldn't be recorded; where that changes later, or after `Shutdown`, the tool answers as
+the SDK does for a tool the server doesn't have. Clients that cap the number of tools across
+servers count it.
+
+Nothing is added to your server: the wrapper shows the tool at the end of your server's tool
+list, and answers its calls. A server with its own `get_more_tools` keeps it. Where your
+server's listing has one, LSquare's isn't shown; and a call to `get_more_tools` always goes to
+your server first, so a tool of yours under that name answers it, listed or not. The wrapper
+answers only a call your server answers exactly as the SDK answers a call to a tool it doesn't
+have: an error of your own, with another code, another message or data of its own, goes back as
+it is.
+
+### Which tools get the inputs
+
+The wrapper can't read a tool's code, only the schema your server lists for it. So a tool gets
+the inputs only where that schema is enough to know the tool isn't using them itself:
+
+- **Its schema refuses the inputs it doesn't name**: it says `"additionalProperties": false`.
+  That is what the SDK infers for a tool added with `mcp.AddTool` and a struct for its input, so
+  those tools get the inputs with nothing to do. A schema written by hand gets them when it says
+  so too.
+- **Its schema is a plain object of named properties.** One with a combinator, a pattern, a
+  limit on the number of properties or a reference to itself is left alone, since one more input
+  could change what it accepts; so is one whose input is a map, which takes any key.
+- **A tool that already has an input called `session_id` or `intent` keeps it**, untouched, and
+  gets only the other.
+
+A tool that is left alone is exactly as it was: its listing, its calls and its results. It is
+logged once, with the reason, and its calls are still recorded, and grouped by their connection.
+
+The schema is taken at its word. A tool whose own code takes an input that its listed schema
+refuses, which a handler added with `server.AddTool` is free to do, no longer gets a
+`session_id` or an `intent` it was reading that way: list them in its schema, and it keeps them.
+
+For the tools with a schema written by hand that doesn't say `"additionalProperties": false`, you
+can add that line to the schema, or tell the wrapper to take every such schema at its word:
+
+```go
+lsquaremcp.Instrument(server, client, &lsquaremcp.Options{Extras: lsquaremcp.Extras{OpenSchemas: true}})
+```
+
+Do that only if none of those tools reads an input its schema doesn't list: with `OpenSchemas`,
+a tool that reads a `session_id` or an `intent` of its own without listing it no longer gets it.
+
+### How the wrapper knows your tools
+
+The Go MCP SDK doesn't say what tools a server has, so the wrapper learns them from the tool
+lists your server sends, as they pass. Three things follow:
+
+- **A call can come before the wrapper has seen a tool list**: on a new process, or on a server
+  built for each request, from an agent that was listed the tools earlier. The wrapper then
+  reads your server's whole tool list itself, once per server, in a request of its own. A call
+  waits for it one second at most, and otherwise goes on as it came; if it fails, or takes more
+  than 10 seconds, the wrapper doesn't ask again for a minute. That request runs the MCP
+  middleware you added before `Instrument`, like any other, with copies of the call's headers,
+  token and metadata: add yours after `Instrument` if it shouldn't. It runs while the call that
+  started it waits, so on a server whose tool listing waits for something its own middleware
+  holds for as long as a tool call runs, neither can go on: turn the extras off there.
+- **A tool is known by its name, as it was last listed.** If your server replaces a tool with
+  another under the same name while it runs, the wrapper follows the old tool's schema until the
+  new one is listed, which happens as soon as a client asks for the tool list again. And if your
+  server lists a tool under different schemas to different callers, the wrapper goes by the one
+  it listed last, to anyone: turn `session_id` and `intent` off on such a server.
+- **Where your own MCP middleware sits matters.** Middleware you added before `Instrument` sees a
+  call without the two inputs, and the result before its task ID line; middleware you add after
+  sees both.
+
 ## What leaves your process
 
 - Strings in a call's `input` are cut at 16,000 characters, in its result at 4,000, the server's
-  instructions at 2,000 and a tool's description at 1,000; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
+  instructions at 2,000, a tool's description at 1,000 and a call's `intent` at 500; a cut string ends with `…[+N chars]`, or `…[cut]` once an event's work
   budget for reading strings is spent. Lists and objects keep their first 100 entries, and nesting
   stops at 10 levels. Images, audio and binary resources are kept as their size only, and so is a
   file sent as text: a `data:` URI in base64, or 1,000 characters or more of nothing but base64.
@@ -288,7 +438,7 @@ what middleware added after it changes is not.
   `too_large`.
 - Common formats of emails, phone numbers, card numbers, API keys and tokens, credentials in URLs,
   and IP addresses become numbered placeholders such as `[EMAIL_1]`, in inputs, results, errors,
-  tool descriptions and server instructions alike. Each pattern can be turned off: `SkipRedaction: []lsquare.Pattern{lsquare.IP}`,
+  intents, tool descriptions and server instructions alike. Each pattern can be turned off: `SkipRedaction: []lsquare.Pattern{lsquare.IP}`,
   or `lsquare.AllPatterns()` for all.
 - Values under secret key names (`password`, `token`, `apiKey` and the like) are replaced whole, in
   structured data and in JSON held in a string, such as a text block or an error message:
@@ -303,7 +453,12 @@ what middleware added after it changes is not.
   sent even where `Inputs`, `Results`, `Descriptions` or `Instructions` left them out.
 - The wrapper never records HTTP headers, tokens, environment variables or anything else of the
   request by itself, except the calling app and the protocol version. `Identify` can read the
-  rest; only what it returns is sent.
+  rest; only what it returns is sent. A Streamable HTTP session's ID, which can be a live handle
+  to the session, is sent as its SHA-256 hash only: as the event's `sessionId`, and in a call's
+  `input` and `intent` wherever a text there repeats it. What a tool returns is the tool's.
+- An `intent` is recorded whether or not the call's inputs are: `DisableIntent` is what stops it.
+  What an agent writes as `need` to `get_more_tools` is that tool's input, recorded like any
+  other: with `Inputs` off for it, the server doesn't get the tool.
 - IDs (`OrgID`, `UserID`, `ConversationID`, the tool's name) are never redacted. Each must be at
   most 512 bytes. Send internal IDs, not email addresses: LSquare deletes a person's events by
   their `UserID`.
@@ -345,10 +500,8 @@ to 50 ms more to be told what is still pending, and returns.
 
 This is a first beta. The TypeScript and Python SDKs also have these, and this one doesn't yet:
 
-- **The extras**: `session_id` and `intent` inputs, and the `get_more_tools` tool. So calls aren't
-  grouped into tasks, and an event has no `sessionId`, `intent` or `extra`.
 - **`capture()` and turn events**: an agent's turns, outside MCP or from inside a tool, so a call's
-  event has no `agent` part or `turnRef`.
+  event has no `agent` part or `turnRef`, and a call isn't grouped by a `conversationId`.
 - **Other MCP libraries**, such as `mark3labs/mcp-go`.
 - **Tasks**: a call that creates a task is recorded without its `task`.
 - **Sending handed to the host**: `flushBeforeReply` and `waitUntil`. Call `Flush` yourself where
@@ -364,6 +517,15 @@ and its MCP SDK:
 - The server's instructions come from the server's answers to `initialize` and `server/discover`,
   or from `ServerInstructions` ([above](#server-instructions)), where the other SDKs read them
   from the server as each call arrives.
+- The other SDKs read each tool's own definition to know which get the `session_id` and
+  `intent` inputs. The Go MCP SDK doesn't show it, so this one goes by the schema the server
+  lists, only where that schema refuses the inputs it doesn't name, and learns the tools from the
+  server's listings ([above](#which-tools-get-the-inputs)).
+- A result marked as an error never gets a task ID, where the TypeScript SDK gives one on a
+  tool's own error result: here it can't be told from the SDK's refusal of the arguments. A
+  result with no content gets none either.
+- A call to `get_more_tools` goes to the server first, which says it has no such tool, before
+  the wrapper answers it: the MCP middleware added before `Instrument` sees that call fail.
 - A tool added with `mcp.AddTool` that returns an error other than a `*jsonrpc.Error`, or whose
   arguments are refused, is a `tool_error`, where the TypeScript SDK says `thrown` and `protocol`
   ([above](#how-a-call-failed)).
@@ -380,4 +542,5 @@ and its MCP SDK:
 
 ## Licence
 
-MIT.
+MIT. `lsquaremcp` includes code adapted from AgentCat's TypeScript SDK, also MIT: see
+`THIRD_PARTY_NOTICES`.

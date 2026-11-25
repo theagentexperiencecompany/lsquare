@@ -46,9 +46,9 @@ func main() {
 	server := mcp.NewServer(info, nil)
 	mcp.AddTool(server, forecast, getForecast)
 
-	// The one line per server. Tools and ServerInfo are what the server was made with: with them,
-	// a call carries its tool's description and the server's name from the first one.
-	lsquaremcp.Instrument(server, client, &lsquaremcp.Options{Tools: []*mcp.Tool{forecast}, ServerInfo: info})
+	// The one line per server. ServerInfo is what the server was made with: with it, a call
+	// carries the server's name from the first one.
+	lsquaremcp.Instrument(server, client, &lsquaremcp.Options{ServerInfo: info})
 
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true})
 	mux := http.NewServeMux()

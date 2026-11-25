@@ -75,9 +75,10 @@ func differentialText(r *rand.Rand) string {
 }
 
 // differentialListed gives some calls what is the same on every call of a tool or a server: the
-// tool's description and the server's instructions, some long enough to be cut.
+// tool's description and the server's instructions, some long enough to be cut. And what the
+// extras add to a call: why it was made, some long enough to be cut too, and its session.
 func differentialListed(r *rand.Rand, call *jsonv.Object) {
-	for _, key := range []string{"toolDescription", "serverInstructions"} {
+	for _, key := range []string{"intent", "toolDescription", "serverInstructions"} {
 		switch r.Intn(6) {
 		case 0:
 			call.Set(key, differentialText(r))
@@ -85,6 +86,13 @@ func differentialListed(r *rand.Rand, call *jsonv.Object) {
 			text := differentialText(r)
 			call.Set(key, strings.Repeat(differentialText(r)+" ", 1+2500/(1+len(text)))+text)
 		}
+	}
+	if r.Intn(4) == 0 {
+		call.Set("sessionId", "ses_"+strings.Repeat("Ab9_-", 4)+"xy")
+		call.Set("sessionSource", []string{"sent", "issued", "protocol"}[r.Intn(3)])
+	}
+	if r.Intn(9) == 0 {
+		call.Set("extra", "missing_tools")
 	}
 }
 
@@ -156,7 +164,12 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 			call.Set("result", result)
 			if r.Intn(5) == 0 {
 				failure := jsonv.NewObject()
-				failure.Set("message", differentialText(r))
+				message := differentialText(r)
+				// Some long enough to be cut, on a call whose intent may be too.
+				if r.Intn(3) == 0 {
+					message = strings.Repeat(message+" ", 1+4500/(1+len(message)))
+				}
+				failure.Set("message", message)
 				failure.Set("category", "tool_error")
 				call.Set("error", failure)
 				call.Set("status", "error")
