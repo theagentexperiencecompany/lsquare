@@ -193,6 +193,7 @@ pub struct InstrumentOptions {
     inputs: Choice,
     results: Choice,
     descriptions: Choice,
+    instructions: bool,
 }
 
 impl Default for InstrumentOptions {
@@ -202,6 +203,7 @@ impl Default for InstrumentOptions {
             inputs: Choice::All,
             results: Choice::All,
             descriptions: Choice::All,
+            instructions: true,
         }
     }
 }
@@ -280,6 +282,14 @@ impl InstrumentOptions {
         self.descriptions = Choice::PerTool(Arc::new(record));
         self
     }
+
+    /// Record the server's instructions on each call, as the server gives them to clients (the
+    /// default), or not. Cut at 2,000 characters. They are the server's, whichever the tool: there
+    /// is no choice per tool.
+    pub fn instructions(mut self, record: bool) -> InstrumentOptions {
+        self.instructions = record;
+        self
+    }
 }
 
 struct Shared {
@@ -289,6 +299,8 @@ struct Shared {
     listed: Mutex<HashMap<String, String>>,
     /// What the server calls itself, read as it was instrumented.
     server: Option<Value>,
+    /// The instructions it gives clients, read then too, when they are recorded and it has some.
+    instructions: Option<Value>,
 }
 
 /// A [`ServerHandler`] whose tool calls are recorded. Made by [`instrument`]; serve it where the
@@ -329,9 +341,12 @@ impl<H> Instrumented<H> {
 }
 
 /// Records every tool call `handler` answers. Each `tools/call` becomes one `tool_call` event:
-/// the tool, its description, its arguments, its result (text shortened, files as sizes), how it
-/// ended and how long it took, the calling app and the protocol version, and the IDs `identify`
-/// gives. Never panics.
+/// the tool, its description, the server's instructions, the call's arguments, its result (text
+/// shortened, files as sizes), how it ended and how long it took, the calling app and the protocol
+/// version, and the IDs `identify` gives. Never panics.
+///
+/// The server's name, version and instructions are read here, from `get_info`, once: a handler
+/// whose `get_info` answers differently later is recorded with what it answered now.
 ///
 /// A server built for each session or request (as `StreamableHttpService` builds them) is
 /// instrumented each time, with the same client. A handler instrumented twice, one wrapper inside
@@ -342,15 +357,24 @@ pub fn instrument<H: ServerHandler>(
     options: InstrumentOptions,
 ) -> Instrumented<H> {
     let inner = client.inner().clone();
-    // Its name and version, read here once: the app's `get_info` never runs on a call's path.
-    let server = if inner.enabled() {
+    // Its name and version, and the instructions it gives clients, read here once: the app's
+    // `get_info` never runs on a call's path. Only instructions that aren't empty, which is all a
+    // client is ever sent.
+    let (server, instructions) = if inner.enabled() {
         catch_unwind(AssertUnwindSafe(|| {
-            let info = handler.get_info().server_info;
-            named(&info.name, &info.version)
+            let info = handler.get_info();
+            let instructions = info
+                .instructions
+                .filter(|instructions| options.instructions && !instructions.is_empty())
+                .map(Value::String);
+            (
+                Some(named(&info.server_info.name, &info.server_info.version)),
+                instructions,
+            )
         }))
-        .ok()
+        .unwrap_or((None, None))
     } else {
-        None
+        (None, None)
     };
     if inner.dry_run() {
         let name = server
@@ -371,6 +395,7 @@ pub fn instrument<H: ServerHandler>(
             options,
             listed: Mutex::new(HashMap::new()),
             server,
+            instructions,
         }),
     }
 }
@@ -854,6 +879,8 @@ impl<H: ServerHandler> Instrumented<H> {
         let failure = failure.map(Value::Object);
         let data = CallData {
             tool_description: call.description.as_ref(),
+            // The server's, whichever tool is called.
+            server_instructions: self.shared.instructions.as_ref(),
             input: None,
             result,
             error: failure.as_ref(),

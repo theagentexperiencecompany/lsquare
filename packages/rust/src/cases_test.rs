@@ -206,6 +206,7 @@ pub(crate) fn build(case: &Js) -> Outcome {
         let head = head_of(call);
         let data = CallData {
             tool_description: call.get("toolDescription"),
+            server_instructions: call.get("serverInstructions"),
             input: call.get("input"),
             result: call.get("result").map(ResultIn::Json),
             error: call.get("error"),
@@ -340,6 +341,7 @@ fn over_limits(event: &Map<String, Value>) -> Vec<String> {
             ("error", 4_000),
             ("intent", 500),
             ("toolDescription", 1_000),
+            ("serverInstructions", 2_000),
         ] {
             if let Some(value) = event.get(key) {
                 check_strings(value, limit, key, &mut over);
@@ -673,6 +675,7 @@ fn a_call_read_in_two_steps_gives_the_same_event() {
         let head = head_of(call);
         let rest = |input| CallData {
             tool_description: call.get("toolDescription"),
+            server_instructions: call.get("serverInstructions"),
             input,
             result: call.get("result").map(ResultIn::Json),
             error: call.get("error"),

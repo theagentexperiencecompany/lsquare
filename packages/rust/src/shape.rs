@@ -21,6 +21,7 @@ pub(crate) const LIMIT_AGENT: usize = 16_000;
 pub(crate) const LIMIT_RESULT: usize = 4_000;
 pub(crate) const LIMIT_INTENT: usize = 500;
 pub(crate) const LIMIT_DESCRIPTION: usize = 1_000;
+pub(crate) const LIMIT_INSTRUCTIONS: usize = 2_000;
 pub(crate) const MAX_ENTRIES: usize = 100;
 pub(crate) const MAX_LEVELS: usize = 10;
 /// Redaction reads this far past a cut, so a secret that runs into it is still recognised.

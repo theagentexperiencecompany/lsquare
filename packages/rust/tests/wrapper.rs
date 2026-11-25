@@ -153,6 +153,101 @@ async fn the_description_is_the_registered_one_or_else_the_one_last_listed() {
 }
 
 #[tokio::test]
+async fn a_servers_instructions_are_on_each_of_its_calls() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, seen) = client(&ingestion, |options| options);
+    let server = |instructions: &str| Tools {
+        registered: true,
+        instructions: Some(instructions.to_owned()),
+        ..Tools::default()
+    };
+    let instructions = "Write to ann@example.com before you cancel an order.";
+    let mcp = connect(instrument(
+        server(instructions),
+        &lsquare,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    // Whichever tool is called, and however the call ends.
+    call(&mcp, "echo", json!({ "text": "for ann@example.com" }))
+        .await
+        .unwrap();
+    call(&mcp, "refused", json!({})).await.unwrap_err();
+    lsquare.flush().await;
+    until(|| ingestion.events().len() == 2).await;
+    let events = ingestion.events();
+    // Redacted as any text, with the numbers the rest of the event has.
+    assert_eq!(events[0]["input"], json!({ "text": "for [EMAIL_1]" }));
+    assert_eq!(
+        events[0]["serverInstructions"],
+        "Write to [EMAIL_1] before you cancel an order."
+    );
+    assert_eq!(events[0]["toolDescription"], "The registered description.");
+    assert_eq!(
+        events[1]["serverInstructions"],
+        "Write to [EMAIL_1] before you cancel an order."
+    );
+    // After the tool's description, where TypeScript writes them.
+    let keys: Vec<&String> = events[0].as_object().unwrap().keys().collect();
+    let place = |name: &str| keys.iter().position(|key| *key == name).unwrap();
+    assert_eq!(place("serverInstructions"), place("toolDescription") + 1);
+    if let Some(says) = ingestion_says(&events) {
+        assert_eq!(says, ["valid", "valid"]);
+    }
+
+    // Cut at 2,000 characters, and marked.
+    let long = connect(instrument(
+        server(&"word ".repeat(1_000)),
+        &lsquare,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    call(&long, "echo", json!({ "text": "hi" })).await.unwrap();
+    lsquare.flush().await;
+    until(|| ingestion.events().len() == 3).await;
+    let event = &ingestion.events()[2];
+    let kept = event["serverInstructions"].as_str().unwrap();
+    assert!(kept.ends_with("…[+3000 chars]"), "{kept}");
+    assert_eq!(
+        kept.chars().count(),
+        2_000 + "…[+3000 chars]".chars().count()
+    );
+    assert_eq!(event["truncated"], json!(["serverInstructions"]));
+
+    // Not recorded: with the option off, from a server that has none or only empty ones, and in
+    // a limited-diagnostics event.
+    let off = connect(instrument(
+        server(instructions),
+        &lsquare,
+        InstrumentOptions::new().instructions(false),
+    ))
+    .await;
+    let none = connect(instrument(
+        Tools::default(),
+        &lsquare,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    let empty = connect(instrument(server(""), &lsquare, InstrumentOptions::new())).await;
+    let unidentified = connect(instrument(
+        server(instructions),
+        &lsquare,
+        InstrumentOptions::new().identify(|_| async { Err(std::io::Error::other("no").into()) }),
+    ))
+    .await;
+    for mcp in [&off, &none, &empty, &unidentified] {
+        call(mcp, "echo", json!({ "text": "hi" })).await.unwrap();
+    }
+    lsquare.flush_within(Duration::from_secs(3)).await;
+    until(|| ingestion.events().len() == 7).await;
+    for event in &ingestion.events()[3..] {
+        assert!(event.get("serverInstructions").is_none(), "{event}");
+    }
+    assert_eq!(ingestion.events()[6]["identity"], "failed");
+    assert_eq!(seen.codes(), ["identify_failed"]);
+}
+
+#[tokio::test]
 async fn inputs_and_results_are_recorded_where_the_options_say() {
     let ingestion = Ingestion::accepting().await;
     let (lsquare, _) = client(&ingestion, |options| options);

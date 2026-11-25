@@ -20,13 +20,15 @@ use crate::normalize::{
 use crate::redact::{Pattern, Redactor, JSON_FIELD};
 use crate::shape::{
     decoded_size, secret_string, shape_object, shape_string, spend, weight, KeyNames, ShapeState,
-    Shaped, LIMIT_DESCRIPTION, LIMIT_INPUT, LIMIT_INTENT, LIMIT_RESULT, MAX_ENTRIES, SCAN_BUDGET,
+    Shaped, LIMIT_DESCRIPTION, LIMIT_INPUT, LIMIT_INSTRUCTIONS, LIMIT_INTENT, LIMIT_RESULT,
+    MAX_ENTRIES, SCAN_BUDGET,
 };
 
-/// Parts left out, in order, until an event fits: biggest and least needed first. A call's tool
-/// description goes first of all: it is the same on every call of the tool, so nothing that only
-/// this call has is left out to make room for it.
-const CALL_ORDER: [&[&str]; 5] = [
+/// Parts left out, in order, until an event fits: biggest and least needed first. A call's server
+/// instructions and tool description go first of all: they are the same on every call of the
+/// server or the tool, so nothing that only this call has is left out to make room for them.
+const CALL_ORDER: [&[&str]; 6] = [
+    &["serverInstructions"],
     &["toolDescription"],
     &["result"],
     &["input"],
@@ -171,6 +173,8 @@ impl<'a> BlockIn<'a> {
 pub(crate) struct CallData<'a> {
     /// The tool's description as agents were listed it when the call came.
     pub tool_description: Option<&'a Value>,
+    /// The server's instructions, as it gives them to clients.
+    pub server_instructions: Option<&'a Value>,
     /// The arguments, when inputs are recorded for this tool.
     pub input: Option<&'a Value>,
     /// MCP's result, when results are recorded for this tool.
@@ -242,6 +246,7 @@ struct ShapedCall {
     error: Option<ShapedError>,
     intent: Option<Shaped>,
     tool_description: Option<Shaped>,
+    server_instructions: Option<Shaped>,
     agent: Option<ShapedTurn>,
     metadata: Option<Map<String, Value>>,
 }
@@ -264,9 +269,14 @@ impl ShapedCallData {
     pub(crate) fn held_bytes(&self) -> usize {
         let shaped = &self.shaped;
         let mut bytes = 512;
-        for value in [&shaped.input, &shaped.intent, &shaped.tool_description]
-            .into_iter()
-            .flatten()
+        for value in [
+            &shaped.input,
+            &shaped.intent,
+            &shaped.tool_description,
+            &shaped.server_instructions,
+        ]
+        .into_iter()
+        .flatten()
         {
             bytes += weight(value);
         }
@@ -398,6 +408,22 @@ impl CallShaper {
                     )
                 });
         }
+        if let Some(instructions) = data.server_instructions {
+            shaped.server_instructions = shape_field(
+                &mut state,
+                &mut notes,
+                "serverInstructions",
+                |state, notes| {
+                    shape_text(
+                        Some(instructions),
+                        LIMIT_INSTRUCTIONS,
+                        state,
+                        notes,
+                        "serverInstructions",
+                    )
+                },
+            );
+        }
         ShapedCallData {
             shaped,
             notes,
@@ -490,6 +516,22 @@ pub(crate) fn shape_call(data: &CallData, context: &Context) -> ShapedCallData {
                     "toolDescription",
                 )
             });
+    }
+    if let Some(instructions) = data.server_instructions {
+        shaped.server_instructions = shape_field(
+            &mut state,
+            &mut notes,
+            "serverInstructions",
+            |state, notes| {
+                shape_text(
+                    Some(instructions),
+                    LIMIT_INSTRUCTIONS,
+                    state,
+                    notes,
+                    "serverInstructions",
+                )
+            },
+        );
     }
     let agent_given = data.agent.is_some_and(Value::is_object);
     ShapedCallData {
@@ -1023,6 +1065,18 @@ fn reshape_call(
             )
         });
     }
+    if let Some(instructions) = given("serverInstructions") {
+        shaped.server_instructions =
+            shape_field(state, notes, "serverInstructions", |state, notes| {
+                shape_text(
+                    Some(instructions),
+                    LIMIT_INSTRUCTIONS,
+                    state,
+                    notes,
+                    "serverInstructions",
+                )
+            });
+    }
     match metadata_value(out.get("metadata"), notes, METADATA_BUDGET) {
         Metadata::TooLarge if !diagnostics => return None,
         Metadata::Some(metadata) => shaped.metadata = Some(metadata),
@@ -1243,9 +1297,14 @@ fn reserve_call(shaped: &ShapedCall, identity: &Map<String, Value>, redactor: &m
         redactor.reserve_text(id);
         redactor.reserve_text(status);
     }
-    for value in [&shaped.input, &shaped.intent, &shaped.tool_description]
-        .into_iter()
-        .flatten()
+    for value in [
+        &shaped.input,
+        &shaped.intent,
+        &shaped.tool_description,
+        &shaped.server_instructions,
+    ]
+    .into_iter()
+    .flatten()
     {
         redactor.reserve(value);
     }
@@ -1391,6 +1450,12 @@ fn call_event(
         event.insert(
             "toolDescription".into(),
             redactor.finalize_text(description, all).into(),
+        );
+    }
+    if let Some(instructions) = &shaped.server_instructions {
+        event.insert(
+            "serverInstructions".into(),
+            redactor.finalize_text(instructions, all).into(),
         );
     }
     if let Some((id, status)) = &shaped.task {

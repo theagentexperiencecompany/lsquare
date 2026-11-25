@@ -377,6 +377,8 @@ pub struct Tools {
     pub registered: bool,
     /// Its `get_tool` panics.
     pub get_tool_panics: bool,
+    /// The instructions it gives clients.
+    pub instructions: Option<String>,
 }
 
 pub const ECHO_DESCRIPTION: &str = "Says back what it was told.";
@@ -390,6 +392,7 @@ impl ServerHandler for Tools {
         let mut info = ServerConfig::default();
         info.server_info.name = "test-server".into();
         info.server_info.version = "1.2.3".into();
+        info.instructions = self.instructions.clone();
         info.capabilities = ServerCapabilities::builder()
             .enable_tools()
             .enable_prompts()

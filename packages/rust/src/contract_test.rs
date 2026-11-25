@@ -13,8 +13,8 @@ use crate::event::{finish_call, shape_call, CallData, CallHead, Context};
 use crate::normalize::MAX_ID_BYTES;
 use crate::redact::{ORDER, SECRET_KEYS};
 use crate::shape::{
-    LIMIT_AGENT, LIMIT_DESCRIPTION, LIMIT_INPUT, LIMIT_INTENT, LIMIT_RESULT, LOOKAHEAD,
-    MAX_ENTRIES, MAX_LEVELS, SCAN_BUDGET,
+    LIMIT_AGENT, LIMIT_DESCRIPTION, LIMIT_INPUT, LIMIT_INSTRUCTIONS, LIMIT_INTENT, LIMIT_RESULT,
+    LOOKAHEAD, MAX_ENTRIES, MAX_LEVELS, SCAN_BUDGET,
 };
 
 fn read(path: &str) -> String {
@@ -153,8 +153,10 @@ fn a_limited_diagnostics_event_keeps_only_what_the_contract_allows() {
         let failure = serde_json::json!({ "message": "it broke for ann@example.com", "type": "Oops", "code": 7, "category": category });
         let input = serde_json::json!({ "who": "ann@example.com" });
         let description = serde_json::json!("Finds orders.");
+        let instructions = serde_json::json!("Ask before you cancel an order.");
         let data = CallData {
             tool_description: Some(&description),
+            server_instructions: Some(&instructions),
             input: Some(&input),
             error: Some(&failure),
             ..CallData::default()
@@ -189,6 +191,57 @@ fn a_limited_diagnostics_event_keeps_only_what_the_contract_allows() {
 }
 
 #[test]
+fn the_servers_instructions_are_the_first_part_left_out_to_make_an_event_fit() {
+    let description = serde_json::json!("Finds orders. ".repeat(20));
+    let instructions = serde_json::json!("Ask before you cancel an order. ".repeat(20));
+    let input = serde_json::json!({ "query": "lorem ipsum ".repeat(40) });
+    let data = CallData {
+        tool_description: Some(&description),
+        server_instructions: Some(&instructions),
+        input: Some(&input),
+        ..CallData::default()
+    };
+    let head = CallHead {
+        call_id: "call-1".into(),
+        captured_at: "2026-10-28T00:00:00.000Z".into(),
+        tool_name: "search".into(),
+        status: "completed".into(),
+        duration_ms: 3.into(),
+        ..CallHead::default()
+    };
+    let built = |max_event_bytes: usize| {
+        let context = Context {
+            sdk: serde_json::json!({ "name": "lsquare", "version": "0", "language": "rust" }),
+            patterns: ORDER.to_vec(),
+            redact_keys: Vec::new(),
+            max_event_bytes,
+        };
+        finish_call(shape_call(&data, &context), &head, &context, false)
+            .expect("an event")
+            .event
+    };
+    let size =
+        |event: &serde_json::Map<String, serde_json::Value>| crate::json::stringify(event).len();
+    let whole = built(256 * 1024);
+    assert!(whole.contains_key("serverInstructions") && whole.contains_key("toolDescription"));
+    // One byte short: the instructions go, and nothing else.
+    let fitted = built(size(&whole) - 1);
+    assert!(!fitted.contains_key("serverInstructions"));
+    assert!(fitted.contains_key("toolDescription") && fitted.contains_key("input"));
+    assert_eq!(
+        fitted["truncated"],
+        serde_json::json!(["serverInstructions"])
+    );
+    // Shorter still: the tool's description goes next, before anything only this call has.
+    let fitted = built(size(&fitted) - 1);
+    assert!(!fitted.contains_key("toolDescription") && fitted.contains_key("input"));
+    assert_eq!(
+        fitted["truncated"],
+        serde_json::json!(["serverInstructions", "toolDescription"])
+    );
+}
+
+#[test]
 fn the_limits_and_defaults_are_typescripts() {
     let source = contract_dir().join("../lsquare/src");
     if !source.join("client.ts").exists() {
@@ -205,8 +258,8 @@ fn the_limits_and_defaults_are_typescripts() {
     assert_eq!(shape_constants["MAX_ENTRIES"], MAX_ENTRIES as u64);
     assert_eq!(shape_constants["MAX_LEVELS"], MAX_LEVELS as u64);
     assert_eq!(shape_constants["LOOKAHEAD"], LOOKAHEAD as u64);
-    let limits = Regex::new(r"LIMITS = \{ input: ([0-9_]+), agent: ([0-9_]+), result: ([0-9_]+), intent: ([0-9_]+), description: ([0-9_]+) \}").unwrap().captures(&shape).expect("shape.ts's LIMITS");
-    let limits: Vec<u64> = (1..=5).map(|index| product(&limits[index])).collect();
+    let limits = Regex::new(r"LIMITS = \{ input: ([0-9_]+), agent: ([0-9_]+), result: ([0-9_]+), intent: ([0-9_]+), description: ([0-9_]+), instructions: ([0-9_]+) \}").unwrap().captures(&shape).expect("shape.ts's LIMITS");
+    let limits: Vec<u64> = (1..=6).map(|index| product(&limits[index])).collect();
     assert_eq!(
         limits,
         [
@@ -214,7 +267,8 @@ fn the_limits_and_defaults_are_typescripts() {
             LIMIT_AGENT as u64,
             LIMIT_RESULT as u64,
             LIMIT_INTENT as u64,
-            LIMIT_DESCRIPTION as u64
+            LIMIT_DESCRIPTION as u64,
+            LIMIT_INSTRUCTIONS as u64
         ]
     );
 

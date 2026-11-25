@@ -99,6 +99,7 @@ tool your handler calls on its way is an event of its own. Each `tools/call` bec
 | --- | --- |
 | `toolName`, `status`, `durationMs` | The tool, `completed` or `error`, and how long the handler took, on a monotonic clock |
 | `toolDescription` | The tool's description as agents were listed it: the registered tool's (`get_tool`, which `#[tool_handler]` writes for you), or else the one this instance last listed. Cut at 1,000 characters |
+| `serverInstructions` | The instructions your server gives clients (`get_info().instructions`), on every call whichever the tool. Read when `instrument()` is called, not on each call: your `get_info` never runs on a call's path. Cut at 2,000 characters |
 | `input` | The arguments. Strings are cut at 16,000 characters |
 | `result` | MCP's result as your handler returned it: text cut at 4,000 characters, images, audio and blobs as their size in bytes |
 | `error` | For a failed call, its `category`: `protocol` (the handler returned an `ErrorData`; its `code` is kept), `tool_error` (an `isError` result), `timeout` (the request was cancelled), `thrown` (the handler panicked). Its message is kept only when both inputs and results are recorded for the tool, since it can quote either |
@@ -125,6 +126,7 @@ let options = InstrumentOptions::new()
 | `inputs`, `inputs_for` | everywhere | Record arguments: everywhere, nowhere, or for the tools a function returns true for |
 | `results`, `results_for` | everywhere | Record results, the same way |
 | `descriptions`, `descriptions_for` | everywhere | Record each call's tool description, the same way |
+| `instructions` | on | Record the server's instructions on each call. `instructions(false)` turns it off |
 
 ## What leaves your process
 

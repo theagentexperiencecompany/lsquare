@@ -513,6 +513,10 @@ fn generate(count: usize, seed: u64) -> String {
             field(&mut out, "toolDescription");
             out.push_str(&stringify(&Value::String(text(&mut random))));
         }
+        if random.chance(10) {
+            field(&mut out, "serverInstructions");
+            out.push_str(&stringify(&Value::String(text(&mut random))));
+        }
         if random.chance(8) {
             field(&mut out, "status");
             out.push_str("\"error\"");
