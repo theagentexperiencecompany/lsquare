@@ -33,8 +33,7 @@ func (m member) name() (string, bool) {
 	if !m.escaped {
 		return string(m.key), true
 	}
-	quoted := make([]byte, 0, len(m.key)+2)
-	quoted = append(append(append(quoted, '"'), m.key...), '"')
+	quoted := append(append([]byte{'"'}, m.key...), '"')
 	var text string
 	if err := json.Unmarshal(quoted, &text); err != nil {
 		return "", false

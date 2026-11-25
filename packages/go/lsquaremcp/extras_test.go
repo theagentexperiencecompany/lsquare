@@ -9,6 +9,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// quoted is text as a JSON string.
+func quoted(text string) string {
+	out, _ := json.Marshal(text)
+	return string(out)
+}
+
 func TestSessionIDs(t *testing.T) {
 	seen := map[string]bool{}
 	for range 200 {

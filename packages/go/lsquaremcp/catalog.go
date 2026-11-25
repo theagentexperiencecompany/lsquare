@@ -261,10 +261,9 @@ func (w *instrumented) onList(ctx context.Context, next mcp.MethodHandler, metho
 		if w.client.Ended() {
 			return
 		}
-		tools := make([]*mcp.Tool, len(page.Tools), len(page.Tools)+1)
+		tools := slices.Clone(page.Tools)
 		changed, own := false, false
 		for i, tool := range page.Tools {
-			tools[i] = tool
 			if tool == nil || tool.Name == "" {
 				continue
 			}
@@ -330,12 +329,22 @@ func answer(arguments []byte, session *mcp.ServerSession) *mcp.CallToolResult {
 			return reply
 		}
 	}
-	text, failed := missingToolsAnswer, ""
-	if reply.IsError {
-		text, failed = missingToolsNoNeed, `,"isError":true`
+	// Read back from its JSON, which is the one way to give a result that mark.
+	type block struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
 	}
+	text := missingToolsAnswer
+	if reply.IsError {
+		text = missingToolsNoNeed
+	}
+	written, err := json.Marshal(struct {
+		Content    []block `json:"content"`
+		IsError    bool    `json:"isError,omitempty"`
+		ResultType string  `json:"resultType"`
+	}{Content: []block{{Type: "text", Text: text}}, IsError: reply.IsError, ResultType: "complete"})
 	complete := new(mcp.CallToolResult)
-	if err := json.Unmarshal([]byte(`{"content":[{"type":"text","text":`+quoted(text)+`}]`+failed+`,"resultType":"complete"}`), complete); err != nil {
+	if err != nil || json.Unmarshal(written, complete) != nil {
 		return reply
 	}
 	return complete

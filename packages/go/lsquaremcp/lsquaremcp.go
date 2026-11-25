@@ -771,8 +771,7 @@ func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Re
 	id := newSessionID()
 	reply := *typed
 	// A list of its own: the tool's may have room at its end, which the tool still owns.
-	reply.Content = append(make([]mcp.Content, 0, len(typed.Content)+1), typed.Content...)
-	reply.Content = append(reply.Content, &mcp.TextContent{Text: idLine(id)})
+	reply.Content = slices.Concat(typed.Content, []mcp.Content{&mcp.TextContent{Text: idLine(id)}})
 	// The SDK adds to a reply's metadata as it sends it.
 	reply.Meta = maps.Clone(typed.Meta)
 	call.session = &session{id, "issued"}

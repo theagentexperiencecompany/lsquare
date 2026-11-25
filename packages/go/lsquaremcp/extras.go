@@ -10,6 +10,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -91,33 +92,45 @@ func sessionless(version string) bool {
 	return version >= sessionlessProtocol
 }
 
-// quoted is text as a JSON string.
-func quoted(text string) string {
-	out, _ := json.Marshal(text)
-	return string(out)
+// property is an input as a schema lists it: a string, with what it is for.
+type property struct {
+	Type        string `json:"type"`
+	Description string `json:"description"`
 }
 
 // inputProperty is the member an input is listed as: an optional string, with its description.
+// Written by the JSON encoder, as everything the wrapper adds to a schema is.
 func inputProperty(name string) string {
 	description := sessionDescription
 	if name == intentInput {
 		description = intentDescription
 	}
-	return quoted(name) + `:{"type":"string","description":` + quoted(description) + `}`
+	member, _ := json.Marshal(map[string]property{name: {Type: "string", Description: description}})
+	// The member itself, without the braces of the object it was written in.
+	return string(member[1 : len(member)-1])
 }
 
 // missingToolsTool is get_more_tools as listed: it takes need, and session_id when sessions are
 // on. It changes nothing on the server, so it's read-only, and its need leaves the server.
 func missingToolsTool(sessions bool) *mcp.Tool {
-	properties := `"need":{"type":"string","description":` + quoted(needDescription) + `}`
-	if sessions {
-		properties += "," + inputProperty(sessionInput)
+	type properties struct {
+		Need      property  `json:"need"`
+		SessionID *property `json:"session_id,omitempty"`
 	}
+	schema := struct {
+		Type       string     `json:"type"`
+		Properties properties `json:"properties"`
+		Required   []string   `json:"required"`
+	}{Type: "object", Properties: properties{Need: property{Type: "string", Description: needDescription}}, Required: []string{"need"}}
+	if sessions {
+		schema.Properties.SessionID = &property{Type: "string", Description: sessionDescription}
+	}
+	written, _ := json.Marshal(schema)
 	no, yes := false, true
 	return &mcp.Tool{
 		Name:        missingTools,
 		Description: missingToolsDescription,
-		InputSchema: json.RawMessage(`{"type":"object","properties":{` + properties + `},"required":["need"]}`),
+		InputSchema: json.RawMessage(written),
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: &no, OpenWorldHint: &yes},
 	}
 }
@@ -321,10 +334,7 @@ func advertise(schema []byte, names []string) []byte {
 			put = "," + put
 		}
 	}
-	out := make([]byte, 0, len(schema)+len(put))
-	out = append(out, schema[:at]...)
-	out = append(out, put...)
-	return append(out, schema[at:]...)
+	return slices.Concat(schema[:at], []byte(put), schema[at:])
 }
 
 // localReferences reports whether every $ref in the schema points into its $defs, definitions or
