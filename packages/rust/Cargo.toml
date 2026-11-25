@@ -9,7 +9,7 @@ authors = ["The Agent Experience Company"]
 homepage = "https://lsquare.io"
 repository = "https://github.com/theagentexperiencecompany/lsquare"
 readme = "README.md"
-keywords = ["mcp", "model-context-protocol", "agents", "analytics", "observability"]
+keywords = ["mcp", "mcp-server", "agents", "analytics", "observability"]
 categories = ["development-tools::debugging", "api-bindings"]
 include = ["src/**/*", "examples/**/*.rs", "README.md", "LICENSE", "Cargo.toml"]
 
