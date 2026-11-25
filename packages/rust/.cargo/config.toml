@@ -1,0 +1,5 @@
+# Dependencies are resolved to versions that build with the Rust the crate declares as its
+# minimum (`rust-version` in Cargo.toml), so `cargo update` doesn't take one that needs a newer
+# Rust: CI builds the crate with that minimum, from Cargo.lock.
+[resolver]
+incompatible-rust-versions = "fallback"
