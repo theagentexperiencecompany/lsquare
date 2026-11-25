@@ -39,10 +39,13 @@ export interface V1Turn extends Checked {
   sdk?: { name: string; version: string }
 }
 
+/** The SDKs that send 0.2 events, by the language they are written in. */
+export type SdkLanguage = 'js' | 'python' | 'go' | 'rust'
+
 /** A 0.2 event: every ID is optional, except a call's tool. */
 interface V2Event extends Checked {
   schemaVersion: 2
-  sdk: { name: string; version: string; language: 'js' | 'python' | 'rust'; runtime?: string }
+  sdk: { name: string; version: string; language: SdkLanguage; runtime?: string }
   orgId?: string
   userId?: string
   conversationId?: string
@@ -97,6 +100,7 @@ export const byteLength = (text: string): number => encoder.encode(text).length
 // Records, not lists, so the compiler fails if the types gain or lose a member; the SDKs' tests
 // check that theirs are these.
 const PATTERN_NAMES: Record<PatternName, true> = { email: true, phone: true, card: true, secret: true, ip: true }
+const SDK_LANGUAGES: Record<SdkLanguage, true> = { js: true, python: true, go: true, rust: true }
 const DROPPED_REASONS: Record<DroppedReason, true> = {
   wrong_type: true,
   not_json: true,
@@ -220,7 +224,8 @@ const V2_COMMON: Record<string, Check> = {
     isObject(value) &&
     isString(value.name) &&
     isString(value.version) &&
-    oneOf('js', 'python', 'rust')(value.language) &&
+    isString(value.language) &&
+    hasOwn(SDK_LANGUAGES, value.language) &&
     optional(value, 'runtime', isString),
   orgId: isId,
   userId: isId,

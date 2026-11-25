@@ -109,12 +109,7 @@ fn the_names_the_ingestion_accepts_are_the_ones_this_sdk_writes() {
         patterns
     );
     assert!(
-        names(
-            &validator,
-            "sdk: { name: string; version: string; language:",
-            "\n"
-        )
-        .contains("rust"),
+        names(&validator, "export type SdkLanguage =", "\n").contains("rust"),
         "the contract accepts `sdk.language: rust`"
     );
     // Every reason this SDK gives for removing a value is one the ingestion knows.

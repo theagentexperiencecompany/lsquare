@@ -41,6 +41,7 @@ ACTIONS = {
     "actions/checkout": "nothing",
     "actions/setup-node": "npm's, when `cache` names npm or, unless package-manager-cache is false, by itself",
     "astral-sh/setup-uv": "uv's, unless enable-cache is false",
+    "actions/setup-go": "Go's modules and build cache, unless `cache` is false",
     "actions/download-artifact": "nothing",
     "actions/upload-artifact": "nothing",
     "pypa/gh-action-pypi-publish": "nothing",
@@ -48,6 +49,7 @@ ACTIONS = {
 #: ci.yml caches on pull requests and pushes, never when pypi-release.yml calls it.
 CI_UV = "${{ inputs.release && 'false' || 'auto' }}"
 CI_NPM = "${{ !inputs.release && 'npm' || '' }}"
+CI_GO = "${{ !inputs.release }}"
 #: The npm packages' artifacts, taken by name: lsquare's, and @lsquare/node 0.1's and the contract's
 #: for their smoke checks.
 NPM_ARTIFACTS = {"lsquare-package", "lsquare-node-package", "lsquare-contract-package"}
@@ -124,6 +126,10 @@ def test_their_setup_actions_are_told_to_restore_nothing() -> None:
     assert node
     for job_id, inputs in node:
         assert inputs.get("cache", CI_NPM) == CI_NPM and inputs.get("package-manager-cache") is False, job_id
+    # Go is set up in ci.yml alone, and caches as npm does there: never in a release.
+    assert [name for name in NAMES if using(name, "actions/setup-go")] == ["ci.yml"]
+    for job_id, inputs in using("ci.yml", "actions/setup-go"):
+        assert inputs.get("cache") == CI_GO, job_id
 
 
 @pytest.mark.parametrize("name", NAMES)
