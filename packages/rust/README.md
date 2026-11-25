@@ -18,14 +18,20 @@ A server with one tool, served over HTTP on your machine, and one call to it wit
 [`examples/weather.rs`](examples/weather.rs), which `cargo run --example weather` runs from this
 folder.
 
-1. **Add** `lsquare` beside `rmcp`. It is a beta, so its version is written out in full: Cargo
-   doesn't pick a pre-release by itself.
+1. **Add** `lsquare` beside `rmcp`:
 
-   ```toml
-   [dependencies]
-   lsquare = "0.2.0-beta.1"
-   rmcp = { version = "~3.11", features = ["server", "macros", "transport-streamable-http-server"] }
+   ```sh
+   cargo add lsquare
    ```
+
+   ```sh
+   cargo add rmcp@~3.11 --features server,macros,transport-streamable-http-server
+   ```
+
+   `lsquare` is a beta: its only version on crates.io is a pre-release, which `cargo add` picks
+   while there is no stable one. A requirement written by hand needs the version in full, as
+   `cargo add` writes it (`lsquare = "0.2.0-beta.1"`): one such as `"0.2"` doesn't match a
+   pre-release.
 
 2. **Instrument the server:**
 
