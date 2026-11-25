@@ -39,6 +39,7 @@ def instrument(
     inputs: bool | Callable[[str], bool] = True,
     results: bool | Callable[[str], bool] = True,
     descriptions: bool | Callable[[str], bool] = True,
+    instructions: bool = True,
     extras: Literal[False] | dict[str, bool] | None = None,
     wait_until: Callable[[Any], Any] | None = None,
     flush_before_reply: bool = False,
@@ -68,7 +69,7 @@ def instrument(
             return server
         # Tracking calls needs the client's context variable: from here, for this client.
         internal.calls()
-        settings = read_options(internal, identify, inputs, results, extras, wait_until, flush_before_reply, descriptions)
+        settings = read_options(internal, identify, inputs, results, extras, wait_until, flush_before_reply, descriptions, instructions)
         state = State(
             internal=internal,
             settings=settings,

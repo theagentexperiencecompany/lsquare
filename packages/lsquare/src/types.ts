@@ -164,6 +164,8 @@ export interface ToolCallEvent extends EventBase {
   toolName: string
   /** The tool's description as agents were listed it when the call came, cut at 1,000 characters. See `descriptions`. */
   toolDescription?: string
+  /** The server's instructions as it gives them to clients, read when the call came, cut at 2,000 characters. See `instructions`. */
+  serverInstructions?: string
   server?: { name: string; version?: string }
   client?: { name: string; version?: string }
   protocolVersion?: string

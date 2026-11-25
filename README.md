@@ -18,7 +18,7 @@ code already using it: new servers use `lsquare`. The Go package records MCP too
 ## What leaves your process
 
 Each event holds the tool's name, status and duration, and by default its description, inputs and
-results, after the SDK has shortened long values and redacted common formats of emails, phone numbers, card
+results, and the server's instructions, after the SDK has shortened long values and redacted common formats of emails, phone numbers, card
 numbers, API keys and tokens, credentials in URLs and IP addresses. You choose what else it holds,
 and what it never sends: each README says what leaves your process and has a privacy checklist
 ([TypeScript](packages/lsquare/README.md#privacy-checklist),

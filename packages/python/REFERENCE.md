@@ -141,6 +141,40 @@ A tool without a description has none. Neither do the wrapper's own `get_more_to
 limited-diagnostics event. With `descriptions=False`, the wrapper reads no tool's description at
 all.
 
+### Server instructions
+
+Each call's event also carries the server's instructions, as `serverInstructions`: the text the
+server gives clients when they connect, which they pass on to the agent. It is the `instructions`
+you gave `Server`, `FastMCP` or `MCPServer`. When you reword them, you can then compare the calls
+made under each wording. They are cut at 2,000 characters, redacted like any text, and given to
+`before_send`, which can change them or take them out. `instructions=False` turns them off:
+
+```python
+instrument(mcp, lsquare, instructions=False)
+```
+
+It is a plain switch: the instructions are the same for every tool, so there is no function to
+choose tools with, and anything but `False` leaves them on.
+
+The wrapper reads them from the server as each call arrives, where the MCP SDK reads them to
+answer `initialize` (and `server/discover`, on mcp 2.x and fastmcp 4.x). It needs no handshake for
+that, so a stateless HTTP server has them on every call, and so does a low-level `Server` before
+any listing. Instructions you set later (fastmcp's `mcp.instructions = "..."`) are on the calls
+that arrive after that, also those of a client that connected before and was given the earlier
+ones.
+
+Only the server's own are recorded. These aren't, and the event then has what the server itself
+holds, or nothing:
+
+- instructions in an `InitializationOptions` you build yourself and pass to a low-level server's
+  `run()`, instead of the server's `create_initialization_options()`;
+- instructions a fastmcp 4.x proxy without any of its own forwards from the server behind it;
+- what a fastmcp middleware's `on_initialize` puts in the reply.
+
+A server without instructions has none, and neither does a limited-diagnostics event. The wrapper's
+own `get_more_tools` has them, unlike a tool's description: they are the server's. With
+`instructions=False`, the wrapper never reads them.
+
 ## The extras
 
 Each extra can be turned off by itself (`extras={"intent": False}`), and `extras=False` turns all
