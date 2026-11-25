@@ -74,6 +74,10 @@ cargo test
 many are written byte for byte as TypeScript writes them. The tests find the contract through
 `LSQUARE_CONTRACT_DIR` (`../contract` by default).
 
+CI also builds the library with the oldest Rust its `Cargo.toml` declares (`rust-version`), from
+the same `Cargo.lock`. `.cargo/config.toml` has `cargo update` keep to versions that build with
+it; to check here, `rustup toolchain install 1.88` and `cargo +1.88 check --locked`.
+
 One test makes 1,500 inputs and fails if any event differs from the one TypeScript writes for it.
 After a change to shaping or redaction, run it on more, from other seeds:
 

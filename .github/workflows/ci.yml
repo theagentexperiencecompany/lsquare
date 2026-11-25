@@ -596,6 +596,17 @@ jobs:
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
       - working-directory: packages/rust
         run: cargo test --locked
+      # The oldest Rust the crate says it builds with (rust-version in its Cargo.toml): the
+      # library, with the wrapper and without it, from the same Cargo.lock. Its tests and clippy
+      # stay on the pinned toolchain.
+      - name: The minimum Rust the crate declares
+        working-directory: packages/rust
+        run: |
+          minimum=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+          test -n "$minimum"
+          rustup toolchain install "$minimum" --profile minimal
+          cargo "+$minimum" check --locked
+          cargo "+$minimum" check --locked --no-default-features
 
   # What a branch rule requires: green only if no other job failed or was cancelled, and a skipped
   # one is fine. A rule can't require the matrix jobs here: on a pull request that skips one, it
