@@ -3,10 +3,7 @@
 What each release changes, newest first: `lsquare` on npm, `lsquare` on PyPI, and `@lsquare/node`,
 the 0.1 SDK, on npm.
 
-## Not released yet
-
-For the next `lsquare` on npm and on PyPI: the pull request that sets their versions names them in
-this heading. `@lsquare/node` doesn't change.
+## `lsquare` 0.2.4 on npm, `lsquare` 0.2.0b10 on PyPI
 
 **Before you upgrade:** on a server made with instructions, each tool call's event now carries
 them, so events are larger, by the instructions' length (up to 2,000 characters), and use more of a
@@ -31,6 +28,8 @@ server without instructions sends the same events as before.
 
 - `@lsquare/contract` 0.1.9 checks that `serverInstructions` is a string, and the shared cases
   cover it. An ingestion on an earlier contract stores it as it is, like any field it doesn't know.
+- 0.1.10 and 0.1.11 also take `go` and `rust` as an event's `sdk.language`, for the Go and Rust
+  SDKs. An ingestion on an earlier contract refuses their events.
 
 ### Documentation
 
