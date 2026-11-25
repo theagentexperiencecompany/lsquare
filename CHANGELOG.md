@@ -32,6 +32,12 @@ server without instructions sends the same events as before.
 - `@lsquare/contract` 0.1.9 checks that `serverInstructions` is a string, and the shared cases
   cover it. An ingestion on an earlier contract stores it as it is, like any field it doesn't know.
 
+### Documentation
+
+- **Python's README installs with a plain `pip install lsquare`.** It said `pip install --pre
+  lsquare`. Every version on PyPI is a pre-release, and pip installs the newest one without the
+  flag while there is no stable release, which each release already checks.
+
 ## `lsquare` 0.2.3 on npm, `lsquare` 0.2.0b9 on PyPI
 
 **Before you upgrade:** each tool call's event now carries the tool's description, so events are

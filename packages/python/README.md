@@ -17,15 +17,15 @@ and slowest tools, missing tools and top intents), and exports on request.
 A server with one tool, served over HTTP on your machine, and one call to it with `curl`.
 
 1. **Install** the MCP Python SDK (2.x here; 1.x and fastmcp work too, [below](#mcp-servers)), then
-   `lsquare`, which is a pre-release until launch: `--pre` on its own line, so it doesn't also pick
-   up pre-releases of the SDK.
+   `lsquare`. It is a beta until launch: every version on PyPI is a pre-release, and pip installs
+   the newest one without `--pre` while there is no stable release.
 
    ```sh
    pip install mcp
    ```
 
    ```sh
-   pip install --pre lsquare
+   pip install lsquare
    ```
 
 2. **Instrument the server**, in `server.py`:
