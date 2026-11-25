@@ -307,15 +307,21 @@ impl ShapedCallData {
 /// the rest once the tool has answered. Each is read where it is, within the limits, so nothing
 /// of a call is copied to be measured.
 ///
-/// The one difference from reading it all at once (`shape_call`): the error, which comes first
-/// there, is read here after the arguments, with a scan budget of its own, so it is never the
-/// part a very large input leaves nothing for. What it took is then charged to the result's.
+/// The one difference from reading it all at once (`shape_call`): the error, which comes before
+/// the arguments there, is read here after them, with the scan budget the intent left it, so it
+/// is never the part a very large input leaves nothing for. What it took is then charged to the
+/// result's.
 pub(crate) struct CallShaper {
     shaped: ShapedCall,
+    /// The intent's notes and the input's, each put in its place once the rest is read: the
+    /// intent's before the error's, the input's after.
+    intent_notes: Notes,
     input_notes: Notes,
     redactor: Redactor,
     keys: Option<KeyNames>,
     remaining: usize,
+    /// What reading the intent took of the scan budget.
+    intent_used: usize,
 }
 
 impl CallShaper {
@@ -324,11 +330,28 @@ impl CallShaper {
         let keys = redactor.key_names();
         CallShaper {
             shaped: ShapedCall::default(),
+            intent_notes: Notes::default(),
             input_notes: Notes::default(),
             redactor,
             keys,
             remaining: SCAN_BUDGET,
+            intent_used: 0,
         }
+    }
+
+    /// Why the call was made, as the agent said it: read first, before anything else uses the
+    /// scan budget, as when a call is read in one step. Called before `arguments`, once.
+    pub(crate) fn intent(&mut self, intent: &Value) {
+        let mut state = ShapeState::new(self.keys.as_ref());
+        state.remaining = self.remaining;
+        self.shaped.intent = shape_field(
+            &mut state,
+            &mut self.intent_notes,
+            "intent",
+            |state, notes| shape_text(Some(intent), LIMIT_INTENT, state, notes, "intent"),
+        );
+        self.intent_used += self.remaining - state.remaining;
+        self.remaining = state.remaining;
     }
 
     /// The call's arguments: none are an empty object.
@@ -360,10 +383,12 @@ impl CallShaper {
     pub(crate) fn finish(self, data: &CallData) -> ShapedCallData {
         let CallShaper {
             mut shaped,
+            intent_notes,
             input_notes,
             redactor,
             keys,
             remaining,
+            intent_used,
         } = self;
         let mut notes = Notes::default();
         let error = data.error.and_then(Value::as_object);
@@ -375,11 +400,16 @@ impl CallShaper {
             .and_then(Value::as_str)
             .and_then(|given| CATEGORIES.into_iter().find(|category| *category == given));
         shaped.task = task_value(data.task, &mut notes, "task");
+        // The intent's notes in their place: before the error's.
+        notes.merge(&intent_notes);
         let mut used = 0;
         if let Some(error) = error {
             let mut state = ShapeState::new(keys.as_ref());
+            // What the intent left, as when it is all read at once.
+            let left = SCAN_BUDGET.saturating_sub(intent_used);
+            state.remaining = left;
             let mut fields = error_fields(error, &mut state, &mut notes);
-            used = SCAN_BUDGET - state.remaining;
+            used = left - state.remaining;
             fields.category = category;
             if fields.message.is_some() || fields.category.is_some() {
                 shaped.error = Some(fields);

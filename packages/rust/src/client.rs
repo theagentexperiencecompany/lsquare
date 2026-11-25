@@ -56,6 +56,8 @@ const ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
 /// How many reports can wait for `on_error` at once, as many as TypeScript holds callbacks: one
 /// past it is dropped.
 const MAX_WAITING_REPORTS: usize = 100;
+/// How many of a server's tools a client warns of, each once.
+const MAX_WARNED_TOOLS: usize = 1_000;
 /// How long `flush` and `shutdown` wait, past their deadline, for `on_error` to be told of what
 /// they reported themselves.
 const REPORT_GRACE: Duration = Duration::from_secs(1);
@@ -526,6 +528,8 @@ struct State {
     last_error_log: Option<Instant>,
     suppressed_errors: u64,
     warned: Vec<String>,
+    /// The once-only warnings given about a server's tools, by their keys.
+    warned_tools: Vec<String>,
     runtime: Option<Handle>,
 }
 
@@ -1189,6 +1193,18 @@ impl State {
         }
     }
 
+    /// A warning about one of a server's tools, given once per client, by its key: the first
+    /// 1,000 such, since a server has as many tools as it likes. The other warnings don't count
+    /// among them.
+    fn warn_once_of_tool(&mut self, key: &str, line: &str) {
+        if !self.warned_tools.iter().any(|warned| warned == key)
+            && self.warned_tools.len() < MAX_WARNED_TOOLS
+        {
+            self.warned_tools.push(key.to_owned());
+            self.say(Level::Warn, line.to_owned());
+        }
+    }
+
     /// An event's end. Anything that happens to it later (a response, a retry) finds it gone.
     fn finish(&mut self, seq: u64, outcome: u8, error: Option<Error>) {
         let Some(entry) = self.entries.remove(&seq) else {
@@ -1336,6 +1352,12 @@ impl Inner {
     /// this is called on a tool's path.
     pub(crate) fn warn_once(self: &Arc<Self>, key: &str, line: &str) {
         self.lock().warn_once(key, line);
+        self.after();
+    }
+
+    /// The same for a warning about one of a server's tools: the first 1,000 of them.
+    pub(crate) fn warn_once_of_tool(self: &Arc<Self>, key: &str, line: &str) {
+        self.lock().warn_once_of_tool(key, line);
         self.after();
     }
 

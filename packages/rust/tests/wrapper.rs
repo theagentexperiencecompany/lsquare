@@ -622,7 +622,7 @@ async fn dry_run_sends_nothing_and_says_what_it_would_send() {
     let lines = seen.lines();
     assert_eq!(
         lines[0],
-        r#"[lsquare dry-run] {"server":"test-server","records":"every tools/call"}"#
+        r#"[lsquare dry-run] {"server":"test-server","records":"every tools/call","extras":{"on":["session_id","intent"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name"}}"#
     );
     let summary: Value =
         serde_json::from_str(lines[1].strip_prefix("[lsquare dry-run] ").unwrap()).unwrap();
@@ -638,6 +638,9 @@ async fn dry_run_sends_nothing_and_says_what_it_would_send() {
             "protocolVersion",
             "result",
             "server",
+            // The connection's: this client is on a protocol version that has sessions.
+            "sessionId",
+            "sessionSource",
             "status",
             "toolName"
         ])

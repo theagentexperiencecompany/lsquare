@@ -649,46 +649,76 @@ fn every_case_gives_its_event_or_its_error() {
     );
 }
 
-/// The wrapper reads a call in two steps (`CallShaper`): its arguments before the tool takes them,
-/// the rest once it has answered. For every case's call the wrapper could make, that gives the
-/// event reading it all at once gives, byte for byte.
+/// The wrapper reads a call in two steps (`CallShaper`): its intent and its arguments before the
+/// tool takes them, the rest once it has answered. For every case's call the wrapper could make,
+/// that gives the event reading it all at once gives, byte for byte. (One kind of call isn't
+/// among them, and differs: one whose scan budget runs out between its error and its arguments,
+/// which the two read in the other order.)
 #[test]
 fn a_call_read_in_two_steps_gives_the_same_event() {
+    // And calls the shared cases don't have: an intent beside an error, each cut or refused.
+    let more = r#"[
+        { "name": "an intent and an error's message, both cut", "call": { "intent": { "$prose": 600 }, "status": "error", "error": { "category": "tool_error", "message": { "$prose": 20000 } }, "input": { "q": { "$prose": 17000 } }, "result": { "content": [{ "type": "text", "text": { "$prose": 5000 } }] } } },
+        { "name": "an intent that is cut and an error that isn't an object", "call": { "intent": { "$prose": 600 }, "status": "error", "error": "broken", "input": { "q": 1 } } },
+        { "name": "an intent that isn't text and an error that is cut", "call": { "intent": 5, "status": "error", "error": { "category": "protocol", "message": { "$prose": 20000 } } } },
+        { "name": "an intent far past the scan budget and an error's message, both cut", "call": { "intent": { "$prose": 1200000 }, "status": "error", "error": { "category": "protocol", "message": { "$prose": 1200000 } }, "input": { "q": { "$prose": 1200000 } }, "result": { "content": [{ "type": "text", "text": { "$prose": 1200000 } }] } } },
+        { "name": "an intent with a secret and an error with one", "call": { "intent": "Write to ann@example.com.", "status": "error", "error": { "category": "thrown", "message": "No account for bob@example.com." }, "input": { "to": "cat@example.com" } } }
+    ]"#;
+    let Js::Array(more) = parse(more) else {
+        panic!("the extra cases are a list")
+    };
+    let more = more.into_iter().map(|case| Case {
+        file: "cases_test.rs",
+        name: case
+            .get("name")
+            .and_then(Js::as_text)
+            .expect("a case's name"),
+        case,
+    });
     let mut compared = 0;
-    for Case { file, name, case } in cases() {
+    for Case { file, name, case } in cases().into_iter().chain(more) {
         let Some(call) = case.get("call") else {
             continue;
         };
         let mut held = Held::default();
         let call = to_value(&expand(call), &mut held);
         let call = call.as_object().expect("a call's fields");
-        // What the wrapper never gives: an agent's turn, an intent, arguments that aren't an object.
+        // What the wrapper never gives: an agent's turn, arguments that aren't an object.
         let arguments = match call.get("input") {
             None => None,
             Some(Value::Object(arguments)) => Some(arguments),
             Some(_) => continue,
         };
-        if case.get("hook").is_some() || call.contains_key("agent") || call.contains_key("intent") {
+        if case.get("hook").is_some() || call.contains_key("agent") {
             continue;
         }
         let context = context(&case, &mut held);
         let head = head_of(call);
-        let rest = |input| CallData {
+        let rest = |input, intent| CallData {
             tool_description: call.get("toolDescription"),
             server_instructions: call.get("serverInstructions"),
             input,
             result: call.get("result").map(ResultIn::Json),
             error: call.get("error"),
             task: call.get("task"),
-            intent: None,
+            intent,
             agent: None,
         };
-        let at_once = build_call(&rest(call.get("input")), &head, &context, false);
+        let at_once = build_call(
+            &rest(call.get("input"), call.get("intent")),
+            &head,
+            &context,
+            false,
+        );
         let mut shaper = CallShaper::new(&context);
+        // The intent first, then the arguments, as the wrapper reads them.
+        if let Some(intent) = call.get("intent") {
+            shaper.intent(intent);
+        }
         if call.contains_key("input") {
             shaper.arguments(arguments);
         }
-        let in_steps = finish_call(shaper.finish(&rest(None)), &head, &context, false);
+        let in_steps = finish_call(shaper.finish(&rest(None, None)), &head, &context, false);
         let written = |built: Built| {
             built
                 .map(|draft| stringify(&draft.event))

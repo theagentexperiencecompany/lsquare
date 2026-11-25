@@ -1,6 +1,6 @@
 [package]
 name = "lsquare"
-version = "0.2.0-beta.1"
+version = "0.2.0-beta.2"
 edition = "2021"
 rust-version = "1.88"
 description = "Record every tool call of your MCP server in LSquare"
@@ -11,7 +11,7 @@ repository = "https://github.com/theagentexperiencecompany/lsquare"
 readme = "README.md"
 keywords = ["mcp", "mcp-server", "agents", "analytics", "observability"]
 categories = ["development-tools::debugging", "api-bindings"]
-include = ["src/**/*", "examples/**/*.rs", "README.md", "LICENSE", "Cargo.toml"]
+include = ["src/**/*", "examples/**/*.rs", "README.md", "LICENSE", "THIRD_PARTY_NOTICES", "Cargo.toml"]
 
 [features]
 default = ["rmcp"]
@@ -53,6 +53,10 @@ required-features = ["rmcp"]
 
 [[test]]
 name = "forwarding"
+required-features = ["rmcp"]
+
+[[test]]
+name = "extras"
 required-features = ["rmcp"]
 
 [package.metadata.docs.rs]
