@@ -19,6 +19,7 @@ export {
   isTurnRef,
   type PatternName,
   type RejectionReason,
+  type SdkLanguage,
   type V1Turn,
   type V2ToolCall,
   type V2Turn,

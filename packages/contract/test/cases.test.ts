@@ -67,6 +67,37 @@ describe('the shared cases', () => {
   })
 })
 
+describe("an event's SDK", () => {
+  const event = (sdk: unknown) => ({
+    eventId: '6f1c2a3b-4d5e-4f60-8a71-829304a5b6c7',
+    schemaVersion: 2,
+    kind: 'tool_call',
+    capturedAt: '2026-10-28T00:00:00.000Z',
+    source: 'live',
+    sdk,
+    callId: '6f1c2a3b-4d5e-4f60-8a71-829304a5b6c7',
+    toolName: 'search_orders',
+    status: 'completed',
+    durationMs: 1,
+  })
+  const outcome = (sdk: unknown) => {
+    const result = validateEvent(event(sdk))
+    return result.ok ? 'valid' : result.reason
+  }
+
+  it.each(['js', 'python', 'go'])('is one of the SDKs: %s', (language) => {
+    expect(outcome({ name: 'lsquare', version: '0.2.0', language })).toBe('valid')
+  })
+
+  it.each(['ruby', 'Go', '', 'constructor', 'toString', 1, null])('is no other: %j', (language) => {
+    expect(outcome({ name: 'lsquare', version: '0.2.0', language })).toBe('invalid_field')
+  })
+
+  it('names its language', () => {
+    expect(outcome({ name: 'lsquare', version: '0.2.0' })).toBe('missing_field')
+  })
+})
+
 describe("the cases' k/ IDs", () => {
   const vectors = FILES.flatMap((file) => read(file).map((test): readonly [string, unknown] => [`${file} ${test.name}`, expand(test.event)]))
     .filter((vector): vector is readonly [string, Record<string, unknown>] => {
