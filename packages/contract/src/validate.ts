@@ -42,7 +42,7 @@ export interface V1Turn extends Checked {
 /** A 0.2 event: every ID is optional, except a call's tool. */
 interface V2Event extends Checked {
   schemaVersion: 2
-  sdk: { name: string; version: string; language: 'js' | 'python'; runtime?: string }
+  sdk: { name: string; version: string; language: 'js' | 'python' | 'rust'; runtime?: string }
   orgId?: string
   userId?: string
   conversationId?: string
@@ -220,7 +220,7 @@ const V2_COMMON: Record<string, Check> = {
     isObject(value) &&
     isString(value.name) &&
     isString(value.version) &&
-    oneOf('js', 'python')(value.language) &&
+    oneOf('js', 'python', 'rust')(value.language) &&
     optional(value, 'runtime', isString),
   orgId: isId,
   userId: isId,
