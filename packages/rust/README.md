@@ -1,9 +1,9 @@
 # lsquare
 
-Record every tool call your MCP server handles in LSquare. A first beta for Rust, not yet on
-crates.io: it records tool calls on servers built with [`rmcp`](https://crates.io/crates/rmcp), the
-official Rust MCP SDK, and nothing else yet ([below](#not-yet-supported)). LSquare is an
-invite-only beta, so [request access](https://lsquare.io) to get an API key.
+Record every tool call your MCP server handles in LSquare. A first beta for Rust: it records tool
+calls on servers built with [`rmcp`](https://crates.io/crates/rmcp), the official Rust MCP SDK, and
+nothing else yet ([below](#not-yet-supported)). LSquare is an invite-only beta, so
+[request access](https://lsquare.io) to get an API key.
 
 - One line per MCP server. Nothing the SDK does can make a tool call fail: it never panics, and
   the handler's answer, error or panic reaches the client as it would without it.
@@ -18,11 +18,12 @@ A server with one tool, served over HTTP on your machine, and one call to it wit
 [`examples/weather.rs`](examples/weather.rs), which `cargo run --example weather` runs from this
 folder.
 
-1. **Add** `lsquare` beside `rmcp`. Until it is on crates.io, from this repository:
+1. **Add** `lsquare` beside `rmcp`. It is a beta, so its version is written out in full: Cargo
+   doesn't pick a pre-release by itself.
 
    ```toml
    [dependencies]
-   lsquare = { git = "https://github.com/theagentexperiencecompany/lsquare" }
+   lsquare = "0.2.0-beta.1"
    rmcp = { version = "~3.11", features = ["server", "macros", "transport-streamable-http-server"] }
    ```
 
@@ -200,7 +201,6 @@ This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and
 - **`flushBeforeReply` and `waitUntil`**, for hosts that stop a process once it has replied.
 - **`rmcp`'s `local` feature** (handlers that aren't `Send`): the crate builds with it, but
   `identify` must still be `Send`, and its tests don't run that way.
-- **crates.io.** The crate isn't published.
 - **Calls `rmcp` refuses before your handler** (a malformed request, a missing header) aren't
   recorded: the wrapper sees what reaches `call_tool`.
 
