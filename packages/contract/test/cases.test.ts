@@ -85,7 +85,7 @@ describe("an event's SDK", () => {
     return result.ok ? 'valid' : result.reason
   }
 
-  it.each(['js', 'python', 'go'])('is one of the SDKs: %s', (language) => {
+  it.each(['js', 'python', 'go', 'rust'])('is one of the SDKs: %s', (language) => {
     expect(outcome({ name: 'lsquare', version: '0.2.0', language })).toBe('valid')
   })
 
