@@ -48,12 +48,15 @@ type Client interface {
 	// WithCall is ctx with a tool call in progress in it, as the tool is given ctx: a Capture of
 	// this client's from the tool finds the call there (see CallOf).
 	WithCall(ctx context.Context, call *Call) context.Context
-	// Identified notes the ID fields an Identify that answered in time returned, and when it
-	// returned, on any server instrumented with the client. IdentifiedKeysAt gives those of the
-	// last one that returned before at: nil before any. Answers are told apart by when they
-	// returned, not by when they were noted, so a call decided at a time of its own is decided by
-	// what was in effect then, whenever it asks.
-	Identified(keys []string, at time.Time)
+	// IdentifyReturned notes that an Identify returned, now, and gives the time. learn, given that
+	// time, says whether the client learns from it (it returned in time, and its IDs are valid):
+	// keys, the ID fields it gave, are then what a call whose Identify fails needs of a capture,
+	// on any server instrumented with the client, from then on. It is noted as its time is taken,
+	// under the client's lock on what it learned, and learn takes no lock: what was in effect at
+	// a time no later than now is known for good. IdentifiedKeysAt gives it, for a call decided
+	// at at, whenever it asks: the fields of the last answer before at and of any at at itself,
+	// a userId before any, and every ID field once the client has let go of answers that old.
+	IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time
 	IdentifiedKeysAt(at time.Time) []string
 	// FlushTimeout is how long a reply waits for its call's event at most (see Settle): 0, none.
 	FlushTimeout() time.Duration

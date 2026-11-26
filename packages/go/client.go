@@ -229,8 +229,9 @@ type Client struct {
 	reportedClosed bool
 	// The ID fields the last Identify answers that came in time returned, on any server
 	// instrumented with the client, in the order they returned: at most maxIdentified, and
-	// forgotIdentified once older ones were let go of. Under identifiedMu, which is taken alone,
-	// so that noting an answer never waits on the client's other work.
+	// forgotIdentified once older ones were let go of. Under identifiedMu, which is taken last
+	// (under a call's gate at most) and held for no other lock, so that noting an answer never
+	// waits on the client's other work.
 	identifiedMu     sync.Mutex
 	identified       []identifiedAnswer
 	forgotIdentified bool
@@ -528,15 +529,29 @@ type identifiedAnswer struct {
 // was decided, which is never long before it asks.
 const maxIdentified = 32
 
-func (b bridged) Identified(keys []string, at time.Time) {
+// The ID fields Identify can give: what a failed call needs once the client has let go of what
+// was in effect when it was decided.
+var allIDKeys = []string{"orgId", "userId", "conversationId"}
+
+func (b bridged) IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time {
 	c := b.c
 	c.identifiedMu.Lock()
 	defer c.identifiedMu.Unlock()
+	at := time.Now()
+	if learn(at) {
+		c.noteIdentifiedLocked(at, keys)
+	}
+	return at
+}
+
+// noteIdentifiedLocked adds an answer that returned at at. Called with identifiedMu held.
+func (c *Client) noteIdentifiedLocked(at time.Time, keys []string) {
 	answer := identifiedAnswer{at: at, keys: slices.Clone(keys)}
 	if answer.keys == nil {
 		answer.keys = []string{}
 	}
-	// After those that returned before it or with it: of two at the same time, the last noted.
+	// After those that returned before it or with it. Noted as their times are taken, under the
+	// lock, they come in that order; a time out of order only has its place found.
 	i, _ := slices.BinarySearchFunc(c.identified, at, func(e identifiedAnswer, at time.Time) int {
 		if e.at.After(at) {
 			return 1
@@ -550,29 +565,45 @@ func (b bridged) Identified(keys []string, at time.Time) {
 	}
 }
 
-// IdentifiedKeysAt is what was in effect at at. Once the client has let go of answers that old,
-// it is never less than what was: every field any answer it kept gave, and a userId.
+// IdentifiedKeysAt is what was in effect at at: the last answer before it, and any that returned
+// at at itself, which may have come before or after: each field one of them gave. Never less
+// than what was: before any answer a userId, and every ID field once the client has let go of
+// answers that old.
 func (b bridged) IdentifiedKeysAt(at time.Time) []string {
 	c := b.c
 	c.identifiedMu.Lock()
 	defer c.identifiedMu.Unlock()
+	var keys []string
 	for i := len(c.identified) - 1; i >= 0; i-- {
-		if c.identified[i].at.Before(at) {
-			return c.identified[i].keys
+		answer := c.identified[i]
+		if answer.at.After(at) {
+			continue
+		}
+		keys = addKeys(keys, answer.keys)
+		if answer.at.Before(at) {
+			return keys
 		}
 	}
-	if !c.forgotIdentified {
+	if c.forgotIdentified {
+		return slices.Clone(allIDKeys)
+	}
+	if keys == nil {
 		return nil
 	}
-	all := []string{"userId"}
-	for _, answer := range c.identified {
-		for _, key := range answer.keys {
-			if !slices.Contains(all, key) {
-				all = append(all, key)
-			}
+	return addKeys(keys, []string{"userId"})
+}
+
+// addKeys is keys with each of more it doesn't have yet: never nil.
+func addKeys(keys, more []string) []string {
+	if keys == nil {
+		keys = []string{}
+	}
+	for _, key := range more {
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
 		}
 	}
-	return all
+	return keys
 }
 
 func (b bridged) FlushTimeout() time.Duration { return b.c.flushTimeout }

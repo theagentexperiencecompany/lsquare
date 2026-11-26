@@ -814,7 +814,7 @@ func TestIdentifysAnswerAfterItsDeadlineDoesntCount(t *testing.T) {
 		return &running{identified: make(chan identified, 1), gate: &gate{deadline: deadline}, deadline: deadline}
 	}
 	call := gated(time.Now().Add(-time.Millisecond))
-	call.gate.returned(false)
+	call.gate.returned(false, nil)
 	call.identified <- identified{ids: nil, at: time.Now()}
 	if who := call.who(); who == nil || who.why != "took longer than its deadline" {
 		t.Errorf("a late answer counted: %+v", who)
@@ -831,7 +831,7 @@ func TestIdentifysAnswerAfterItsDeadlineDoesntCount(t *testing.T) {
 	}
 	// Back in time, its answer still being read as the deadline passes: it counts.
 	call = gated(time.Now().Add(20 * time.Millisecond))
-	at, _ := call.gate.returned(false)
+	at, _ := call.gate.returned(false, nil)
 	go func(answers chan identified) {
 		time.Sleep(80 * time.Millisecond)
 		answers <- identified{at: at}
@@ -1588,7 +1588,7 @@ func TestIdentifysGateDecidesOnce(t *testing.T) {
 		g.mu.Unlock()
 		return g
 	}
-	if _, inTime := (&gate{}).returned(false); !inTime {
+	if _, inTime := (&gate{}).returned(false, nil); !inTime {
 		t.Error("an answer while the tool ran was late")
 	}
 	// Its deadline passes first: the answer that comes after is late.
@@ -1596,31 +1596,32 @@ func TestIdentifysGateDecidesOnce(t *testing.T) {
 	if !g.expire() {
 		t.Error("the deadline passed without an answer, and the event kept waiting")
 	}
-	if _, inTime := g.returned(false); inTime {
+	if _, inTime := g.returned(false, nil); inTime {
 		t.Error("an answer after the event gave up on it counted")
 	}
 	// It answers first: the deadline passing finds it in time.
 	g = closed(&gate{}, time.Now().Add(time.Hour))
-	if _, inTime := g.returned(false); !inTime || g.expire() {
+	if _, inTime := g.returned(false, nil); !inTime || g.expire() {
 		t.Error("an answer before the deadline was late")
 	}
 	// At its deadline: late.
 	g = closed(&gate{}, time.Now())
-	if _, inTime := g.returned(false); inTime {
+	if _, inTime := g.returned(false, nil); inTime {
 		t.Error("an answer at its deadline was in time")
 	}
 	// Refused before it ran: a failure, answered in time, never a timeout.
 	g = &gate{}
-	at, _ := g.returned(true)
+	at, _ := g.returned(true, nil)
 	closed(g, time.Now().Add(time.Hour))
 	if g.expire() || !g.failed || g.failedAt != at {
 		t.Error("a refused Identify was a timeout")
 	}
 }
 
-// history is answers as the client keeps them, by when they returned.
+// history is answers as the client keeps them, by when they returned, on a clock of its own.
 type history struct {
 	mu      sync.Mutex
+	now     time.Time
 	answers []struct {
 		at   time.Time
 		keys []string
@@ -1636,7 +1637,17 @@ func (h *history) note(at time.Time, keys ...string) {
 	}{at, keys})
 }
 
-func (h *history) at(at time.Time) []string {
+func (h *history) IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time {
+	h.mu.Lock()
+	at := h.now
+	h.mu.Unlock()
+	if learn(at) {
+		h.note(at, keys...)
+	}
+	return at
+}
+
+func (h *history) IdentifiedKeysAt(at time.Time) []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	var keys []string
@@ -1646,6 +1657,36 @@ func (h *history) at(at time.Time) []string {
 		}
 	}
 	return keys
+}
+
+// An answer is in what the client learned from the very time it returned, which is when it is
+// noted, its IDs checked first: a call that failed after it needs what it gave, whenever that
+// call looks, and an answer found invalid failed when it returned.
+func TestAnAnswerCountsFromWhenItReturned(t *testing.T) {
+	client := lsquare.New(lsquare.Options{APIKey: "lsq_test", Endpoint: "http://localhost:1", DryRun: lsquare.DryRunOff})
+	defer client.Shutdown(context.Background())
+	history := bridgeOf(client)
+	failed := &gate{history: history}
+	ended := time.Now()
+	failed.mu.Lock()
+	failed.closeLocked(ended, ended.Add(time.Hour))
+	failed.mu.Unlock()
+	// Another call's Identify answers with two IDs after this call's tool returned; then this
+	// call's returns one that isn't valid, and a third call's answers with none.
+	if _, inTime := (&gate{history: history}).returned(false, []string{"orgId", "userId"}); !inTime {
+		t.Fatal("an answer while the tool ran was late")
+	}
+	at, inTime := failed.returned(true, nil)
+	if !inTime || !failed.failed || !failed.failedAt.Equal(at) {
+		t.Fatalf("an invalid answer: in time %v, failed %v at %v", inTime, failed.failed, failed.failedAt)
+	}
+	(&gate{history: history}).returned(false, nil)
+	if got := strings.Join(failed.requiredKeys(), ","); got != "orgId,userId" {
+		t.Errorf("a call that failed after an answer needs %q", got)
+	}
+	if got := strings.Join(history.IdentifiedKeysAt(time.Now().Add(time.Second)), ","); got != "" {
+		t.Errorf("the answer that came last: %q", got)
+	}
 }
 
 // What a failed call needs of its capture is what was in effect at its cutoff: once the tool had
@@ -1663,25 +1704,28 @@ func TestAFailedCallsNeedsAreThoseAtItsCutoff(t *testing.T) {
 	h.note(ms(60), "conversationId")
 
 	// Failed while the tool ran (at 10), which returned at 30: what was in effect at 30.
-	g := &gate{keys: h.at}
-	g.fail(ms(10))
+	g := &gate{history: h}
 	g.mu.Lock()
+	g.failLocked(ms(10))
 	g.closeLocked(ms(30), ms(1000))
 	g.mu.Unlock()
 	if got := needs(g); got != "userId" {
 		t.Errorf("failed while the tool ran: needs %q", got)
 	}
 	// Failed after the return (at 50): then.
-	g = &gate{keys: h.at}
+	g = &gate{history: h}
 	g.mu.Lock()
 	g.closeLocked(ms(5), ms(1000))
 	g.mu.Unlock()
-	g.fail(ms(50))
+	h.now = ms(50)
+	if at, inTime := g.returned(true, nil); !at.Equal(ms(50)) || !inTime {
+		t.Errorf("failed after the return: at %v, in time %v", at, inTime)
+	}
 	if got := needs(g); got != "" {
 		t.Errorf("failed after the return: needs %q", got)
 	}
 	// Timed out at 15, the timer running late: what was in effect at its deadline.
-	g = &gate{keys: h.at}
+	g = &gate{history: h}
 	g.mu.Lock()
 	g.closeLocked(ms(5), ms(15))
 	g.mu.Unlock()
@@ -1689,16 +1733,20 @@ func TestAFailedCallsNeedsAreThoseAtItsCutoff(t *testing.T) {
 	if got := needs(g); got != "orgId,userId" {
 		t.Errorf("timed out: needs %q", got)
 	}
-	// An answer the event found late (at 70, past its deadline at 35): as at its deadline.
-	g = &gate{keys: h.at}
+	// An answer that came late (at 70, past its deadline at 35): as at its deadline, and the
+	// client learns nothing from it.
+	g = &gate{history: h}
 	g.mu.Lock()
 	g.closeLocked(ms(5), ms(35))
 	g.mu.Unlock()
-	g.mu.Lock()
-	g.at = ms(70)
-	g.failLocked(ms(70))
-	g.mu.Unlock()
+	h.now = ms(70)
+	if _, inTime := g.returned(false, []string{"orgId"}); inTime {
+		t.Error("a late answer was in time")
+	}
 	if got := needs(g); got != "userId" {
 		t.Errorf("late: needs %q", got)
+	}
+	if got := strings.Join(h.IdentifiedKeysAt(ms(1000)), ","); got != "conversationId" {
+		t.Errorf("the client learned from a late answer: %q", got)
 	}
 }

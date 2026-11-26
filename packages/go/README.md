@@ -271,8 +271,11 @@ content, no error message, and no `OrgID`, `UserID` or `ConversationID`. `OnErro
 is left out too.) One exception: a turn captured inside the tool that gives each ID `Identify`
 last returned in time, on any server instrumented with the same client (a `UserID`, before it
 has returned any), keeps the call's event whole, with the capture's IDs
-([below](#inside-a-tool)). A call with no such capture is limited diagnostics, whatever
-`Identify` returned before.
+([below](#inside-a-tool)). "Last" is as the call failed, once its tool had returned, and a
+second after that at the latest: an answer that came after doesn't change it. Where that can't
+be told apart (answers at the same instant, or more than the 32 the client keeps since then), the
+capture needs each ID any of them could have asked for. A call with no such capture is limited
+diagnostics, whatever `Identify` returned before.
 
 ### Tool descriptions
 

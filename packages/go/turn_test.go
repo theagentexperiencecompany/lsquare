@@ -478,38 +478,75 @@ func TestCaptureAfterShutdownIsReportedOnce(t *testing.T) {
 	}
 }
 
-// Identify's history keeps the answer that returned last, whatever order they are noted in.
+// Identify's history: what was in effect at a time is the last answer that returned before it,
+// whatever order they were noted in, and any that returned at that very time, which may have come
+// before or after it: what each gave. Never less than what was in effect, once the client has let
+// go of answers that old.
 func TestIdentifysHistoryKeepsTheLastToReturn(t *testing.T) {
-	c := New(Options{APIKey: "lsq_test", Endpoint: "http://localhost:1", DryRun: DryRunOff})
-	b := bridge.Of(c)
-	now := time.Now()
-	if b.IdentifiedKeysAt(now) != nil {
-		t.Fatal("history before any answer")
+	newHistory := func() (*Client, bridge.Client) {
+		c := New(Options{APIKey: "lsq_test", Endpoint: "http://localhost:1", DryRun: DryRunOff})
+		return c, bridge.Of(c)
 	}
-	b.Identified([]string{"orgId", "userId"}, now)
-	// Noted later, though it returned before: it doesn't replace the one that returned last.
-	b.Identified([]string{"userId"}, now.Add(-time.Millisecond))
-	later := now.Add(time.Hour)
-	if got := strings.Join(b.IdentifiedKeysAt(later), ","); got != "orgId,userId" {
-		t.Errorf("history %s", got)
+	c, b := newHistory()
+	note := func(c *Client, at time.Time, keys ...string) {
+		c.identifiedMu.Lock()
+		defer c.identifiedMu.Unlock()
+		c.noteIdentifiedLocked(at, keys)
 	}
-	// What was in effect at a time is the last that returned before it.
-	if got := strings.Join(b.IdentifiedKeysAt(now), ","); got != "userId" {
-		t.Errorf("just before the last: %s", got)
+	keysAt := func(b bridge.Client, at time.Time) string {
+		keys := b.IdentifiedKeysAt(at)
+		if keys == nil {
+			return "nil"
+		}
+		return "[" + strings.Join(keys, ",") + "]"
 	}
-	if got := b.IdentifiedKeysAt(now.Add(-time.Second)); got != nil {
-		t.Errorf("before any: %v", got)
+	start := time.Now()
+	ms := func(n int) time.Time { return start.Add(time.Duration(n) * time.Millisecond) }
+	for _, step := range []struct {
+		note func()
+		at   time.Time
+		want string
+	}{
+		{nil, ms(0), "nil"},
+		{func() { note(c, ms(10), "orgId", "userId") }, ms(100), "[orgId,userId]"},
+		// Noted later, though it returned before: it doesn't replace the one that returned last.
+		{func() { note(c, ms(5), "userId") }, ms(100), "[orgId,userId]"},
+		{nil, ms(9), "[userId]"},
+		{nil, ms(10), "[orgId,userId]"},
+		// Before any answer, a userId, as with nothing but an answer at that very time.
+		{nil, ms(5), "[userId]"},
+		{nil, ms(1), "nil"},
+		{func() { note(c, ms(20)) }, ms(100), "[]"},
+		{nil, ms(20), "[orgId,userId]"},
+		// Two at the same time: the last noted after it, either of them at it.
+		{func() { note(c, ms(30), "conversationId"); note(c, ms(30)) }, ms(31), "[]"},
+		{nil, ms(30), "[conversationId]"},
+		// Past what the client keeps: every ID field before what it kept.
+		{func() {
+			note(c, ms(40), "orgId", "userId", "conversationId")
+			for i := range maxIdentified {
+				note(c, ms(50+i))
+			}
+		}, ms(45), "[orgId,userId,conversationId]"},
+		{nil, ms(100), "[]"},
+	} {
+		if step.note != nil {
+			step.note()
+		}
+		if got := keysAt(b, step.at); got != step.want {
+			t.Errorf("at %v: %s, want %s", step.at.Sub(start), got, step.want)
+		}
 	}
-	b.Identified(nil, now.Add(time.Millisecond))
-	if got := b.IdentifiedKeysAt(later); got == nil || len(got) != 0 {
-		t.Errorf("an empty answer: %v", got)
+	// Noted as it returns, at the time it is given, and only when it is learned from.
+	c, b = newHistory()
+	var seen time.Time
+	at := b.IdentifyReturned([]string{"orgId"}, func(at time.Time) bool { seen = at; return true })
+	if !at.Equal(seen) || keysAt(b, at.Add(time.Nanosecond)) != "[orgId]" {
+		t.Errorf("an answer learned from: %s", keysAt(b, at.Add(time.Nanosecond)))
 	}
-	// Past what the client keeps: never less than what was in effect.
-	for i := range maxIdentified {
-		b.Identified(nil, now.Add(time.Duration(i+2)*time.Millisecond))
-	}
-	if got := strings.Join(b.IdentifiedKeysAt(now.Add(-time.Second)), ","); got != "userId" {
-		t.Errorf("before what is kept: %s", got)
+	b.IdentifyReturned([]string{"userId"}, func(time.Time) bool { return false })
+	if len(c.identified) != 1 {
+		t.Errorf("the client learned from an answer it was told not to: %d answers", len(c.identified))
 	}
 }
 

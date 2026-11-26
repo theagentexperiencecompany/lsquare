@@ -577,33 +577,41 @@ type gate struct {
 	// Identify failed, or was late, and when that was known.
 	failed   bool
 	failedAt time.Time
-	// The ID fields the client required of a failed call's capture (see
-	// bridge.Client.IdentifiedKeysAt), once frozen; keys looks them up.
+	// The ID fields the client required of a failed call's capture, once frozen.
 	frozen   bool
 	required []string
-	keys     func(at time.Time) []string
+	// What the client learns from Identify's answers: nil, nothing.
+	history identifyHistory
 }
 
-// returned notes that Identify returned, now, failed or not, and reports when, and whether that
-// was in time: before its deadline, or while the tool still ran, which is before it, and not once
-// its deadline has passed without it. One that wasn't in time failed.
-func (g *gate) returned(failed bool) (at time.Time, inTime bool) {
+// identifyHistory is what the client learns from Identify's answers (see bridge.Client).
+type identifyHistory interface {
+	IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time
+	IdentifiedKeysAt(at time.Time) []string
+}
+
+// returned notes that Identify returned, now, failed or not, with the ID fields it gave, and
+// reports when, and whether that was in time: before its deadline, or while the tool still ran,
+// which is before it, and not once its deadline has passed without it. One in time that didn't
+// fail is what the client learns from, from that very time; one that wasn't in time failed.
+func (g *gate) returned(failed bool, keys []string) (at time.Time, inTime bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	at = time.Now()
+	learn := func(at time.Time) bool {
+		inTime = !g.expired && (g.deadline.IsZero() || at.Before(g.deadline))
+		return inTime && !failed
+	}
+	if g.history != nil {
+		at = g.history.IdentifyReturned(keys, learn)
+	} else {
+		at = time.Now()
+		learn(at)
+	}
 	g.at = at
-	inTime = !g.expired && (g.deadline.IsZero() || at.Before(g.deadline))
 	if failed || !inTime {
 		g.failLocked(at)
 	}
 	return at, inTime
-}
-
-// fail notes that Identify, which returned at at, failed.
-func (g *gate) fail(at time.Time) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.failLocked(at)
 }
 
 func (g *gate) failLocked(at time.Time) {
@@ -620,7 +628,8 @@ func (g *gate) closeLocked(ended, deadline time.Time) {
 }
 
 // freezeLocked fixes what a failed call needs, once the tool has returned and Identify failed:
-// what was in effect at the later of the two, and at its deadline at the latest.
+// what was in effect at the later of the two, and at its deadline at the latest. That is never
+// after now, and the client knows for good what was in effect up to now.
 func (g *gate) freezeLocked() {
 	if !g.failed || g.deadline.IsZero() || g.frozen {
 		return
@@ -633,8 +642,8 @@ func (g *gate) freezeLocked() {
 	if g.deadline.Before(cutoff) {
 		cutoff = g.deadline
 	}
-	if g.keys != nil {
-		g.required = g.keys(cutoff)
+	if g.history != nil {
+		g.required = g.history.IdentifiedKeysAt(cutoff)
 	}
 }
 
@@ -657,8 +666,8 @@ func (g *gate) expire() bool {
 func (g *gate) requiredKeys() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.frozen && g.keys != nil {
-		return g.keys(time.Now())
+	if !g.frozen && g.history != nil {
+		return g.history.IdentifiedKeysAt(time.Now())
 	}
 	return g.required
 }
@@ -962,7 +971,7 @@ func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Re
 func (w *instrumented) start(ctx context.Context, typed *mcp.CallToolRequest, now time.Time, took taken, takes *plan) *running {
 	toolName := typed.Params.Name
 	call := &running{
-		gate:       &gate{keys: w.client.IdentifiedKeysAt},
+		gate:       &gate{history: w.client},
 		callID:     core.NewUUID(),
 		capturedAt: now.UTC().Format("2006-01-02T15:04:05.000Z"),
 		started:    now,
@@ -1058,11 +1067,10 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 	}
 	answers := make(chan identified, 1)
 	gate := call.gate
-	client := w.client
 	call.identified = answers
 	release, ok := w.client.AcquireHook()
 	if !ok {
-		at, _ := gate.returned(true)
+		at, _ := gate.returned(true, nil)
 		answers <- identified{why: "was skipped at the hook limit", at: at}
 		return
 	}
@@ -1096,37 +1104,38 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 	go func() {
 		answer := identified{why: "panicked"}
 		var at time.Time
-		// However it ends, its slot comes back and its answer is given, with when it came. A
-		// failure is noted first: what the call then needs of its capture is fixed from there.
+		// However it ends, its slot comes back and its answer is given, with when it came.
 		defer func() {
 			_ = recover()
 			if at.IsZero() {
-				at, _ = gate.returned(true)
-			} else if answer.why != "" {
-				gate.fail(at)
+				at, _ = gate.returned(true, nil)
 			}
 			answer.at = at
 			release()
 			answers <- answer
 		}()
 		identity, err := hook(identifyContext, input)
-		// Its time is its own: reading its answer isn't counted against it, and whoever waits
-		// for the answer knows from here that it is on its way.
-		at, inTime := gate.returned(err != nil)
+		// Its IDs are checked first, which runs nothing of the app's and takes no time to speak
+		// of: whether it failed is known as it is noted. In time, the ID fields it returned are
+		// what a call whose Identify fails needs from a capture, from when it returned, on any
+		// server of the client, unless one returned since; noted then and there, so that a call
+		// decided at any time since knows of them. Late, it teaches nothing: the call's event goes
+		// without it.
 		if err != nil {
 			answer = identified{why: "returned an error"}
-			return
+		} else {
+			answer = checkIDs(identity)
 		}
-		answer = checkIDs(identity)
+		var keys []string
+		if answer.why == "" {
+			keys = answer.ids.Keys()
+		}
+		at, _ = gate.returned(answer.why != "", keys)
 		if answer.why != "" {
 			return
 		}
-		// In time: the ID fields it returned are what a call whose Identify fails needs from a
-		// capture, from now on, on any server of the client, unless one returned since. Late, it
-		// teaches nothing: the call's event goes without it.
-		if inTime {
-			client.Identified(answer.ids.Keys(), at)
-		}
+		// Its time is its own: reading the rest of its answer isn't counted against it, and
+		// whoever waits for the answer knows from here that it is on its way.
 		if identity != nil && identity.Metadata != nil {
 			// Read now, each value on its own: what Identify does with the map afterwards changes
 			// nothing, and a value that isn't JSON doesn't take the others with it.
