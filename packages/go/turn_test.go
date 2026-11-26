@@ -482,18 +482,34 @@ func TestCaptureAfterShutdownIsReportedOnce(t *testing.T) {
 func TestIdentifysHistoryKeepsTheLastToReturn(t *testing.T) {
 	c := New(Options{APIKey: "lsq_test", Endpoint: "http://localhost:1", DryRun: DryRunOff})
 	b := bridge.Of(c)
-	if b.IdentifiedKeys() != nil {
+	now := time.Now()
+	if b.IdentifiedKeysAt(now) != nil {
 		t.Fatal("history before any answer")
 	}
-	now := time.Now()
 	b.Identified([]string{"orgId", "userId"}, now)
+	// Noted later, though it returned before: it doesn't replace the one that returned last.
 	b.Identified([]string{"userId"}, now.Add(-time.Millisecond))
-	if got := strings.Join(b.IdentifiedKeys(), ","); got != "orgId,userId" {
+	later := now.Add(time.Hour)
+	if got := strings.Join(b.IdentifiedKeysAt(later), ","); got != "orgId,userId" {
 		t.Errorf("history %s", got)
 	}
+	// What was in effect at a time is the last that returned before it.
+	if got := strings.Join(b.IdentifiedKeysAt(now), ","); got != "userId" {
+		t.Errorf("just before the last: %s", got)
+	}
+	if got := b.IdentifiedKeysAt(now.Add(-time.Second)); got != nil {
+		t.Errorf("before any: %v", got)
+	}
 	b.Identified(nil, now.Add(time.Millisecond))
-	if got := b.IdentifiedKeys(); got == nil || len(got) != 0 {
+	if got := b.IdentifiedKeysAt(later); got == nil || len(got) != 0 {
 		t.Errorf("an empty answer: %v", got)
+	}
+	// Past what the client keeps: never less than what was in effect.
+	for i := range maxIdentified {
+		b.Identified(nil, now.Add(time.Duration(i+2)*time.Millisecond))
+	}
+	if got := strings.Join(b.IdentifiedKeysAt(now.Add(-time.Second)), ","); got != "userId" {
+		t.Errorf("before what is kept: %s", got)
 	}
 }
 

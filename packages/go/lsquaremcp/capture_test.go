@@ -625,3 +625,78 @@ func TestALongCapturedAnswerFitsASmallQueue(t *testing.T) {
 		t.Errorf("the answer as sent: %d bytes, ending %q", len(kept), kept[max(len(kept)-20, 0):])
 	}
 }
+
+// blocking is a tool's error whose message is there only once released: the call's event is then
+// built long after its Identify timed out.
+type blocking struct{ release chan struct{} }
+
+func (e blocking) Error() string {
+	<-e.release
+	return "the private failure"
+}
+
+// A call whose Identify timed out is decided by what was in effect at its deadline, however late
+// its event is built: an anonymous answer of another call after that doesn't spare it.
+func TestATimedOutCallIsDecidedByWhatWasInEffectThen(t *testing.T) {
+	release, stopped := make(chan struct{}), make(chan struct{}, 1)
+	identify := func(ctx context.Context, call Call) (*Identity, error) {
+		switch call.ToolName {
+		case "seed":
+			return &Identity{OrgID: "org_1", UserID: "user_1"}, nil
+		case "slow":
+			// Told to stop at its deadline, it doesn't: it answers only once the tool's error is
+			// read, after the other call.
+			<-ctx.Done()
+			stopped <- struct{}{}
+			<-release
+			return nil, ctx.Err()
+		}
+		return nil, nil
+	}
+	h := newHarnessWith(t, lsquare.Options{FlushTimeout: 30 * time.Millisecond}, &mcp.ClientSessionOptions{ProtocolVersion: modern}, func(h *harness) {
+		schema := map[string]any{"type": "object"}
+		ok := func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+		}
+		h.server.AddTool(&mcp.Tool{Name: "seed", InputSchema: schema}, ok)
+		h.server.AddTool(&mcp.Tool{Name: "anon", InputSchema: schema}, ok)
+		h.server.AddTool(&mcp.Tool{Name: "slow", InputSchema: schema}, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			h.client.Capture(ctx, lsquare.Turn{Question: "the private question", Answer: "the private answer"})
+			return nil, blocking{release}
+		})
+		Instrument(h.server, h.client, &Options{Identify: identify, FlushBeforeReply: true})
+	})
+	// Identify has answered with an org and a user: a failed call's capture needs both.
+	if _, err := h.call("seed", raw(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.events()
+	replied := make(chan struct{})
+	go func() {
+		defer close(replied)
+		_, _ = h.call("slow", raw(`{}`))
+	}()
+	// Its Identify told to stop at its deadline and still running, its event not yet built:
+	// another call's Identify answers with no ID at all.
+	<-stopped
+	if _, err := h.call("anon", raw(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	<-replied
+	var slow map[string]any
+	for _, event := range h.events() {
+		if event["toolName"] == "slow" {
+			slow = event
+		}
+	}
+	if slow == nil {
+		t.Fatal("no event for the call that timed out")
+	}
+	if sent := asJSON(slow); strings.Contains(sent, "private") || slow["agent"] != nil {
+		t.Errorf("the call that timed out was sent whole: %s", sent)
+	}
+	if reported := strings.Join(h.reported(), "\n"); !strings.Contains(reported, "took longer than its deadline; the call was sent as limited diagnostics.") {
+		t.Errorf("reported:\n%s", reported)
+	}
+}

@@ -562,70 +562,85 @@ func (call *running) conversation() string {
 
 // gate is where Identify's answer is found in time or late, once: for the call's event and for
 // what the client learns from it alike. A failed Identify (or a late one) is decided there too,
-// with what the client then required of the call's capture: fixed once both the tool has returned
-// and Identify has failed, whatever comes after. Identify's goroutine holds it, not the call.
+// with what the client then required of the call's capture: what was in effect at the call's
+// cutoff, once the tool had returned and Identify had failed (its deadline at the latest),
+// whenever that is looked up. Identify's goroutine holds it, not the call.
 type gate struct {
 	mu sync.Mutex
-	// Identify's deadline, set as the tool returns: zero while it runs.
-	deadline time.Time
+	// When the tool returned, and Identify's deadline, set together as it returns: zero while it
+	// runs.
+	ended, deadline time.Time
 	// When Identify returned: zero until then.
 	at time.Time
 	// Its deadline passed with no answer: none counts from then on.
 	expired bool
-	// Identify failed, or was late.
-	failed bool
-	// The ID fields the client required of a failed call's capture (see bridge.Client.Identified),
-	// once frozen; keys reads them.
+	// Identify failed, or was late, and when that was known.
+	failed   bool
+	failedAt time.Time
+	// The ID fields the client required of a failed call's capture (see
+	// bridge.Client.IdentifiedKeysAt), once frozen; keys looks them up.
 	frozen   bool
 	required []string
-	keys     func() []string
+	keys     func(at time.Time) []string
 }
 
-// returned notes that Identify returned, now, and reports when, and whether that was in time:
-// before its deadline, or while the tool still ran, which is before it, and not once its deadline
-// has passed without it.
-func (g *gate) returned() (at time.Time, inTime bool) {
+// returned notes that Identify returned, now, failed or not, and reports when, and whether that
+// was in time: before its deadline, or while the tool still ran, which is before it, and not once
+// its deadline has passed without it. One that wasn't in time failed.
+func (g *gate) returned(failed bool) (at time.Time, inTime bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	at = time.Now()
 	g.at = at
 	inTime = !g.expired && (g.deadline.IsZero() || at.Before(g.deadline))
-	if !inTime {
-		g.failLocked()
+	if failed || !inTime {
+		g.failLocked(at)
 	}
 	return at, inTime
 }
 
-// fail notes that Identify failed.
-func (g *gate) fail() {
+// fail notes that Identify, which returned at at, failed.
+func (g *gate) fail(at time.Time) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.failLocked()
+	g.failLocked(at)
 }
 
-func (g *gate) failLocked() {
-	g.failed = true
+func (g *gate) failLocked(at time.Time) {
+	if !g.failed {
+		g.failed, g.failedAt = true, at
+	}
 	g.freezeLocked()
 }
 
-// close sets Identify's deadline as the tool returns. Called with mu held.
-func (g *gate) closeLocked(deadline time.Time) {
-	g.deadline = deadline
+// closeLocked notes the tool's return, and Identify's deadline. Called with mu held.
+func (g *gate) closeLocked(ended, deadline time.Time) {
+	g.ended, g.deadline = ended, deadline
 	g.freezeLocked()
 }
 
-// freezeLocked fixes what a failed call needs, once the tool has returned and Identify failed.
+// freezeLocked fixes what a failed call needs, once the tool has returned and Identify failed:
+// what was in effect at the later of the two, and at its deadline at the latest.
 func (g *gate) freezeLocked() {
-	if g.failed && !g.deadline.IsZero() && !g.frozen {
-		g.frozen = true
-		if g.keys != nil {
-			g.required = g.keys()
-		}
+	if !g.failed || g.deadline.IsZero() || g.frozen {
+		return
+	}
+	g.frozen = true
+	cutoff := g.failedAt
+	if cutoff.Before(g.ended) {
+		cutoff = g.ended
+	}
+	if g.deadline.Before(cutoff) {
+		cutoff = g.deadline
+	}
+	if g.keys != nil {
+		g.required = g.keys(cutoff)
 	}
 }
 
-// expire is Identify's deadline passing, as the event waits for it. False: it had returned in
-// time, and only the reading of its answer is left. True: none of its answers counts any more.
+// expire is Identify's deadline passing: as it does, and as the event waits for it. False: it had
+// returned in time, and only the reading of its answer is left. True: none of its answers counts
+// any more.
 func (g *gate) expire() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -633,7 +648,7 @@ func (g *gate) expire() bool {
 		return false
 	}
 	g.expired = true
-	g.failLocked()
+	g.failLocked(g.deadline)
 	return true
 }
 
@@ -643,7 +658,7 @@ func (g *gate) requiredKeys() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if !g.frozen && g.keys != nil {
-		return g.keys()
+		return g.keys(time.Now())
 	}
 	return g.required
 }
@@ -747,11 +762,17 @@ func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, metho
 			wait = timeout
 		}
 		call.deadline = returned.Add(wait)
-		call.gate.closeLocked(call.deadline)
+		call.gate.closeLocked(returned, call.deadline)
 		call.gate.mu.Unlock()
 		lasted, ended = returned.Sub(call.started), true
-		if call.cancel != nil {
-			call.expiry = time.AfterFunc(time.Until(call.deadline), call.cancel)
+		if cancel := call.cancel; cancel != nil {
+			// At its deadline Identify is late, decided there and then, whenever the event is
+			// built; then it is told to stop.
+			gate := call.gate
+			call.expiry = time.AfterFunc(time.Until(call.deadline), func() {
+				gate.expire()
+				cancel()
+			})
 		}
 		// The request's own context, which may be the app's: whatever it does, the call ends.
 		func() {
@@ -941,7 +962,7 @@ func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Re
 func (w *instrumented) start(ctx context.Context, typed *mcp.CallToolRequest, now time.Time, took taken, takes *plan) *running {
 	toolName := typed.Params.Name
 	call := &running{
-		gate:       &gate{keys: w.client.IdentifiedKeys},
+		gate:       &gate{keys: w.client.IdentifiedKeysAt},
 		callID:     core.NewUUID(),
 		capturedAt: now.UTC().Format("2006-01-02T15:04:05.000Z"),
 		started:    now,
@@ -1041,8 +1062,8 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 	call.identified = answers
 	release, ok := w.client.AcquireHook()
 	if !ok {
-		gate.fail()
-		answers <- identified{why: "was skipped at the hook limit"}
+		at, _ := gate.returned(true)
+		answers <- identified{why: "was skipped at the hook limit", at: at}
 		return
 	}
 	// The slot comes back whatever fails before Identify's goroutine has it.
@@ -1080,10 +1101,9 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 		defer func() {
 			_ = recover()
 			if at.IsZero() {
-				at, _ = gate.returned()
-			}
-			if answer.why != "" {
-				gate.fail()
+				at, _ = gate.returned(true)
+			} else if answer.why != "" {
+				gate.fail(at)
 			}
 			answer.at = at
 			release()
@@ -1092,7 +1112,7 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 		identity, err := hook(identifyContext, input)
 		// Its time is its own: reading its answer isn't counted against it, and whoever waits
 		// for the answer knows from here that it is on its way.
-		at, inTime := gate.returned()
+		at, inTime := gate.returned(err != nil)
 		if err != nil {
 			answer = identified{why: "returned an error"}
 			return

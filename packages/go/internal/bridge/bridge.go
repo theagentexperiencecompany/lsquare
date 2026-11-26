@@ -48,11 +48,13 @@ type Client interface {
 	// WithCall is ctx with a tool call in progress in it, as the tool is given ctx: a Capture of
 	// this client's from the tool finds the call there (see CallOf).
 	WithCall(ctx context.Context, call *Call) context.Context
-	// Identified notes the ID fields an Identify that answered in time returned, at, on any
-	// server instrumented with the client: one that returned before the last noted changes
-	// nothing. IdentifiedKeys gives the last noted, nil before any.
+	// Identified notes the ID fields an Identify that answered in time returned, and when it
+	// returned, on any server instrumented with the client. IdentifiedKeysAt gives those of the
+	// last one that returned before at: nil before any. Answers are told apart by when they
+	// returned, not by when they were noted, so a call decided at a time of its own is decided by
+	// what was in effect then, whenever it asks.
 	Identified(keys []string, at time.Time)
-	IdentifiedKeys() []string
+	IdentifiedKeysAt(at time.Time) []string
 	// FlushTimeout is how long a reply waits for its call's event at most (see Settle): 0, none.
 	FlushTimeout() time.Duration
 	// Settle waits for the call's event to be built and then sent or dropped (tracked, as Track

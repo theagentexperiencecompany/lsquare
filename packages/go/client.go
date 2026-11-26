@@ -227,12 +227,13 @@ type Client struct {
 	// Shutdown was called, and may still be waiting for the calls that had replied before it.
 	closing        bool
 	reportedClosed bool
-	// The ID fields the last Identify that answered in time returned, on any server instrumented
-	// with the client, and when it returned: nil before any. Under identifiedMu, which is taken
-	// alone, so that noting an answer never waits on the client's other work.
-	identifiedMu   sync.Mutex
-	identifiedKeys []string
-	identifiedAt   time.Time
+	// The ID fields the last Identify answers that came in time returned, on any server
+	// instrumented with the client, in the order they returned: at most maxIdentified, and
+	// forgotIdentified once older ones were let go of. Under identifiedMu, which is taken alone,
+	// so that noting an answer never waits on the client's other work.
+	identifiedMu     sync.Mutex
+	identified       []identifiedAnswer
+	forgotIdentified bool
 	// What a tool call in a tool's context is known by, for this client: not the client itself,
 	// which a context the app keeps would keep alive.
 	owner     *int
@@ -516,22 +517,62 @@ func (b bridged) WithCall(ctx context.Context, call *bridge.Call) context.Contex
 	return bridge.WithCall(ctx, b.c.owner, call)
 }
 
+// identifiedAnswer is one Identify answer the client learned from: when it returned, and the ID
+// fields it gave.
+type identifiedAnswer struct {
+	at   time.Time
+	keys []string
+}
+
+// The most Identify answers the client keeps: a failed call asks for what was in effect when it
+// was decided, which is never long before it asks.
+const maxIdentified = 32
+
 func (b bridged) Identified(keys []string, at time.Time) {
-	b.c.identifiedMu.Lock()
-	defer b.c.identifiedMu.Unlock()
-	if at.Before(b.c.identifiedAt) {
-		return
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	answer := identifiedAnswer{at: at, keys: slices.Clone(keys)}
+	if answer.keys == nil {
+		answer.keys = []string{}
 	}
-	b.c.identifiedKeys, b.c.identifiedAt = slices.Clone(keys), at
-	if b.c.identifiedKeys == nil {
-		b.c.identifiedKeys = []string{}
+	// After those that returned before it or with it: of two at the same time, the last noted.
+	i, _ := slices.BinarySearchFunc(c.identified, at, func(e identifiedAnswer, at time.Time) int {
+		if e.at.After(at) {
+			return 1
+		}
+		return -1
+	})
+	c.identified = slices.Insert(c.identified, i, answer)
+	if len(c.identified) > maxIdentified {
+		c.identified = slices.Delete(c.identified, 0, 1)
+		c.forgotIdentified = true
 	}
 }
 
-func (b bridged) IdentifiedKeys() []string {
-	b.c.identifiedMu.Lock()
-	defer b.c.identifiedMu.Unlock()
-	return b.c.identifiedKeys
+// IdentifiedKeysAt is what was in effect at at. Once the client has let go of answers that old,
+// it is never less than what was: every field any answer it kept gave, and a userId.
+func (b bridged) IdentifiedKeysAt(at time.Time) []string {
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	for i := len(c.identified) - 1; i >= 0; i-- {
+		if c.identified[i].at.Before(at) {
+			return c.identified[i].keys
+		}
+	}
+	if !c.forgotIdentified {
+		return nil
+	}
+	all := []string{"userId"}
+	for _, answer := range c.identified {
+		for _, key := range answer.keys {
+			if !slices.Contains(all, key) {
+				all = append(all, key)
+			}
+		}
+	}
+	return all
 }
 
 func (b bridged) FlushTimeout() time.Duration { return b.c.flushTimeout }
