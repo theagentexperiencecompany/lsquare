@@ -350,6 +350,10 @@ func arrayIndex(key string) (uint32, bool) {
 	return uint32(n), true
 }
 
+// IndicesFirst puts the object's keys in JavaScript's order: array indices first, ascending, then
+// the others in the order they were set, as an object made by merging two others has them.
+func (o *Object) IndicesFirst() { o.indicesFirst() }
+
 // indicesFirst puts the object's keys in JavaScript's order.
 func (o *Object) indicesFirst() {
 	type indexed struct {

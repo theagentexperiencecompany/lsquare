@@ -564,8 +564,15 @@ func shapeCall(record, failure *jsonv.Object, category string, st *state, n *not
 			}
 		})
 	}
+	// Shaped when Capture was called, as it read the turn then (see ShapeAgent); otherwise, as the
+	// record gives it, now.
+	early, _ := field(record, "agent").(*ShapedAgent)
 	agent, hasAgent := asObject(field(record, "agent"))
-	if hasAgent {
+	if early != nil {
+		shaped.Set("agent", early.body)
+		addNotes(n, early.notes)
+		early.charge(st)
+	} else if hasAgent {
 		body := shapeTurnFields(pick(agent, agentFields), st, n, "agent.")
 		// As for a turn of its own: one without a status completed.
 		if !body.Has("status") {
@@ -602,7 +609,10 @@ func shapeCall(record, failure *jsonv.Object, category string, st *state, n *not
 	identified, tooLarge := metadataValue(field(record, "metadata"), n, &budget)
 	var captured *jsonv.Object
 	capturedTooLarge := false
-	if hasAgent {
+	if early != nil {
+		addNotes(n, early.metadataNotes)
+		captured, capturedTooLarge = early.metadata, early.metadataTooLarge
+	} else if hasAgent {
 		budget = metadataBudget
 		captured, capturedTooLarge = metadataValue(field(agent, "metadata"), n, &budget)
 	}
@@ -615,6 +625,8 @@ func shapeCall(record, failure *jsonv.Object, category string, st *state, n *not
 				merged.Set(key, value)
 			}
 		}
+		// As JavaScript has an object merged from two: the keys that are array indices first.
+		merged.IndicesFirst()
 	}
 	if tooLarge || capturedTooLarge || (merged != nil && metadataSize(merged) > metadataBudget) {
 		if !diagnostic {

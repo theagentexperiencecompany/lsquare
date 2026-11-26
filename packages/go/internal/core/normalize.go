@@ -242,6 +242,17 @@ func readIDs(input *jsonv.Object, n *notes) (*jsonv.Object, []string) {
 	return ids, invalid
 }
 
+// TurnRef is the reference a call's event has to the turn captured inside the call: from the
+// turnId as the event keeps it, the conversation the capture gave, and the call's org. ok is false
+// where there is none: a turn ID the event leaves out, or an ID that isn't valid.
+func TurnRef(orgID *string, conversationID string, turnID jsonv.Value) (ref string, ok bool) {
+	text, reason, present := turnIDValue(turnID)
+	if !present || reason != "" || !ValidID(conversationID) || (orgID != nil && !ValidID(*orgID)) {
+		return "", false
+	}
+	return TurnKey(orgID, conversationID, text), true
+}
+
 // TurnKey is k/ and the SHA-256 of [orgId, conversationId, turnId] as compact JSON, a missing org
 // as null: the same for a turn whichever SDK sends it, and different for two orgs' turns.
 func TurnKey(orgID *string, conversationID, turnID string) string {

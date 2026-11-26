@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"weak"
@@ -811,26 +810,28 @@ func TestAfterShutdownNothingIsRead(t *testing.T) {
 // Identify's second is counted from when the tool returned: an answer after it doesn't count,
 // even one that is there before anyone looks for it.
 func TestIdentifysAnswerAfterItsDeadlineDoesntCount(t *testing.T) {
-	call := &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(-time.Millisecond)}
-	call.returned.Store(time.Now().UnixNano())
+	gated := func(deadline time.Time) *running {
+		return &running{identified: make(chan identified, 1), gate: &gate{deadline: deadline}, deadline: deadline}
+	}
+	call := gated(time.Now().Add(-time.Millisecond))
+	call.gate.returned()
 	call.identified <- identified{ids: nil, at: time.Now()}
 	if who := call.who(); who == nil || who.why != "took longer than its deadline" {
 		t.Errorf("a late answer counted: %+v", who)
 	}
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(50 * time.Millisecond)}
+	call = gated(time.Now().Add(50 * time.Millisecond))
 	call.identified <- identified{at: time.Now()}
 	if who := call.who(); who == nil || who.why != "" {
 		t.Errorf("an answer in time didn't count: %+v", who)
 	}
 	// Still running at its deadline: late, without waiting for it any longer.
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(10 * time.Millisecond)}
+	call = gated(time.Now().Add(10 * time.Millisecond))
 	if who := call.who(); who == nil || who.why != "took longer than its deadline" {
 		t.Errorf("an Identify that never answered counted: %+v", who)
 	}
 	// Back in time, its answer still being read as the deadline passes: it counts.
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(20 * time.Millisecond)}
-	at := time.Now()
-	call.returned.Store(at.UnixNano())
+	call = gated(time.Now().Add(20 * time.Millisecond))
+	at, _ := call.gate.returned()
 	go func(answers chan identified) {
 		time.Sleep(80 * time.Millisecond)
 		answers <- identified{at: at}
@@ -1574,5 +1575,79 @@ func TestJSONAlreadyWrittenIsTheSameByValueAndByPointer(t *testing.T) {
 	}
 	if html != 2 || null != 3 {
 		t.Errorf("%d events with the content, %d with null", html, null)
+	}
+}
+
+// Identify is judged in time or late once, by the same rule for the event and for what the
+// client learns from it: in time while the tool runs, then before its deadline, never at it, and
+// never once the event has given up on it, whenever its goroutine got round to saying so.
+func TestIdentifysGateDecidesOnce(t *testing.T) {
+	closed := func(g *gate, deadline time.Time) *gate {
+		g.mu.Lock()
+		g.closeLocked(deadline)
+		g.mu.Unlock()
+		return g
+	}
+	if _, inTime := (&gate{}).returned(); !inTime {
+		t.Error("an answer while the tool ran was late")
+	}
+	// Its deadline passes first: the answer that comes after is late.
+	g := closed(&gate{}, time.Now().Add(time.Hour))
+	if !g.expire() {
+		t.Error("the deadline passed without an answer, and the event kept waiting")
+	}
+	if _, inTime := g.returned(); inTime {
+		t.Error("an answer after the event gave up on it counted")
+	}
+	// It answers first: the deadline passing finds it in time.
+	g = closed(&gate{}, time.Now().Add(time.Hour))
+	if _, inTime := g.returned(); !inTime || g.expire() {
+		t.Error("an answer before the deadline was late")
+	}
+	// At its deadline: late.
+	g = closed(&gate{}, time.Now())
+	if _, inTime := g.returned(); inTime {
+		t.Error("an answer at its deadline was in time")
+	}
+}
+
+// What a failed call needs of its capture is fixed once the tool has returned and Identify has
+// failed: a later answer, of another call, applies to later calls only.
+func TestAFailedCallsNeedsAreFixedWhenItIsDecided(t *testing.T) {
+	history := []string{"orgId", "userId"}
+	keys := func() []string { return history }
+	// Failed while the tool ran: fixed as it returns, by what was known then.
+	g := &gate{keys: keys}
+	g.fail()
+	history = []string{}
+	g.mu.Lock()
+	g.closeLocked(time.Now().Add(time.Hour))
+	g.mu.Unlock()
+	history = []string{"orgId", "userId", "conversationId"}
+	if got := g.requiredKeys(); len(got) != 0 {
+		t.Errorf("failed while the tool ran: needs %v", got)
+	}
+	// Failed after it returned: fixed then.
+	history = []string{"orgId", "userId"}
+	g = &gate{keys: keys}
+	g.mu.Lock()
+	g.closeLocked(time.Now().Add(time.Hour))
+	g.mu.Unlock()
+	history = []string{"userId"}
+	g.fail()
+	history = []string{}
+	if got := g.requiredKeys(); len(got) != 1 || got[0] != "userId" {
+		t.Errorf("failed after the return: needs %v", got)
+	}
+	// Late: fixed as its deadline passes.
+	g = &gate{keys: keys}
+	g.mu.Lock()
+	g.closeLocked(time.Now().Add(time.Hour))
+	g.mu.Unlock()
+	history = []string{"orgId"}
+	g.expire()
+	history = nil
+	if got := g.requiredKeys(); len(got) != 1 || got[0] != "orgId" {
+		t.Errorf("late: needs %v", got)
 	}
 }

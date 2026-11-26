@@ -1,5 +1,5 @@
 // Package lsquare sends LSquare what an MCP server's tools were called with and what they
-// returned, redacted in the app before anything leaves it.
+// returned, and an agent's turns, redacted in the app before anything leaves it.
 //
 // Make one client, and hand it to the wrapper for your MCP server (package lsquaremcp, for the
 // official Go SDK):
@@ -7,6 +7,10 @@
 //	client := lsquare.New(lsquare.Options{APIKey: os.Getenv("LSQUARE_API_KEY")})
 //	defer client.Shutdown(context.Background())
 //	lsquaremcp.Instrument(server, client, nil)
+//
+// An agent records its turns with Capture:
+//
+//	client.Capture(ctx, lsquare.Turn{UserID: userID, ConversationID: conversationID, Question: question, Answer: answer})
 //
 // The client never returns an error and never panics into the app: a problem drops an event and
 // is reported to Options.OnError, or logged.
@@ -80,7 +84,9 @@ type Options struct {
 	DryRun DryRun
 
 	// FlushTimeout is how long Flush waits when its context has no deadline: 2 seconds by default.
-	// Negative: it doesn't wait. Shutdown waits 5 seconds, or this when it is longer.
+	// Negative: it doesn't wait. Shutdown waits 5 seconds, or this when it is longer. It is also
+	// how long a reply waits for its call's event at most, from when the tool returns, with
+	// lsquaremcp's FlushBeforeReply or a Flush inside the tool.
 	FlushTimeout time.Duration
 
 	// BeforeSend gets every event the client takes (not one dropped before: an invalid ID, a full
@@ -124,8 +130,8 @@ type Options struct {
 	// that is inside BeforeSend.
 	MaxQueueEvents int
 	// MaxQueueBytes is their size together: 10 MB by default. An event counts as its JSON, a call
-	// still being built as its arguments and result. A call that holds more than this by itself
-	// is not recorded.
+	// still being built as its arguments, its result and the turn captured inside it. A call that
+	// holds more than this by itself is not recorded.
 	MaxQueueBytes int
 
 	// The limits below are mostly for tests.
@@ -182,7 +188,8 @@ const (
 	CodeQuotaDropped ErrorCode = "quota_dropped"
 	// Still pending when Flush returned.
 	CodePendingAfterFlush ErrorCode = "pending_after_flush"
-	// Identify failed: the call was sent as limited diagnostics.
+	// Identify failed: the call was sent as limited diagnostics, or with the IDs of the turn
+	// captured inside it, as the message says.
 	CodeIdentifyFailed ErrorCode = "identify_failed"
 	// Dropped by Shutdown, or recorded after it.
 	CodeShutdown ErrorCode = "shutdown"
@@ -210,31 +217,37 @@ type Error struct {
 
 func (e *Error) Error() string { return "lsquare: " + string(e.Code) + ": " + e.Message }
 
-// Event is a tool call's event, as BeforeSend and OnError get it.
+// Event is an event, as BeforeSend and OnError get it: a tool call's, or a turn's.
 //
-// BeforeSend may change Intent, ToolDescription, ServerInstructions, Client, Server,
-// ProtocolVersion, Input, Result, Error and Metadata. The other fields say which call this is
-// and how it went: changes to them are ignored.
+// For a tool call, BeforeSend may change Intent, ToolDescription, ServerInstructions, Client,
+// Server, ProtocolVersion, Input, Result, Error, Agent and Metadata. For a turn, it may change what
+// Turn says (all of it but its IDs) and Metadata. The other fields say which call or turn this
+// is and how it went: changes to them are ignored.
 type Event struct {
-	// EventID is the event's ID, which is the call's.
+	// EventID is the event's ID: a call's, or a turn's, made from its conversation and turn IDs
+	// when it has both.
 	EventID string
-	// Kind is "tool_call".
+	// Kind is "tool_call" or "turn".
 	Kind string
-	// CapturedAt is when the call arrived, in UTC, as RFC 3339 with milliseconds.
+	// CapturedAt is when the call arrived, or the turn was captured, in UTC, as RFC 3339 with
+	// milliseconds.
 	CapturedAt string
 	CallID     string
 	ToolName   string
-	// OrgID, UserID and ConversationID are what Identify returned.
+	// OrgID, UserID and ConversationID are a call's Identify returned, with those of the turn
+	// captured inside the call winning, or a turn's own.
 	OrgID          string
 	UserID         string
 	ConversationID string
 	// Status is "completed" or "error".
 	Status string
-	// DurationMs is how long the call took, from its arrival to its reply.
+	// DurationMs is how long the call took, from its arrival until the tool returned: a reply
+	// that waits for the event isn't counted.
 	DurationMs float64
-	// LimitedDiagnostics is set when Identify failed: the event is then sent with only its tool's
-	// name, status, duration and error category. BeforeSend still gets the whole event, and what
-	// it changes in the content is left out with the rest.
+	// LimitedDiagnostics is set when Identify failed and no turn captured inside the call gave the
+	// IDs it needed: the event is then sent with only its tool's name, status, duration and error
+	// category. BeforeSend still gets the whole event, and what it changes in the content is left
+	// out with the rest.
 	LimitedDiagnostics bool
 	// Round is "input_required" for a call that asked the client for input, "continuation" for
 	// the call that brought it, and empty for a call of one round.
@@ -265,8 +278,20 @@ type Event struct {
 	Result *Result
 	// Error says how the call failed; nil when it completed.
 	Error *CallError
-	// Metadata is what Identify returned: strings, numbers, booleans and nil.
+	// Metadata is a call's Identify returned, merged with that of the turn captured inside the
+	// call, or a turn's own: strings, numbers, booleans and nil.
 	Metadata map[string]any
+
+	// Turn is a turn event's turn, what Capture was given as shaped for the event; nil on a tool
+	// call's. BeforeSend changes the turn's status, error and the rest of what it says here: on a
+	// turn's event Error is nil and Status a copy, and its metadata is Metadata. Its IDs are the
+	// event's: changes to them are ignored.
+	Turn *Turn
+	// Agent is a tool call's agent part, the turn captured inside the call, as shaped for the
+	// event; nil without one. BeforeSend may change it, or remove it by setting it to nil: what it
+	// says, not its turn ID. TurnRef is the call's reference to that turn, which it may not.
+	Agent   *Turn
+	TurnRef string
 
 	// Redactions counts the replacements built-in redaction made, per pattern: only on an event
 	// OnError gets, since BeforeSend runs before redaction.
@@ -275,6 +300,9 @@ type Event struct {
 	Dropped map[string]string
 	// Truncated lists the fields shortened, or left out for size.
 	Truncated []string
+
+	// The order Metadata had in the event, for a hook that returns it changed or not.
+	metadataOrder []string
 }
 
 // Named is a name and version, as clients and servers give them.
