@@ -51,8 +51,10 @@ type sharedCase struct {
 	options *jsonv.Object
 	hook    *jsonv.Object
 	hasHook bool
-	event   *jsonv.Object
-	err     string
+	// A call's agent part is shaped first, as Capture shapes one inside a call.
+	early bool
+	event *jsonv.Object
+	err   string
 }
 
 func (c *sharedCase) id() string { return c.file + ": " + c.name }
@@ -284,6 +286,13 @@ func caseContext(c *sharedCase) *Context {
 // buildCase runs one case as the TypeScript SDK's cases.test.ts does.
 func buildCase(t testing.TB, c *sharedCase) (*Draft, *Failure) {
 	t.Helper()
+	return buildCaseWith(t, c, c.early)
+}
+
+// buildCaseWith builds a case; early: a call's agent part shaped first, as Capture shapes one
+// inside a call.
+func buildCaseWith(t testing.TB, c *sharedCase, early bool) (*Draft, *Failure) {
+	t.Helper()
 	ctx := caseContext(c)
 	withHook := func(draft *Draft, failed *Failure) (*Draft, *Failure) {
 		if !c.hasHook || failed != nil {
@@ -317,6 +326,9 @@ func buildCase(t testing.TB, c *sharedCase) (*Draft, *Failure) {
 			holder := jsonv.NewObject()
 			holder.Set("value", value)
 			value = holder
+		}
+		if agent, ok := asObject(value); ok && key == "agent" && early {
+			value = ShapeAgent(agent, ctx)
 		}
 		record.Set(key, value)
 	}

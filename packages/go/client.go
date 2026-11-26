@@ -112,6 +112,8 @@ type entry struct {
 	retryAt   time.Time
 	createdAt time.Time
 	outcome   outcome
+	// Its outcome is set: read without the lock.
+	done atomic.Bool
 	// Finished while its hook was still running: keeps its slot and bytes until the hook returns.
 	zombie     bool
 	batch      *batch
@@ -130,6 +132,8 @@ type entry struct {
 	// For the dry run's line.
 	ignoredFields         *jsonv.Object
 	ignoredToolCallFields *jsonv.Object
+	// How deep in the client's callbacks the event was captured: its BeforeSend runs one deeper.
+	depth int
 }
 
 // batch is one request: the events it carries share its cancellation, which happens only once
@@ -223,7 +227,18 @@ type Client struct {
 	// Shutdown was called, and may still be waiting for the calls that had replied before it.
 	closing        bool
 	reportedClosed bool
-	finishing      map[string]*finishingCall
+	// The ID fields the last Identify answers that came in time returned, on any server
+	// instrumented with the client, in the order they returned: at most maxIdentified, and
+	// forgotIdentified once older ones were let go of. Under identifiedMu, which is taken last
+	// (under a call's gate at most) and held for no other lock, so that noting an answer never
+	// waits on the client's other work.
+	identifiedMu     sync.Mutex
+	identified       []identifiedAnswer
+	forgotIdentified bool
+	// What a tool call in a tool's context is known by, for this client: not the client itself,
+	// which a context the app keeps would keep alive.
+	owner     *int
+	finishing map[string]*finishingCall
 	// Closed and replaced whenever an event is finished or put off, to wake what waits on them.
 	changed chan struct{}
 	warned  map[string]bool
@@ -255,6 +270,7 @@ func New(options Options) *Client {
 		finishing: map[string]*finishingCall{},
 		changed:   make(chan struct{}),
 		warned:    map[string]bool{},
+		owner:     new(int),
 	}
 	c.reports.init(options.Logger, options.OnError)
 	c.flushTimeout = defaultFlushTimeout
@@ -455,10 +471,25 @@ func (b bridged) Closed() bool {
 	return false
 }
 
-func (b bridged) Ended() bool {
-	b.c.mu.Lock()
-	defer b.c.mu.Unlock()
-	return b.c.closed || b.c.closing
+func (b bridged) Ended() bool { return b.c.ending() }
+
+// ending reports whether Shutdown has begun.
+func (c *Client) ending() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed || c.closing
+}
+
+// refuseEnding reports whether Shutdown has begun, and if it has, says once that what comes now
+// is dropped.
+func (c *Client) refuseEnding() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed || c.closing {
+		c.refuseClosed()
+		return true
+	}
+	return false
 }
 
 func (b bridged) Record(record *jsonv.Object, diagnostic *bridge.Report) {
@@ -483,6 +514,160 @@ func (b bridged) CallbackContext(ctx context.Context) context.Context {
 	return bridge.MarkCallback(ctx, b.c)
 }
 
+func (b bridged) WithCall(ctx context.Context, call *bridge.Call) context.Context {
+	return bridge.WithCall(ctx, b.c.owner, call)
+}
+
+// identifiedAnswer is one Identify answer the client learned from: when it returned, and the ID
+// fields it gave.
+type identifiedAnswer struct {
+	at   time.Time
+	keys []string
+}
+
+// The most Identify answers the client keeps: a failed call asks for what was in effect when it
+// was decided, which is never long before it asks.
+const maxIdentified = 32
+
+// The ID fields Identify can give: what a failed call needs once the client has let go of what
+// was in effect when it was decided.
+var allIDKeys = []string{"orgId", "userId", "conversationId"}
+
+func (b bridged) IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time {
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	at := time.Now()
+	if learn(at) {
+		c.noteIdentifiedLocked(at, keys)
+	}
+	return at
+}
+
+// noteIdentifiedLocked adds an answer that returned at at. Called with identifiedMu held.
+func (c *Client) noteIdentifiedLocked(at time.Time, keys []string) {
+	answer := identifiedAnswer{at: at, keys: slices.Clone(keys)}
+	if answer.keys == nil {
+		answer.keys = []string{}
+	}
+	// After those that returned before it or with it. Noted as their times are taken, under the
+	// lock, they come in that order; a time out of order only has its place found.
+	i, _ := slices.BinarySearchFunc(c.identified, at, func(e identifiedAnswer, at time.Time) int {
+		if e.at.After(at) {
+			return 1
+		}
+		return -1
+	})
+	c.identified = slices.Insert(c.identified, i, answer)
+	if len(c.identified) > maxIdentified {
+		c.identified = slices.Delete(c.identified, 0, 1)
+		c.forgotIdentified = true
+	}
+}
+
+// IdentifiedKeysAt is what was in effect at at: the last answer before it, and any that returned
+// at at itself, which may have come before or after: each field one of them gave. Never less
+// than what was: before any answer a userId, and every ID field once the client has let go of
+// answers that old.
+func (b bridged) IdentifiedKeysAt(at time.Time) []string {
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	var keys []string
+	for i := len(c.identified) - 1; i >= 0; i-- {
+		answer := c.identified[i]
+		if answer.at.After(at) {
+			continue
+		}
+		keys = addKeys(keys, answer.keys)
+		if answer.at.Before(at) {
+			return keys
+		}
+	}
+	if c.forgotIdentified {
+		return slices.Clone(allIDKeys)
+	}
+	if keys == nil {
+		return nil
+	}
+	return addKeys(keys, []string{"userId"})
+}
+
+func (b bridged) IdentifiedKeys() []string {
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	if len(c.identified) == 0 {
+		return nil
+	}
+	return slices.Clone(c.identified[len(c.identified)-1].keys)
+}
+
+// addKeys is keys with each of more it doesn't have yet: never nil.
+func addKeys(keys, more []string) []string {
+	if keys == nil {
+		keys = []string{}
+	}
+	for _, key := range more {
+		if !slices.Contains(keys, key) {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func (b bridged) FlushTimeout() time.Duration { return b.c.flushTimeout }
+
+// Settle waits for the call's event, built or still being built, and the turns given, as their
+// own: other events go as they would, and no report or line is waited for. It does nothing more
+// once its time is up.
+func (b bridged) Settle(ctx context.Context, tracked bridge.Tracked, turns []any, from time.Time) {
+	c := b.c
+	deadline := from.Add(c.flushTimeout)
+	if c.flushTimeout <= 0 || !time.Now().Before(deadline) {
+		return
+	}
+	done := doneOf(ctx)
+	over := func() bool { return isDone(done) || !time.Now().Before(deadline) }
+	if over() {
+		return
+	}
+	call, _ := tracked.(*finishingCall)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if call != nil && !call.finished {
+		c.finishCalls(done, []*finishingCall{call}, deadline)
+	}
+	if over() {
+		return
+	}
+	var targets []*entry
+	if call != nil && call.entry != nil && call.entry.outcome == outcomeNone {
+		targets = append(targets, call.entry)
+	}
+	for _, turn := range turns {
+		if e, ok := turn.(*entry); ok && e.outcome == outcomeNone {
+			targets = append(targets, e)
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+	c.pumpHooks()
+	c.pumpRequests()
+	c.waitFor(done, targets, deadline)
+}
+
+// finishedEntry reports whether a queued event is sent or dropped, without the client's lock: a
+// call's lock may be held.
+func (c *Client) finishedEntry(event any) bool {
+	e, ok := event.(*entry)
+	if !ok {
+		return true
+	}
+	return e.done.Load()
+}
+
 func (b bridged) AcquireHook() (func(), bool) {
 	c := b.c
 	c.mu.Lock()
@@ -501,7 +686,7 @@ func (b bridged) AcquireHook() (func(), bool) {
 	}, true
 }
 
-func (b bridged) Track(callID string, bytes int) (func(), bool) {
+func (b bridged) Track(callID string, bytes int) (func(), bridge.Tracked, bool) {
 	c := b.c
 	call := &finishingCall{callID: callID, bytes: max(bytes, 0), holding: true, done: make(chan struct{})}
 	c.mu.Lock()
@@ -509,7 +694,7 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 	if c.closed || c.closing {
 		c.refuseClosed()
 		c.mu.Unlock()
-		return nil, false
+		return nil, nil, false
 	}
 	// While a daily limit holds, whether the call's event would be dropped for it is decided now,
 	// before anything of the call is kept: dropped, it is counted and nothing more is done for
@@ -520,7 +705,7 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 		switch decision {
 		case "drop":
 			c.mu.Unlock()
-			return nil, false
+			return nil, nil, false
 		case "check":
 			call.probe = h
 		}
@@ -535,7 +720,7 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 			h.checking = false
 			h.dropped++
 			c.mu.Unlock()
-			return nil, false
+			return nil, nil, false
 		}
 		room = true
 	} else {
@@ -544,7 +729,7 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 	if !room {
 		c.mu.Unlock()
 		c.report(&Error{Code: CodeQueueFull, Message: "The queue is full; the event was dropped.", EventID: callID}, nil)
-		return nil, false
+		return nil, nil, false
 	}
 	c.finishing[callID] = call
 	c.finishingHeld++
@@ -567,7 +752,7 @@ func (b bridged) Track(callID string, bytes int) (func(), bool) {
 			c.mu.Unlock()
 			close(call.done)
 		})
-	}, true
+	}, call, true
 }
 
 // releaseCall stops counting what a call being built holds: its event is queued, or dropped.
@@ -588,23 +773,51 @@ func (c *Client) refuseClosed() {
 		return
 	}
 	c.reportedClosed = true
-	c.report(&Error{Code: CodeShutdown, Message: "A call was recorded after Shutdown; this and later events are dropped."}, nil)
+	c.report(&Error{Code: CodeShutdown, Message: "An event was recorded after Shutdown; this and later events are dropped."}, nil)
 }
 
 // enqueue builds a call's event and queues it. diagnostic (the call's identify_failed) is reported
 // once, before what else is reported about the event, unless the event is refused for Shutdown,
 // which is reported instead.
 func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
+	_ = c.enqueueEvent(kindCall, func() *jsonv.Object { return record }, "", diagnostic, 0)
+}
+
+// enqueueTurn builds a turn's event and queues it: input reads the turn, once the client takes
+// it. depth is how deep in the client's callbacks it was captured: its BeforeSend runs one deeper.
+// It returns the event as queued: nil when it isn't.
+func (c *Client) enqueueTurn(input func() *jsonv.Object, capturedAt string, depth int) *entry {
+	return c.enqueueEvent(kindTurn, input, capturedAt, nil, depth)
+}
+
+// The two kinds of event.
+const (
+	kindCall = "tool_call"
+	kindTurn = "turn"
+)
+
+func (c *Client) enqueueEvent(kind string, read func() *jsonv.Object, capturedAt string, diagnostic *bridge.Report, depth int) (taken *entry) {
 	if c.mode == modeDisabled {
 		return
 	}
+	// A turn isn't taken once Shutdown has begun: what it waits for is the calls that had already
+	// replied, whose events are still being built.
+	if kind == kindTurn && c.refuseEnding() {
+		return
+	}
+	var record *jsonv.Object
 	say := func() {
 		if diagnostic != nil {
 			c.report(&Error{Code: ErrorCode(diagnostic.Code), Message: diagnostic.Message}, nil)
 			diagnostic = nil
 		}
 	}
-	callID, _ := fieldText(record, "callId")
+	// A call that replied may hold what its event needs: a turn, linked to a call or not, never does.
+	callID := ""
+	if kind == kindCall {
+		record = read()
+		callID, _ = fieldText(record, "callId")
+	}
 	admitted, said, probe := c.admitNew(callID)
 	if !admitted {
 		if said {
@@ -623,6 +836,10 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 		}
 	}()
 
+	// Read only now: a turn the client doesn't take is never read.
+	if record == nil {
+		record = read()
+	}
 	// Built outside the lock: it reads and redacts the whole call.
 	hook := c.beforeSend != nil
 	var draft *core.Draft
@@ -633,7 +850,11 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 				ok = false
 			}
 		}()
-		draft, failed = core.BuildCall(record, c.context, hook)
+		if kind == kindTurn {
+			draft, failed = core.BuildTurn(record, capturedAt, c.context, hook)
+		} else {
+			draft, failed = core.BuildCall(record, c.context, hook)
+		}
 		return true
 	}()
 	if !built {
@@ -644,7 +865,7 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 	if failed != nil {
 		say()
 		messages := map[string]string{
-			"invalid_input": "The call's record isn't complete; the event was dropped.",
+			"invalid_input": "The event isn't complete; it was dropped.",
 			"invalid_id":    "An ID must be a non-empty string of at most 512 bytes, without NUL; the event was dropped.",
 			"too_large":     "The event is larger than " + strconv.Itoa(c.maxEventBytes) + " bytes even without its largest parts; it was dropped.",
 		}
@@ -669,12 +890,15 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
+	if c.closed || (kind == kindTurn && c.closing) {
 		c.refuseClosed()
 		return
 	}
 	// What the wrapper held of the call is the event from here: its room is the event's.
-	call := c.finishing[eventID]
+	var call *finishingCall
+	if kind == kindCall {
+		call = c.finishing[eventID]
+	}
 	if call != nil {
 		c.releaseCall(call)
 	}
@@ -688,13 +912,14 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 	c.seq++
 	e := &entry{
 		seq: c.seq, eventID: eventID, json: encoded, bytes: size, createdAt: time.Now(), redacted: !hook,
-		ignoredFields: draft.IgnoredFields, ignoredToolCallFields: draft.IgnoredToolCallFields(),
+		ignoredFields: draft.IgnoredFields, ignoredToolCallFields: draft.IgnoredToolCallFields(), depth: depth,
 	}
 	if hook {
 		e.draft = draft
 	}
 	e.live = c.live.PushBack(e)
 	c.liveBytes += size
+	taken = e
 	if call != nil {
 		call.entry = e
 	}
@@ -714,6 +939,7 @@ func (c *Client) enqueue(record *jsonv.Object, diagnostic *bridge.Report) {
 	} else {
 		c.ready(e)
 	}
+	return taken
 }
 
 // admitNew says whether a new event is taken at all, before it is built. Not after Shutdown: the
@@ -786,8 +1012,9 @@ func (c *Client) startHook(e *entry) {
 	}
 	draft := e.draft
 	deadline := e.createdAt.Add(c.beforeSendTimeout)
-	// Marked as a callback's: a Flush given this context doesn't wait on the hook's own event.
-	ctx, cancel := context.WithDeadline(bridge.MarkCallback(context.Background(), c), deadline)
+	// Marked as a callback's: a Flush given this context doesn't wait on the hook's own event, and a
+	// capture made in it is one level deeper than the event's.
+	ctx, cancel := context.WithDeadline(bridge.MarkCallbackAt(context.Background(), c, e.depth+1), deadline)
 	e.stage = stageHook
 	e.hookCancel = cancel
 	c.activeHooks++
@@ -828,7 +1055,11 @@ func (c *Client) hookReturned(e *entry, draft *core.Draft, out *Event, failed bo
 		defer c.mu.Unlock()
 		c.guardLocked(func() { c.reshaped(e, broken, built, failure) })
 	}()
-	built, failure = core.AfterHook(hookOutput(out), draft, c.context)
+	output := hookOutput
+	if draft.Kind == kindTurn {
+		output = hookTurnOutput
+	}
+	built, failure = core.AfterHook(output(out), draft, c.context)
 	broken = false
 }
 
@@ -1597,6 +1828,7 @@ func (c *Client) finish(e *entry, result outcome, failure *Error) {
 		return
 	}
 	e.outcome = result
+	e.done.Store(true)
 	e.retryToken = 0
 	if group := e.retry; group != nil {
 		e.retry = nil
@@ -1664,9 +1896,9 @@ func (c *Client) finish(e *entry, result outcome, failure *Error) {
 // Waiting.
 
 // waitFor waits until every entry is finished, or can't be by the deadline (its next attempt is
-// due after it), or the deadline or ctx's end. Called with the lock held; it is released while
+// due after it), or the deadline or done. Called with the lock held; it is released while
 // waiting.
-func (c *Client) waitFor(ctx context.Context, entries []*entry, deadline time.Time) {
+func (c *Client) waitFor(done <-chan struct{}, entries []*entry, deadline time.Time) {
 	for {
 		pending := false
 		for _, e := range entries {
@@ -1676,7 +1908,7 @@ func (c *Client) waitFor(ctx context.Context, entries []*entry, deadline time.Ti
 			}
 		}
 		left := time.Until(deadline)
-		if !pending || left <= 0 || ctx.Err() != nil {
+		if !pending || left <= 0 || isDone(done) {
 			return
 		}
 		changed := c.changed
@@ -1685,16 +1917,16 @@ func (c *Client) waitFor(ctx context.Context, entries []*entry, deadline time.Ti
 		select {
 		case <-changed:
 		case <-timer.C:
-		case <-ctx.Done():
+		case <-done:
 		}
 		timer.Stop()
 		c.mu.Lock()
 	}
 }
 
-// finishCalls waits for calls whose events are still being built. Called with the lock held; it is
-// released while waiting.
-func (c *Client) finishCalls(ctx context.Context, calls []*finishingCall, deadline time.Time) {
+// finishCalls waits for calls whose events are still being built, until the deadline or done.
+// Called with the lock held; it is released while waiting.
+func (c *Client) finishCalls(done <-chan struct{}, calls []*finishingCall, deadline time.Time) {
 	c.mu.Unlock()
 	defer c.mu.Lock()
 	timer := time.NewTimer(max(time.Until(deadline), 0))
@@ -1704,9 +1936,32 @@ func (c *Client) finishCalls(ctx context.Context, calls []*finishingCall, deadli
 		case <-call.done:
 		case <-timer.C:
 			return
-		case <-ctx.Done():
+		case <-done:
 			return
 		}
+	}
+}
+
+// doneOf is ctx's Done channel, taken once, and before the client's lock is: what waits with the
+// lock held, or gives it back to wait, then runs none of a caller's context's code, which could
+// block, take the client's lock itself or panic. One whose Done panics is waited on until the
+// deadline only.
+func doneOf(ctx context.Context) (done <-chan struct{}) {
+	defer func() {
+		if recover() != nil {
+			done = nil
+		}
+	}()
+	return ctx.Done()
+}
+
+// isDone reports whether done is closed: never for nil.
+func isDone(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1788,13 +2043,19 @@ func (c *Client) Flush(ctx context.Context) (result FlushResult) {
 	if !bounded {
 		deadline = time.Now().Add(c.flushTimeout)
 	}
+	// Inside a tool call: the call's own event, which isn't built until the tool returns, is
+	// sent before the reply instead (see bridge.Client.Settle). What OnError and the Logger are
+	// told isn't waited for there: the reply would wait on them.
+	inTool := c.inTool(ctx)
 	inCallback := bridge.InCallback(ctx, c)
+	// Its own call's event isn't Flush's to wait for: the reply is.
+	own := func(eventID string) bool { return inTool != "" && eventID == inTool }
 	// Last, with the lock released: what was reported, and a disabled client's warning, have
 	// reached OnError or the Logger when it returns. Not from BeforeSend or Identify: the handler
 	// it would wait for may be waiting for them.
 	defer func() {
 		_ = recover()
-		if !inCallback {
+		if !inCallback && inTool == "" {
 			c.reports.wait(ctx, deadline)
 		}
 	}()
@@ -1804,18 +2065,19 @@ func (c *Client) Flush(ctx context.Context) (result FlushResult) {
 	inHandler := c.reports.inHandler()
 	// As asked: what is left pending is reported even when finishing calls took all the time.
 	waits := time.Until(deadline) > 0
+	done := doneOf(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	targets := c.liveEntries()
+	targets := slices.DeleteFunc(c.liveEntries(), func(e *entry) bool { return own(e.eventID) })
 	var unbuilt []*finishingCall
 	dropped := 0
 	if inCallback {
 		targets = slices.DeleteFunc(targets, func(e *entry) bool { return e.stage == stageWaiting || e.stage == stageHook })
 	} else {
 		// Calls that have replied but whose events aren't built yet count too: waited for first.
-		calls := c.finishingCalls()
+		calls := slices.DeleteFunc(c.finishingCalls(), func(call *finishingCall) bool { return own(call.callID) })
 		if len(calls) > 0 && waits && !inHandler {
-			c.finishCalls(ctx, calls, deadline)
+			c.finishCalls(done, calls, deadline)
 		}
 		targets, unbuilt, dropped = addCalls(targets, calls)
 	}
@@ -1823,7 +2085,7 @@ func (c *Client) Flush(ctx context.Context) (result FlushResult) {
 	result.Failed += dropped
 	c.pumpHooks()
 	c.pumpRequests()
-	c.waitFor(ctx, targets, deadline)
+	c.waitFor(done, targets, deadline)
 	for _, e := range targets {
 		if count(&result, e) {
 			continue
@@ -1878,6 +2140,7 @@ func (c *Client) Shutdown(ctx context.Context) (result FlushResult) {
 		ctx, cancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
 		defer cancel()
 	}
+	done := doneOf(ctx)
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	before := c.liveEntries()
@@ -1887,7 +2150,7 @@ func (c *Client) Shutdown(ctx context.Context) (result FlushResult) {
 	// No new call is taken from here: only the ones already replied to are waited for.
 	c.closing = true
 	if len(calls) > 0 && time.Until(deadline) > 0 && !inCallback {
-		c.finishCalls(ctx, calls, deadline)
+		c.finishCalls(done, calls, deadline)
 	}
 	c.closed = true
 	seen := make(map[*entry]bool, len(before))
@@ -1908,7 +2171,7 @@ func (c *Client) Shutdown(ctx context.Context) (result FlushResult) {
 		}
 	}
 	c.pumpRequests()
-	c.waitFor(ctx, targets, deadline)
+	c.waitFor(done, targets, deadline)
 	for _, e := range c.liveEntries() {
 		c.finish(e, outcomeFailed, &Error{Code: CodeShutdown, Message: "Shutdown ended before the event was sent."})
 	}
@@ -1927,8 +2190,15 @@ func dryRunSummary(e *entry) string {
 	summary := jsonv.NewObject()
 	kind, _ := fieldText(event, "kind")
 	summary.Set("kind", kind)
-	// Where the ID came from, never the ID.
-	summary.Set("eventId", "the call")
+	// Where the ID came from, never the ID: a turn's is made from its conversation and turn IDs.
+	switch eventID, _ := fieldText(event, "eventId"); {
+	case kind != kindTurn:
+		summary.Set("eventId", "the call")
+	case strings.HasPrefix(eventID, "k/"):
+		summary.Set("eventId", "from turnId, hashed")
+	default:
+		summary.Set("eventId", "random: no turnId")
+	}
 	var fields []string
 	for _, key := range event.Keys() {
 		if !core.SDKFields[key] {
@@ -1938,6 +2208,18 @@ func dryRunSummary(e *entry) string {
 	sort.Strings(fields)
 	summary.Set("fields", fields)
 	summary.Set("bytes", jsonv.Int(int64(e.bytes)))
+	// How many tools the agent called, never which.
+	calls, _ := event.Get("toolCalls")
+	if kind != kindTurn {
+		agent, _ := event.Get("agent")
+		calls = nil
+		if body, ok := agent.(*jsonv.Object); ok {
+			calls, _ = body.Get("toolCalls")
+		}
+	}
+	if list, ok := calls.([]any); ok {
+		summary.Set("toolCalls", jsonv.Int(int64(len(list))))
+	}
 	for _, key := range []string{"truncated", "dropped", "redactions"} {
 		if value, ok := event.Get(key); ok {
 			summary.Set(key, value)
@@ -1950,4 +2232,18 @@ func dryRunSummary(e *entry) string {
 		summary.Set("ignoredToolCallFields", e.ignoredToolCallFields)
 	}
 	return "[lsquare dry-run] " + string(jsonv.Marshal(summary))
+}
+
+// inTool is the ID of the tool call ctx was given to, on a server instrumented with this client,
+// whose tool is still running, from the app's own code: the call's reply is then made to wait for
+// its event. "" otherwise: a callback of the clients' marks no call, nor does an OnError or a
+// Logger given a tool's context it kept.
+func (c *Client) inTool(ctx context.Context) string {
+	if bridge.CallbackDepth(ctx) > 0 || inAnyHandler() {
+		return ""
+	}
+	if call := bridge.CallOf(ctx, c.owner); call != nil && call.Flush() {
+		return call.ID
+	}
+	return ""
 }

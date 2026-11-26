@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -145,6 +146,14 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 			}
 			call.Set("input", input)
 			differentialListed(r, call)
+			if differentialAgent(r, c, call) && r.Intn(25) == 0 {
+				// More to read than the scan budget: the agent part's own budget, when it is shaped
+				// as it is captured, then differs from what the input leaves it.
+				for k := range 45 {
+					text := differentialText(r) + " "
+					input.Set(fmt.Sprintf("long%d", k), strings.Repeat(text, 1+30_000/len(text)))
+				}
+			}
 			c.Set("call", call)
 		default:
 			call := jsonv.NewObject()
@@ -175,6 +184,7 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 				call.Set("status", "error")
 			}
 			differentialListed(r, call)
+			differentialAgent(r, c, call)
 			c.Set("call", call)
 		}
 		if r.Intn(5) == 0 {
@@ -185,10 +195,60 @@ func differentialCases(seed int64, count int) []*jsonv.Object {
 	return cases
 }
 
-// The TypeScript SDK's own event for each case, built as its cases.test.ts builds one.
+// differentialAgent gives a third of the calls an agent part, as a capture inside the call gives
+// one: half of them shaped as it is captured (early), as the SDKs shape it, the others with the
+// call, as a record's.
+func differentialAgent(r *rand.Rand, c, call *jsonv.Object) bool {
+	if r.Intn(3) != 0 {
+		return false
+	}
+	agent := jsonv.NewObject()
+	agent.Set("question", differentialText(r))
+	if r.Intn(2) == 0 {
+		answer := differentialText(r)
+		// Some long enough to be cut.
+		if r.Intn(4) == 0 {
+			answer = strings.Repeat(answer+" ", 1+17_000/(1+len(answer)))
+		}
+		agent.Set("answer", answer)
+	}
+	if r.Intn(3) == 0 {
+		agent.Set("turnId", strconv.Itoa(r.Intn(100)))
+	}
+	if r.Intn(5) == 0 {
+		failure := jsonv.NewObject()
+		failure.Set("message", differentialText(r))
+		agent.Set("error", failure)
+		agent.Set("status", "error")
+	}
+	if r.Intn(3) == 0 {
+		calls := []any{}
+		for n := r.Intn(3); n >= 0; n-- {
+			item := jsonv.NewObject()
+			item.Set("name", differentialKeys[r.Intn(len(differentialKeys))])
+			item.Set("input", differentialValue(r, 0))
+			calls = append(calls, item)
+		}
+		agent.Set("toolCalls", calls)
+	}
+	if r.Intn(3) == 0 {
+		metadata := jsonv.NewObject()
+		metadata.Set(differentialKeys[r.Intn(len(differentialKeys))], differentialText(r))
+		metadata.Set("n", jsonv.Int(int64(r.Intn(10))))
+		agent.Set("metadata", metadata)
+	}
+	call.Set("agent", agent)
+	if r.Intn(2) == 0 {
+		c.Set("early", true)
+	}
+	return true
+}
+
+// The TypeScript SDK's own event for each case, built as its cases.test.ts builds one; a call's
+// agent part that is early is shaped first, as its capture() shapes one inside a call.
 const typescriptScript = `
 import { readFileSync } from 'node:fs'
-const { afterHook, buildCall, buildTurn } = await import(process.argv[1])
+const { afterHook, buildCall, buildTurn, capturedIds, readAgent } = await import(process.argv[1])
 const { resolveKeys, resolvePatterns } = await import(process.argv[2])
 const cases = JSON.parse(readFileSync(0, 'utf8'))
 const out = cases.map((test) => {
@@ -199,6 +259,11 @@ const out = cases.map((test) => {
   if (test.turn) built = withHook(buildTurn(test.turn, '2026-10-28T00:00:00.000Z', context, hook))
   else {
     const { input, result, ...rest } = test.call
+    if (test.early && rest.agent) {
+      const captured = capturedIds(rest.agent)
+      readAgent(captured, rest.agent, context)
+      rest.agent = captured
+    }
     const record = { callId: 'case-call', capturedAt: '2026-10-28T00:00:00.000Z', toolName: 'search_orders', status: 'completed', durationMs: 1, ids: {}, diagnostics: false, ...rest,
       ...(input === undefined ? {} : { input: { value: input } }), ...(result === undefined ? {} : { result: { value: result } }) }
     built = withHook(buildCall(record, context, hook))
@@ -304,6 +369,7 @@ func TestGeneratedEventsAreTypeScripts(t *testing.T) {
 		}
 		c.call, _ = asObject(field(object, "call"))
 		c.hook, c.hasHook = asObject(field(object, "hook"))
+		c.early = field(object, "early") == true
 		draft, failed := buildCase(t, c)
 		input := excerpt(string(jsonv.Marshal(object)))
 		if expected[i].event == nil {

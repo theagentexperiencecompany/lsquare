@@ -54,7 +54,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 	"unicode/utf8"
 	"weak"
@@ -77,11 +76,15 @@ const maxTools = 10_000
 
 // Options says what is recorded. The zero value records everything it can.
 type Options struct {
-	// Identify says who a call is for. It runs alongside the tool, in its own goroutine, and never
-	// delays the reply: the event waits for it up to a second after the tool returns. If it
-	// returns an error, panics, answers later than that or returns an invalid ID, the call is sent
-	// as limited diagnostics (its tool's name, status, duration and error category, with none of
-	// its content and no IDs of Identify's), and the client reports identify_failed.
+	// Identify says who a call is for. The event waits for it up to a second after the tool
+	// returns. It runs alongside the tool, in its own goroutine, and doesn't delay the reply,
+	// unless the reply waits for the call's event (FlushBeforeReply, or Flush inside the tool):
+	// the reply then waits for it too, and its second is cut to the client's FlushTimeout when
+	// that is shorter. If it returns an error, panics, answers later than that or returns an
+	// invalid ID, the call is sent as limited diagnostics (its tool's name, status, duration and
+	// error category, with none of its content and no IDs of Identify's), unless a turn captured
+	// inside the call gives every ID field Identify last returned in time (a UserID before any),
+	// and the client reports identify_failed.
 	//
 	// ctx is the context the call reached Instrument's middleware with: it has what MCP
 	// middleware added after Instrument put in it (that middleware runs first), and not what
@@ -127,6 +130,11 @@ type Options struct {
 	// server that tells different clients different things should set it, or turn Instructions
 	// off.
 	ServerInstructions string
+
+	// FlushBeforeReply makes each call's reply wait for the call's event to be sent, up to the
+	// client's FlushTimeout, and for the turns captured inside the call: for a host that stops
+	// the process once it has replied. A tool that calls Flush makes its own reply wait so.
+	FlushBeforeReply bool
 
 	// Extras turns off, each by itself, what the wrapper adds to the server's tools: the
 	// session_id and intent inputs, and the get_more_tools tool. The zero value leaves all three
@@ -195,6 +203,7 @@ type instrumented struct {
 	instructions string
 	// Options said what the instructions are: no answer changes them for other connections.
 	seeded bool
+
 	// What each connection was told.
 	connections *connections
 
@@ -505,8 +514,8 @@ type running struct {
 	continued bool
 	// What Identify answers, or why it didn't; nil when there is no Identify.
 	identified chan identified
-	// When Identify returned, in nanoseconds, set before its answer is read: 0 until then.
-	returned *atomic.Int64
+	// Whether Identify answered in time, decided once for the event and the client alike.
+	gate *gate
 	// Stops Identify, at its deadline or once nothing waits for it.
 	cancel context.CancelFunc
 	// When Identify's answer stops counting: a second after the tool returned.
@@ -529,6 +538,165 @@ type running struct {
 	answered, refused bool
 	// The request was cancelled before the tool returned.
 	cancelled bool
+	// When the tool returned, and whether the reply waits for the call's event: the tool called
+	// Flush, or Options.FlushBeforeReply. The turns captured inside the call besides its agent
+	// part, which it waits for too, and the call as the client tracks it until its event is built.
+	endedAt time.Time
+	waits   bool
+	turns   []any
+	tracked bridge.Tracked
+	// The first turn captured inside the call before the tool returned, as Capture read it: the
+	// call's agent part. Its conversation, when it gives one, groups the call.
+	agent *bridge.Agent
+}
+
+// conversation is the conversation the call's agent part gave: "" for none.
+func (call *running) conversation() string {
+	if call.agent == nil {
+		return ""
+	}
+	value, _ := call.agent.IDs.Get("conversationId")
+	text, _ := value.(string)
+	return text
+}
+
+// gate is where Identify's answer is found in time or late, once: for the call's event and for
+// what the client learns from it alike. A failed Identify (or a late one) is decided there too,
+// with what the client then required of the call's capture: what was in effect at the call's
+// cutoff, once the tool had returned and Identify had failed (its deadline at the latest),
+// whenever that is looked up. Identify's goroutine holds it, not the call.
+type gate struct {
+	mu sync.Mutex
+	// When the tool returned, and Identify's deadline, set together as it returns: zero while it
+	// runs.
+	ended, deadline time.Time
+	// When Identify returned: zero until then.
+	at time.Time
+	// Its deadline passed with no answer: none counts from then on.
+	expired bool
+	// Identify failed, or was late, and when that was known.
+	failed   bool
+	failedAt time.Time
+	// The ID fields the client required of a failed call's capture, once frozen.
+	frozen   bool
+	required []string
+	// What the client learns from Identify's answers: nil, nothing.
+	history identifyHistory
+}
+
+// identifyHistory is what the client learns from Identify's answers (see bridge.Client).
+type identifyHistory interface {
+	IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time
+	IdentifiedKeysAt(at time.Time) []string
+	IdentifiedKeys() []string
+}
+
+// returned notes that Identify returned, now, failed or not, with the ID fields it gave, and
+// reports when, and whether that was in time: before its deadline, or while the tool still ran,
+// which is before it, and not once its deadline has passed without it. One in time that didn't
+// fail is what the client learns from, from that very time; one that wasn't in time failed.
+func (g *gate) returned(failed bool, keys []string) (at time.Time, inTime bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	learn := func(at time.Time) bool {
+		inTime = !g.expired && (g.deadline.IsZero() || at.Before(g.deadline))
+		return inTime && !failed
+	}
+	if g.history != nil {
+		at = g.history.IdentifyReturned(keys, learn)
+	} else {
+		at = time.Now()
+		learn(at)
+	}
+	g.at = at
+	if failed || !inTime {
+		g.failLocked(at)
+	}
+	return at, inTime
+}
+
+func (g *gate) failLocked(at time.Time) {
+	if !g.failed {
+		g.failed, g.failedAt = true, at
+	}
+	g.freezeLocked()
+}
+
+// closeLocked notes the tool's return, and Identify's deadline. Called with mu held.
+func (g *gate) closeLocked(ended, deadline time.Time) {
+	g.ended, g.deadline = ended, deadline
+	g.freezeLocked()
+}
+
+// freezeLocked fixes what a failed call needs, once the tool has returned and Identify failed:
+// what was in effect at the later of the two, and at its deadline at the latest. That is never
+// after now, and every answer timed before now has been noted: an answer of another call that
+// returned before the call failed counts, and one after it doesn't take any of that away.
+func (g *gate) freezeLocked() {
+	if !g.failed || g.deadline.IsZero() || g.frozen {
+		return
+	}
+	g.frozen = true
+	cutoff := g.failedAt
+	if cutoff.Before(g.ended) {
+		cutoff = g.ended
+	}
+	if g.deadline.Before(cutoff) {
+		cutoff = g.deadline
+	}
+	if g.history != nil {
+		g.required = g.history.IdentifiedKeysAt(cutoff)
+	}
+}
+
+// expire is Identify's deadline passing: as it does, and as the event waits for it. False: it had
+// returned in time, and only the reading of its answer is left. True: none of its answers counts
+// any more.
+func (g *gate) expire() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.at.IsZero() && !g.expired && g.at.Before(g.deadline) {
+		return false
+	}
+	g.expired = true
+	g.failLocked(g.deadline)
+	return true
+}
+
+// requiredKeys is what the client requires of the failed call's capture as its event is built:
+// what was in effect as the call failed, and what it learned last, as TypeScript reads it then,
+// each field either asks for; nil when neither had an answer (a userId).
+func (g *gate) requiredKeys() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.history == nil {
+		return g.required
+	}
+	required := g.required
+	if !g.frozen {
+		required = g.history.IdentifiedKeysAt(time.Now())
+	}
+	return bothKeys(required, g.history.IdentifiedKeys())
+}
+
+// bothKeys is each ID field one of two requirements asks for, where nil (no answer) asks for a
+// userId: nil when both are.
+func bothKeys(a, b []string) []string {
+	if a == nil && b == nil {
+		return nil
+	}
+	out := []string{}
+	for _, keys := range [][]string{a, b} {
+		if keys == nil {
+			keys = []string{"userId"}
+		}
+		for _, key := range keys {
+			if !slices.Contains(out, key) {
+				out = append(out, key)
+			}
+		}
+	}
+	return out
 }
 
 // session is the session a call is grouped into, and where its ID came from: the agent sent it,
@@ -582,13 +750,16 @@ func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, metho
 	if call == nil {
 		return next(ctx, method, forward)
 	}
-	dispatch := func() (mcp.Result, error) { return next(ctx, method, forward) }
+	// The tool is given the call: a Capture from its code, on this client, finds it there.
+	scope := bridge.NewCall(call.callID)
+	tool := w.client.WithCall(ctx, scope)
+	dispatch := func() (mcp.Result, error) { return next(tool, method, forward) }
 	if answers && call.inputs {
 		dispatch = func() (mcp.Result, error) {
 			// The server first: a tool of its own under that name, listed or not, is the one
 			// that answers. Only what the SDK says of a tool it doesn't have is the wrapper's to
 			// answer, and only where what the agent asks for is recorded.
-			result, err := next(ctx, method, forward)
+			result, err := next(tool, method, forward)
 			if !unknownTool(err) {
 				return result, err
 			}
@@ -602,29 +773,62 @@ func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, metho
 		}
 	}
 	var (
-		result mcp.Result
-		err    error
-		lasted time.Duration
-		ended  bool
+		result   mcp.Result
+		err      error
+		lasted   time.Duration
+		ended    bool
+		finished bool
 	)
 	// The call ends when the tool returns, or panics: how long it took, whether it was cancelled
 	// by then, and Identify's second are all counted from here, before anything of the result is
 	// read or added to.
 	end := func() {
-		lasted, ended = time.Since(call.started), true
-		call.cancelled = ctx.Err() != nil
-		call.deadline = time.Now().Add(identifyWait)
-		if call.cancel != nil {
-			call.expiry = time.AfterFunc(identifyWait, call.cancel)
+		// The return and Identify's deadline are one step for Identify's goroutine, which judges
+		// its answer by them: an answer before it is in time; one after, by the deadline.
+		call.gate.mu.Lock()
+		returned := time.Now()
+		// A capture from now on is a turn of its own, as is one still being read.
+		closed := scope.Close()
+		call.agent, call.turns = closed.Agent, closed.Turns
+		// A reply that waits for its event waits for Identify too: Identify's second is cut to
+		// what the reply waits, when that is shorter, so that the event can be sent in time.
+		call.waits, call.endedAt = closed.Flushed || w.options.FlushBeforeReply, returned
+		wait := identifyWait
+		if timeout := w.client.FlushTimeout(); call.waits && timeout > 0 && timeout < wait {
+			wait = timeout
 		}
+		call.deadline = returned.Add(wait)
+		call.gate.closeLocked(returned, call.deadline)
+		call.gate.mu.Unlock()
+		lasted, ended = returned.Sub(call.started), true
+		if cancel := call.cancel; cancel != nil {
+			// At its deadline Identify is late, decided there and then, whenever the event is
+			// built; then it is told to stop.
+			gate := call.gate
+			call.expiry = time.AfterFunc(time.Until(call.deadline), func() {
+				gate.expire()
+				cancel()
+			})
+		}
+		// The request's own context, which may be the app's: whatever it does, the call ends.
+		func() {
+			defer func() { _ = recover() }()
+			call.cancelled = ctx.Err() != nil
+		}()
 	}
 	defer func() {
+		// A tool that panicked: the panic goes on, once the call is recorded as it does, and its
+		// event sent if the reply was to wait for it.
 		panicked := !ended
 		if panicked {
 			end()
 		}
-		// The tool's own result: the task ID line, if the reply has one, isn't the tool's.
-		w.quietly(func() { w.finish(call, result, err, panicked, lasted) })
+		if !finished {
+			w.quietly(func() { w.finish(call, result, err, panicked, lasted) })
+			if panicked && call.waits {
+				w.quietly(func() { w.client.Settle(ctx, call.tracked, call.turns, call.endedAt) })
+			}
+		}
 	}()
 	result, err = dispatch()
 	end()
@@ -634,6 +838,13 @@ func (w *instrumented) onCall(ctx context.Context, next mcp.MethodHandler, metho
 			reply = issued
 		}
 	})
+	// The tool's own result: the task ID line, if the reply has one, isn't the tool's.
+	finished = true
+	w.quietly(func() { w.finish(call, result, err, false, lasted) })
+	if call.waits {
+		// The call's event is sent before the reply, and the turns captured inside it.
+		w.quietly(func() { w.client.Settle(ctx, call.tracked, call.turns, call.endedAt) })
+	}
 	return reply, err
 }
 
@@ -742,9 +953,13 @@ func (w *instrumented) settle(call *running) {
 	if sent != "" && sent == call.transport {
 		sent = ""
 	}
-	if sent != "" {
+	switch {
+	case sent != "":
 		call.session = &session{sent, "sent"}
-	} else if call.connection != "" {
+	case call.conversation() != "":
+		// The turn captured inside the call says which conversation it is: that groups it, and
+		// it is given no session of its own.
+	case call.connection != "":
 		call.session = &session{sessionHash(call.connection), "protocol"}
 	}
 }
@@ -757,7 +972,7 @@ func (w *instrumented) settle(call *running) {
 // more get none either.
 func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Result {
 	w.settle(call)
-	if w.extras.DisableSessions || call.session != nil || err != nil || call.cancelled || call.takes == nil || !call.takes.sessions {
+	if w.extras.DisableSessions || call.session != nil || call.conversation() != "" || err != nil || call.cancelled || call.takes == nil || !call.takes.sessions {
 		return nil
 	}
 	// Shut down while the tool ran: the call's event is lost, and so would its task be.
@@ -783,6 +998,7 @@ func (w *instrumented) issue(call *running, result mcp.Result, err error) mcp.Re
 func (w *instrumented) start(ctx context.Context, typed *mcp.CallToolRequest, now time.Time, took taken, takes *plan) *running {
 	toolName := typed.Params.Name
 	call := &running{
+		gate:       &gate{history: w.client},
 		callID:     core.NewUUID(),
 		capturedAt: now.UTC().Format("2006-01-02T15:04:05.000Z"),
 		started:    now,
@@ -877,11 +1093,12 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 		return
 	}
 	answers := make(chan identified, 1)
-	returned := new(atomic.Int64)
-	call.identified, call.returned = answers, returned
+	gate := call.gate
+	call.identified = answers
 	release, ok := w.client.AcquireHook()
 	if !ok {
-		answers <- identified{why: "was skipped at the hook limit"}
+		at, _ := gate.returned(true, nil)
+		answers <- identified{why: "was skipped at the hook limit", at: at}
 		return
 	}
 	// The slot comes back whatever fails before Identify's goroutine has it.
@@ -918,28 +1135,44 @@ func (w *instrumented) identify(ctx context.Context, call *running, request *mcp
 		defer func() {
 			_ = recover()
 			if at.IsZero() {
-				at = time.Now()
-				returned.Store(at.UnixNano())
+				at, _ = gate.returned(true, nil)
 			}
 			answer.at = at
 			release()
 			answers <- answer
 		}()
 		identity, err := hook(identifyContext, input)
-		// Its time is its own: reading its answer isn't counted against it, and whoever waits
-		// for the answer knows from here that it is on its way.
-		at = time.Now()
-		returned.Store(at.UnixNano())
+		// Its IDs are checked first, which runs nothing of the app's and takes no time to speak
+		// of: whether it failed is known as it is noted. In time, the ID fields it returned are
+		// what a call whose Identify fails needs from a capture, from when it returned, on any
+		// server of the client, unless one returned since; noted then and there, so that a call
+		// decided at any time since knows of them. Late, it teaches nothing: the call's event goes
+		// without it.
 		if err != nil {
 			answer = identified{why: "returned an error"}
+		} else {
+			answer = checkIDs(identity)
+		}
+		var keys []string
+		if answer.why == "" {
+			keys = answer.ids.Keys()
+		}
+		at, _ = gate.returned(answer.why != "", keys)
+		if answer.why != "" {
 			return
 		}
-		answer = checkIdentity(identity)
+		// Its time is its own: reading the rest of its answer isn't counted against it, and
+		// whoever waits for the answer knows from here that it is on its way.
+		if identity != nil && identity.Metadata != nil {
+			// Read now, each value on its own: what Identify does with the map afterwards changes
+			// nothing, and a value that isn't JSON doesn't take the others with it.
+			answer.metadata = jsonv.ObjectFromMap(identity.Metadata)
+		}
 	}()
 }
 
-// checkIdentity checks what Identify returned, as the ingestion checks IDs.
-func checkIdentity(identity *Identity) identified {
+// checkIDs checks the IDs Identify returned, as the ingestion checks them.
+func checkIDs(identity *Identity) identified {
 	answer := identified{ids: jsonv.NewObject()}
 	if identity == nil {
 		return answer
@@ -952,11 +1185,6 @@ func checkIdentity(identity *Identity) identified {
 			return identified{why: "returned an invalid " + id.key}
 		}
 		answer.ids.Set(id.key, id.value)
-	}
-	if identity.Metadata != nil {
-		// Read now, each value on its own: what Identify does with the map afterwards changes
-		// nothing, and a value that isn't JSON doesn't take the others with it.
-		answer.metadata = jsonv.ObjectFromMap(identity.Metadata)
 	}
 	return answer
 }
@@ -991,16 +1219,18 @@ func (w *instrumented) finish(call *running, result mcp.Result, err error, panic
 	how := w.outcomeOf(call, typed, err, panicked)
 	// Room is taken before anything of the call is kept, and tracked before the reply: a Flush
 	// right after it waits for this call's event.
-	held := int64(len(call.arguments)) + int64(len(call.intent)) + int64(how.text)
+	// The captured turn as the event will hold it, already shaped.
+	held := int64(len(call.arguments)) + int64(len(call.intent)) + int64(how.text) + int64(call.agent.Bytes())
 	var plan resultPlan
 	if how.recorded {
 		plan = planResult(typed)
 		held += plan.size
 	}
-	done, ok := w.client.Track(call.callID, saturate(held))
+	done, tracked, ok := w.client.Track(call.callID, saturate(held))
 	if !ok {
 		return
 	}
+	call.tracked = tracked
 	// Given back whatever fails from here, by this function until the builder has it.
 	defer func() {
 		if !handed {
@@ -1726,18 +1956,14 @@ func (call *running) who() *identified {
 	select {
 	case answer = <-call.identified:
 	case <-timer.C:
-		if at := call.returned.Load(); at != 0 && !time.Unix(0, at).After(call.deadline) {
-			// Back in time: only the reading of its answer is left, which is the SDK's own work.
-			answer = <-call.identified
-		} else {
-			select {
-			case answer = <-call.identified:
-			default:
-				return late
-			}
+		if call.gate.expire() {
+			return late
 		}
+		// Back in time: only the reading of its answer is left, which is the SDK's own work.
+		answer = <-call.identified
 	}
-	if answer.at.After(call.deadline) {
+	// At its deadline it is late, as in the other SDKs.
+	if !answer.at.Before(call.deadline) {
 		return late
 	}
 	return &answer
@@ -1757,10 +1983,32 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 	var diagnostic *bridge.Report
 	ids := jsonv.NewObject()
 	record.Set("diagnostics", false)
+	// The IDs: Identify's, then the capture's inside the call, which win, each by itself. One the
+	// capture gives that isn't valid drops the event, as invalid_id.
+	captured := jsonv.NewObject()
+	if call.agent != nil {
+		captured = call.agent.IDs
+	}
 	if who != nil {
 		if who.why != "" {
-			record.Set("diagnostics", true)
-			diagnostic = &bridge.Report{Code: string(lsquare.CodeIdentifyFailed), Message: "Identify " + who.why + "; the call was sent as limited diagnostics."}
+			// Limited diagnostics, unless a capture inside the call gave each ID Identify last
+			// returned in time, on any server of the client (a userId before any answer).
+			needed := call.gate.requiredKeys()
+			if needed == nil {
+				needed = []string{"userId"}
+			}
+			supplied := call.agent != nil
+			for _, key := range needed {
+				value, _ := captured.Get(key)
+				text, isText := value.(string)
+				supplied = supplied && isText && core.ValidID(text)
+			}
+			sent := "as limited diagnostics"
+			if supplied {
+				sent = "with Capture's IDs"
+			}
+			record.Set("diagnostics", !supplied)
+			diagnostic = &bridge.Report{Code: string(lsquare.CodeIdentifyFailed), Message: "Identify " + who.why + "; the call was sent " + sent + "."}
 		} else {
 			ids = who.ids
 			if who.metadata != nil {
@@ -1768,7 +2016,26 @@ func (w *instrumented) build(call *running, how outcome, took time.Duration) {
 			}
 		}
 	}
+	for i := 0; i < captured.Len(); i++ {
+		key, value := captured.At(i)
+		ids.Set(key, value)
+	}
 	record.Set("ids", ids)
+	if call.agent != nil {
+		record.Set("agent", call.agent.Shaped)
+		// The turn's reference, from its conversation and turn ID and the call's org.
+		var org *string
+		if value, has := ids.Get("orgId"); has {
+			text, _ := value.(string)
+			org = &text
+		}
+		conversation, _ := captured.Get("conversationId")
+		text, _ := conversation.(string)
+		turnID := call.agent.Shaped.TurnID()
+		if ref, ok := core.TurnRef(org, text, turnID); ok {
+			record.Set("turnRef", ref)
+		}
+	}
 	w.mu.Lock()
 	server := w.server
 	w.mu.Unlock()

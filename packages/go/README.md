@@ -1,16 +1,19 @@
 # lsquare for Go
 
-Record every tool call your MCP server handles in LSquare. A first beta, for servers built with
-the official Go MCP SDK ([`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)).
+Record every tool call your MCP server handles in LSquare, and your agent's turns. A first beta,
+for servers built with the official Go MCP SDK
+([`github.com/modelcontextprotocol/go-sdk`](https://github.com/modelcontextprotocol/go-sdk)).
 LSquare is an invite-only beta, so [request access](https://lsquare.io) to get an API key.
 
-- One line per MCP server. Recording never fails a tool call, never makes the reply wait on
-  `Identify`, redaction or the network, and never panics into your app. (The one exception is
-  an error whose methods answer differently each time they are called: see
-  [below](#mcp-servers).)
+- One line per MCP server. Recording never fails a tool call, never panics into your app, and
+  doesn't make the reply wait on `Identify`, redaction or the network unless you ask it to
+  ([`FlushBeforeReply`](#client-options), or `Flush` inside a tool). (The one exception is an
+  error whose methods answer differently each time they are called: see [below](#mcp-servers).)
 - Three [extras](#the-extras), on by default: calls grouped into tasks, why each call was made,
   and what agents looked for and didn't find. They are the one thing that changes what your
   server shows its callers ([what they change](#what-the-defaults-change-in-your-server)).
+- `Capture` records an agent's turn, outside MCP, and never waits on the network
+  ([agent turns](#agent-turns)).
 - `Flush` waits up to 2 seconds by default: for events to be sent, then for `OnError` and the
   `Logger` to have been told of what wasn't, which get 50 ms more if the time has run out.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
@@ -142,8 +145,8 @@ reads the call (its tool, the calling app, the protocol version), copies its arg
 are recorded (up to 256 KB; larger ones are read as the tool returns), copies them all for
 `Identify` when you set one, and asks your `Inputs`, `Results`, `Descriptions` and `Instructions`
 functions, which must answer at once. As the tool returns, it reads how the call ended and notes what the result holds. The event
-is built from there, in a goroutine of its own, so the reply never waits for `Identify`, redaction
-or the network. A call the SDK refuses before the middleware, such as one whose JSON it can't
+is built from there, in a goroutine of its own, so the reply doesn't wait for `Identify`, redaction
+or the network, unless it is asked to ([inside a tool](#inside-a-tool)). A call the SDK refuses before the middleware, such as one whose JSON it can't
 read, makes no event.
 
 To read a call, the wrapper runs as little of your code as it can:
@@ -203,6 +206,7 @@ asks your server for its tools. [The extras](#the-extras) says exactly what each
 | `Tools` | | The tools you registered, for their descriptions ([below](#tool-descriptions)) |
 | `ServerInfo` | | What you gave `mcp.NewServer`, for the event's `server`. Without it, the server's name is learned from the first `initialize` it answers, which a client on protocol 2026-07-28 never sends |
 | `ServerInstructions` | | What you gave `mcp.NewServer` in `ServerOptions.Instructions`, for the event's `serverInstructions` ([below](#server-instructions)) |
+| `FlushBeforeReply` | `false` | Each reply waits for its call's event to be sent, up to the client's `FlushTimeout` ([below](#client-options)) |
 | `Extras` | all on | `lsquaremcp.Extras{DisableSessions, DisableIntent, DisableMissingTools}` turns each of [the extras](#the-extras) off; `OpenSchemas` gives the inputs to more tools ([below](#which-tools-get-the-inputs)) |
 
 ### How a call failed
@@ -264,7 +268,16 @@ If it returns an error, panics, takes longer or returns an ID that isn't valid, 
 limited diagnostics: its tool's name, status, duration and error category, with none of the call's
 content, no error message, and no `OrgID`, `UserID` or `ConversationID`. `OnError` gets
 `identify_failed`. (`BeforeSend` still gets the whole event first; what it changes in the content
-is left out too.)
+is left out too.) One exception: a turn captured inside the tool that gives each ID `Identify`
+last returned in time, on any server instrumented with the same client (a `UserID`, before it
+has returned any), keeps the call's event whole, with the capture's IDs
+([below](#inside-a-tool)). "Last" is both as the call failed, once its tool had returned (a
+second after that at the latest), and as its event is built: the capture needs each ID either
+asks for, so an answer that came in between can add one, never take one away. Where the client
+can't tell which answer was in effect as the call failed, the capture needs each ID any of them
+could have asked for: each of those it had already noted at that very instant, and all three
+once more than 32 answers, the most it keeps, have come since. A call with no such capture is
+limited diagnostics, whatever `Identify` returned before.
 
 ### Tool descriptions
 
@@ -325,10 +338,12 @@ The event's `sessionId` is the task, and its `sessionSource` says where the ID c
 - **`protocol`**: the call came from a client on a protocol version before 2026-07-28, and is
   grouped by its connection: a Streamable HTTP server's own session, recorded as a hash of its
   ID, or one ID per stdio, SSE or in-memory connection. Every tool's calls are grouped this way,
-  the ones that don't get the inputs included. A stateless server has no connection to group
+  the ones that don't get the inputs included, unless the first turn captured inside the call
+  gives its conversation ([inside a tool](#inside-a-tool)), which groups it instead. A stateless server has no connection to group
   by; neither has an HTTP server run with `MCPGODEBUG=allowsessionsinstateless=1`, where a
   session's ID can be one the client chose.
-- **`issued`**: any other call to a tool that gets `session_id` gets a new ID, in a text block at
+- **`issued`**: any other call to a tool that gets `session_id`, and whose first turn captured
+  inside it gives no conversation, gets a new ID, in a text block at
   the end of the result: "Task ID: ses_…. Send it as session_id on later calls for this task,
   and pass it to any subagent working on it." The block goes at the end, so code that reads the
   first block still gets your tool's output, and the recorded result is your tool's, without it.
@@ -425,6 +440,102 @@ lists your server sends, as they pass. Three things follow:
   call without the two inputs, and the result before its task ID line; middleware you add after
   sees both.
 
+## Agent turns
+
+An agent that isn't behind an MCP server, or the agent of your app, records its turns with
+`Capture`:
+
+```go
+client.Capture(ctx, lsquare.Turn{
+	OrgID: orgID, UserID: userID, ConversationID: conversationID, TurnID: turnID,
+	Question: question, Answer: answer,
+	ToolCalls: []lsquare.ToolCall{{Name: "search_orders", Input: input, DurationMs: lsquare.Ptr(41.5)}},
+	Usage:     &lsquare.Usage{InputTokens: lsquare.Ptr(812), OutputTokens: lsquare.Ptr(240), CostUSD: lsquare.Ptr(0.004)},
+})
+```
+
+Every field is optional, and one left empty, a nil pointer, slice or map, is left out of the
+event; `lsquare.Ptr` makes the pointer for an optional number. A turn is sent as a `turn` event,
+with the client's other events: `Capture` reads it as it is called, so what you change afterwards
+changes nothing, and never waits on the network. It is shortened and redacted by the same rules
+as a tool call ([what leaves your process](#what-leaves-your-process)). A turn still over 256 KB
+loses whole parts, in this order: its tool calls, its answer, its question, `Verification`, then
+`Latency`.
+
+`BeforeSend` gets it, with `Event.Kind` `"turn"` and the turn in `Event.Turn`: change the turn's
+content there, its status and error included, and its metadata in `Event.Metadata`, where
+`Event.Turn.Metadata` is nil. Its IDs stay the event's.
+
+- **IDs.** `OrgID`, `UserID` and `ConversationID` are the same as `Identify`'s: internal IDs, at
+  most 512 bytes each. A turn whose ID isn't valid is dropped and reported as `invalid_id`.
+- **Duplicates.** A turn with a `ConversationID` and a `TurnID` gets the same event ID every time
+  it is captured with them and the same `OrgID`, so a retry or a re-import is recognised as a
+  duplicate. Without both, its ID is random; so is it with a `TurnID` that isn't valid UTF-8 or
+  is over 256 KB as JSON text, which is left out and noted in `dropped` while the rest of the
+  turn is sent (an `OrgID`, `UserID` or `ConversationID` that isn't valid drops the whole turn).
+- **Tool calls.** `ToolCalls` nil says nothing of them; an empty slice says the agent called
+  none. A tool call's `Input` is JSON, and its result is never recorded, only its size
+  (`ResultChars`).
+- **JSON of your own.** `Latency` and `Verification` are JSON as you'd have them in the
+  dashboard; JSON that isn't valid is left out, and noted in `dropped`.
+- **`CallID`** links a turn to a tool call of an instrumented server, by the call's event ID: for
+  a turn captured after the call, in a background job say. Inside the tool,
+  `client.CurrentCallID(ctx)` gives it.
+- **Callbacks.** A turn captured from `BeforeSend` with the context it was given counts as one of
+  the clients' own events: past two levels of that, a capture is ignored, so a hook that captures
+  a turn for each event it is given stops, also when it captures on another client. A turn
+  captured from `OnError` or the `Logger`, as they run, is ignored, as each would make another
+  report or line.
+- **Shutdown.** Once `Shutdown` has begun, a turn is dropped, which is reported once.
+
+### Inside a tool
+
+When a tool on an instrumented server runs an agent, `Capture` with the tool's own `ctx` adds the
+agent's turn to the call's event:
+
+```go
+mcp.AddTool(server, ask, func(ctx context.Context, request *mcp.CallToolRequest, input askInput) (*mcp.CallToolResult, any, error) {
+	answer, usage := runAgent(ctx, input.Question)
+	client.Capture(ctx, lsquare.Turn{ConversationID: conversationID, TurnID: turnID, Question: input.Question, Answer: answer, Usage: usage})
+	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: answer}}}, nil, nil
+})
+```
+
+- **The first capture before the tool returns is the call's `agent` part**, read and shortened
+  as it is called, as the call's event will hold it: what the call keeps of a long answer is
+  what the event sends. Its `OrgID`, `UserID` and `ConversationID` fill the call's, each winning
+  over `Identify`'s, and its metadata is merged with `Identify`'s, winning key by key. With a
+  `ConversationID` and a `TurnID`, the call's event has a `turnRef` to the turn. A capture from
+  another goroutine that is still being read as the tool returns is too late: it is a turn of
+  its own, and none of this applies to it (nor, if `Identify` fails, does the call's reduction
+  to limited diagnostics: finish such a capture before the tool returns).
+- **Its `ConversationID` groups the call** into a task: the call is given no session of its
+  connection's and no task ID line; a `session_id` the agent sent still names its session. A
+  `ConversationID` that isn't a valid ID still does, and then drops the call's event as
+  `invalid_id`.
+- **Its `turnRef`** needs a valid `ConversationID` and `TurnID` of the capture's own (one
+  `Identify` returns doesn't count) and, if the call has one, a valid `OrgID`. A call sent as
+  limited diagnostics has neither the agent part nor the reference.
+- **`BeforeSend` gets the agent part** in `Event.Agent` and the reference in `Event.TurnRef`. It
+  may change what the agent says, or remove it by setting it to nil, but not its turn ID or the
+  reference.
+- **Any other capture is a turn of its own**, linked to the call by `callId` unless it gives a
+  `CallID` of its own: a second one before the tool returns, and one after it, from work the
+  tool left running with its `ctx`.
+- **`Flush` with the tool's `ctx`** sends what else is queued, and makes the reply wait for the
+  call's own event, and for the turns captured before it returned ([client
+  options](#client-options)).
+- **Only the client the server is instrumented with** sees the call: a capture on another client
+  is a turn of that client's, not linked to the call, and so is one made with a context that
+  isn't the tool's (one `Identify` or `BeforeSend` was given, or a new `context.Background()`).
+- **The call ends as the wrapper's middleware gets the reply**: a typed tool's structured output
+  is written for the reply before then, and middleware you added before `Instrument` runs before
+  then too, so a capture from either still counts as before the tool returned. So does one from
+  a handler the tool runs itself with its `ctx`: the call is one call, the outer tool's. And on
+  a protocol version before 2026-07-28, where the SDK runs a tool again in the same call once the
+  client has answered what it asked for, both runs are the same call: a capture from work the
+  first run left going can be the call's agent part.
+
 ## What leaves your process
 
 - Strings in a call's `input` are cut at 16,000 characters, in its result at 4,000, the server's
@@ -433,7 +544,8 @@ lists your server sends, as they pass. Three things follow:
   stops at 10 levels. Images, audio and binary resources are kept as their size only, and so is a
   file sent as text: a `data:` URI in base64, or 1,000 characters or more of nothing but base64.
 - An event still over 256 KB loses parts, in this order: the server's instructions, its tool's
-  description, then its result, then its input. The event's `truncated` field names what was shortened or left out. Metadata is
+  description, then its result, then its input, then its agent part's tool calls, then the
+  agent part. The event's `truncated` field names what was shortened or left out. Metadata is
   never shortened: an event whose metadata is too large for it is dropped, and reported as
   `too_large`.
 - Common formats of emails, phone numbers, card numbers, API keys and tokens, credentials in URLs,
@@ -474,13 +586,13 @@ SDKs, and compare its events with the TypeScript SDK's on generated inputs.
 | `APIKey` | | Project key. Without it, the client is disabled |
 | `Endpoint` | `LSQUARE_ENDPOINT`, then `https://ingest.lsquare.io` | https only, except localhost |
 | `DryRun` | `LSQUARE_DRY_RUN` (`1` or `true`) | `lsquare.DryRunOn`: run everything but send nothing, with or without a key. `lsquare.DryRunOff`: send, whatever the environment says |
-| `FlushTimeout` | 2 s | How long `Flush` waits when its context has no deadline. Negative: it doesn't. `Shutdown` waits up to 5 s, or this when it is longer |
+| `FlushTimeout` | 2 s | How long `Flush` waits when its context has no deadline. Negative: it doesn't. `Shutdown` waits up to 5 s, or this when it is longer. Also how long a reply waits for its event, with `FlushBeforeReply` or a `Flush` inside the tool |
 | `BeforeSend` | | `func(ctx, *Event) (*Event, error)`: redact more, or drop an event |
 | `BeforeSendTimeout` | `FlushTimeout`, or 2 s when that is negative | Hook deadline |
 | `MaxConcurrentHooks` | 16 | `BeforeSend` calls running at once, and `Identify` calls, each |
 | `MaxConcurrentRequests` | 4 | Requests in flight at once; other events wait, and go together. One unanswered after 10 seconds (`RequestTimeout`) is given up, and no longer counts |
 | `MaxQueueEvents` | 10,000 | Events held at once, waiting to be sent or in a request, with the calls whose events are still being built. Past it, the oldest are dropped and reported as `queue_full`: those not yet in a request first, and never one inside `BeforeSend` |
-| `MaxQueueBytes` | 10 MB | Their size together: an event's JSON, and the arguments and result of a call still being built. Past it, the same. A call that holds more than this by itself isn't recorded |
+| `MaxQueueBytes` | 10 MB | Their size together: an event's JSON, and the arguments, result and captured turn (as already shortened) of a call still being built. Past it, the same. A call that holds more than this by itself isn't recorded |
 | `SkipRedaction` | none | Patterns to turn off: `lsquare.Email`, `Phone`, `Card`, `Secret`, `IP` |
 | `RedactKeys` | | More key names whose values are replaced whole |
 | `OnError` | logs codes, once a minute | `func(*Error, *Event)`. Receives a redacted copy of the event, or `nil`. About 100 reports a second at most (100 at once, then 100 a second), and 100 waiting for it; `Error.Suppressed` counts the ones left out |
@@ -490,22 +602,38 @@ SDKs, and compare its events with the TypeScript SDK's on generated inputs.
 Events go to LSquare in batches of at most 100, and one that fails with a network error, a 429 or
 a 5xx is sent again, three times in all (`MaxAttempts`). Call `client.Shutdown(ctx)` before your process exits: it
 sends what's queued, waiting until `ctx`'s deadline, or 5 seconds (`FlushTimeout`, when that is
-longer), and drops events still waiting for `BeforeSend` or inside it. On a host that stops your
-process once a request is served, wrap your HTTP handler and call `client.Flush(ctx)` after it
-has served each request: the call's event is built once the tool has returned, and `Flush` waits
-for it. At its deadline `Flush` stops waiting for events, then gives `OnError` and the `Logger` up
-to 50 ms more to be told what is still pending, and returns.
+longer), and drops events still waiting for `BeforeSend` or inside it. At its deadline `Flush`
+stops waiting for events, then gives `OnError` and the `Logger` up to 50 ms more to be told what
+is still pending, and returns.
+
+On a host that stops your process once a request is served, such as a serverless function, an
+event still queued when the reply goes is lost. Make each reply wait for its call's event with
+`FlushBeforeReply`:
+
+```go
+lsquaremcp.Instrument(server, client, &lsquaremcp.Options{FlushBeforeReply: true})
+```
+
+The reply then waits, from when the tool returns and up to the client's `FlushTimeout` (2 seconds
+by default), for the call's event to be built and then sent or dropped, and for the turns
+captured inside the call before it returned that are still on their way (100 at most at once).
+`Identify`'s second is cut to that wait when it is shorter. The reply goes at the deadline, or
+when the request is cancelled, whatever is left: an event still on its way is sent if the
+process lives on, and one whose retry falls past the deadline doesn't hold the reply. A negative
+`FlushTimeout` waits for nothing, and leaves `Identify` its second. A tool that panics is waited
+for the same way before the panic goes on. A tool can make its own reply wait so:
+`client.Flush(ctx)` inside the tool, with the tool's `ctx`, sends what else is queued, and the
+reply waits for the call's own event in the same way, within the same `FlushTimeout`; it doesn't
+wait for `OnError` or the `Logger` to be told of what wasn't sent, as an ordinary `Flush` does.
+That holds until the call's dispatch ends: after it, with a `ctx` kept, `Flush` is an ordinary
+one, and a `Flush` from `Identify`, `BeforeSend`, `OnError` or the `Logger` marks no call.
 
 ## Not yet supported
 
 This is a first beta. The TypeScript and Python SDKs also have these, and this one doesn't yet:
 
-- **`capture()` and turn events**: an agent's turns, outside MCP or from inside a tool, so a call's
-  event has no `agent` part or `turnRef`, and a call isn't grouped by a `conversationId`.
 - **Other MCP libraries**, such as `mark3labs/mcp-go`.
 - **Tasks**: a call that creates a task is recorded without its `task`.
-- **Sending handed to the host**: `flushBeforeReply` and `waitUntil`. Call `Flush` yourself where
-  a host needs it, as [above](#client-options).
 
 ## Differences from the other SDKs
 
@@ -534,6 +662,23 @@ and its MCP SDK:
 - A Go string can't hold half of a surrogate pair, which JSON can write as `\ud800`. Go reads one
   as U+FFFD, as its JSON decoder does, where the other SDKs keep it. Two secrets that differ only
   there then share one placeholder number, and such a string takes fewer bytes.
+- A turn's text left empty is left out, where the other SDKs keep an empty string they are
+  given; and a turn's `TurnID` is text, where they also take a number that is a safe integer
+  (7 and "7" are the same turn in all of them).
+- There is no `waitUntil`, which hands a call's sending to a JavaScript host such as Cloudflare
+  Workers: `FlushBeforeReply` is the way to keep a reply until its event is sent.
+- A call still being built counts towards `MaxQueueBytes` with what it holds (its arguments,
+  its result, and the turn captured inside it, already shortened), where the other SDKs count
+  only queued events.
+- A failed `Identify` keeps the call whole only when a turn was captured inside it, where the
+  other SDKs also do so when `Identify` last returned no ID at all.
+- A call is one call from the wrapper's middleware to its reply: on a protocol version before
+  2026-07-28, the runs of a tool the SDK makes in one call share its agent part and its `Flush`
+  ([inside a tool](#inside-a-tool)), where the other SDKs give each run its own, though all of
+  them record one call.
+- Metadata given as a Go map, by `Identify`, `Capture` or `BeforeSend`, is read in its keys'
+  sorted order, where the other SDKs read an object in the order its keys were set: two values
+  that are redacted can be numbered the other way round (`[EMAIL_1]`, `[EMAIL_2]`).
 - Binary data in a tool's structured content is recorded as the base64 text the client gets, cut
   like any string, or as its size from 1,000 characters on. The other SDKs leave a byte buffer
   out.

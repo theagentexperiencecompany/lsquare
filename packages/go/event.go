@@ -2,6 +2,7 @@ package lsquare
 
 import (
 	"encoding/json"
+	"maps"
 
 	"github.com/theagentexperiencecompany/lsquare/packages/go/internal/jsonv"
 )
@@ -68,6 +69,15 @@ func publicEvent(event *jsonv.Object, limited bool) *Event {
 		Server:             namedOf(event, "server"),
 		ProtocolVersion:    textOf(event, "protocolVersion"),
 	}
+	if out.Kind == kindTurn {
+		// A turn's client and error are the turn's to say: in Turn, where BeforeSend changes them.
+		defer func() { out.Turn, out.Client, out.Error = publicTurn(event), nil, nil }()
+	} else if value, _ := event.Get("agent"); value != nil {
+		if agent, ok := value.(*jsonv.Object); ok {
+			out.Agent = publicTurn(agent)
+		}
+	}
+	out.TurnRef = textOf(event, "turnRef")
 	if duration, ok := event.Get("durationMs"); ok {
 		if number, isNumber := duration.(jsonv.Num); isNumber {
 			out.DurationMs = number.Float64()
@@ -117,6 +127,7 @@ func publicEvent(event *jsonv.Object, limited bool) *Event {
 	}
 	if value, _ := event.Get("metadata"); value != nil {
 		if metadata, ok := value.(*jsonv.Object); ok {
+			out.metadataOrder = metadata.Keys()
 			out.Metadata = make(map[string]any, metadata.Len())
 			for i := 0; i < metadata.Len(); i++ {
 				key, item := metadata.At(i)
@@ -240,9 +251,35 @@ func hookOutput(event *Event) *jsonv.Object {
 		}
 		out.Set("error", failure)
 	}
-	if event.Metadata != nil {
-		// In the order it had before the hook, so a hook that changes nothing changes no number.
-		out.Set("metadata", jsonv.ObjectFromMap(event.Metadata))
+	if event.Agent != nil {
+		// Its turn ID is the event's, as it was.
+		agent := jsonv.NewObject()
+		turnContent(agent, event.Agent)
+		out.Set("agent", agent)
 	}
+	if event.Metadata != nil {
+		out.Set("metadata", metadataObject(event.Metadata, event.metadataOrder))
+	}
+	return out
+}
+
+// metadataObject is metadata a hook returned, in the order it had before the hook, so a hook that
+// changes nothing changes no number: the keys it had first, then the others, sorted, and those
+// that are array indices before all, as JavaScript has them.
+func metadataObject(values map[string]any, order []string) *jsonv.Object {
+	out := jsonv.NewObject()
+	rest := maps.Clone(values)
+	for _, key := range order {
+		if value, kept := rest[key]; kept {
+			out.Set(jsonv.ValidString(key), jsonv.PlainValue(value))
+			delete(rest, key)
+		}
+	}
+	added := jsonv.ObjectFromMap(rest)
+	for i := 0; i < added.Len(); i++ {
+		key, value := added.At(i)
+		out.Set(key, value)
+	}
+	out.IndicesFirst()
 	return out
 }

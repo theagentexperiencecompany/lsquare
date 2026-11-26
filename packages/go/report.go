@@ -202,8 +202,15 @@ func (r *reporter) counted(d delivery) {
 // run calls the app's handler. A handler that panics breaks nothing.
 func (r *reporter) run(d delivery) {
 	defer func() { _ = recover() }()
-	r.delivering.Store(goroutineID())
+	id := goroutineID()
+	r.delivering.Store(id)
 	defer r.delivering.Store(0)
+	handling.Store(id, struct{}{})
+	handlers.Add(1)
+	defer func() {
+		handlers.Add(-1)
+		handling.Delete(id)
+	}()
 	if d.failure == nil {
 		r.write(d.level, d.line)
 		return
@@ -272,7 +279,7 @@ func (r *reporter) wait(ctx context.Context, deadline time.Time) {
 	}
 	timer := time.NewTimer(time.Until(limit))
 	defer timer.Stop()
-	done := ctx.Done()
+	done := doneOf(ctx)
 	r.mu.Lock()
 	target := r.queued
 	for r.delivered < target {
@@ -290,6 +297,24 @@ func (r *reporter) wait(ctx context.Context, deadline time.Time) {
 		r.mu.Lock()
 	}
 	r.mu.Unlock()
+}
+
+// The goroutines delivering a report or a log line to the app's OnError or Logger now, of any
+// client, and how many: a turn captured from one of those handlers is never recorded, as each
+// would make another report or line, and their handler another turn.
+var (
+	handling sync.Map // goroutine ID -> struct{}
+	handlers atomic.Int64
+)
+
+// inAnyHandler reports whether the caller is the OnError or the Logger of a client, being called
+// now. It reads the goroutine's stack only while one is.
+func inAnyHandler() bool {
+	if handlers.Load() == 0 {
+		return false
+	}
+	_, ok := handling.Load(goroutineID())
+	return ok
 }
 
 var goroutinePrefix = []byte("goroutine ")

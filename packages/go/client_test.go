@@ -1067,23 +1067,23 @@ func TestTooManyCallsBeingBuiltAreRefused(t *testing.T) {
 	var reported problems
 	c := New(Options{DryRun: DryRunOn, Logger: &lines{}, OnError: reported.onError, MaxQueueEvents: 2, MaxQueueBytes: 1000})
 	b := bridge.Of(c)
-	first, ok := b.Track("a", 600)
+	first, _, ok := b.Track("a", 600)
 	if !ok {
 		t.Fatal("the first call was refused")
 	}
-	if _, ok := b.Track("b", 600); ok {
+	if _, _, ok := b.Track("b", 600); ok {
 		t.Error("a call past the byte limit was taken")
 	}
-	second, ok := b.Track("c", 100)
+	second, _, ok := b.Track("c", 100)
 	if !ok {
 		t.Fatal("a call within the limits was refused")
 	}
-	if _, ok := b.Track("d", 1); ok {
+	if _, _, ok := b.Track("d", 1); ok {
 		t.Error("a call past the count limit was taken")
 	}
 	first()
 	second()
-	if done, ok := b.Track("e", 900); !ok {
+	if done, _, ok := b.Track("e", 900); !ok {
 		t.Error("room wasn't given back")
 	} else {
 		done()
@@ -1333,7 +1333,7 @@ func TestACallBeingBuiltTakesRoomInTheQueue(t *testing.T) {
 	var reported problems
 	c := New(Options{APIKey: "k", Endpoint: in.URL, DryRun: DryRunOff, OnError: reported.onError, MaxQueueBytes: 4000, MaxConcurrentRequests: 1})
 	b := bridge.Of(c)
-	if _, ok := b.Track("too large", 4001); ok {
+	if _, _, ok := b.Track("too large", 4001); ok {
 		t.Error("a call larger than the queue was taken")
 	}
 	first := record(c, "1", "ok")
@@ -1342,7 +1342,7 @@ func TestACallBeingBuiltTakesRoomInTheQueue(t *testing.T) {
 	}
 	second := record(c, "2", "ok")
 	// The first is in a request; the second, waiting for the next one, is dropped for the call.
-	done, ok := b.Track("a call", 3200)
+	done, _, ok := b.Track("a call", 3200)
 	if !ok {
 		t.Fatal("the call was refused")
 	}
@@ -1438,7 +1438,7 @@ func TestACallThatWillBeRefusedDropsNothing(t *testing.T) {
 	c.mu.Lock()
 	c.holdback = &holdback{until: time.Now().Add(time.Hour), resetsAt: "later", nextCheck: time.Now().Add(time.Hour)}
 	c.mu.Unlock()
-	if _, ok := b.Track("under the limit", 10); ok || live() != 1 {
+	if _, _, ok := b.Track("under the limit", 10); ok || live() != 1 {
 		t.Errorf("a call was taken under a daily limit, or an event dropped for it: %d live", live())
 	}
 	c.mu.Lock()
@@ -1450,19 +1450,19 @@ func TestACallThatWillBeRefusedDropsNothing(t *testing.T) {
 	// After Shutdown.
 	c.closed = true
 	c.mu.Unlock()
-	if _, ok := b.Track("after shutdown", 10); ok || live() != 1 {
+	if _, _, ok := b.Track("after shutdown", 10); ok || live() != 1 {
 		t.Errorf("a call was taken after Shutdown, or an event dropped for it: %d live", live())
 	}
 	c.mu.Lock()
 	c.closed = false
 	c.maxQueueEvents = 10
 	c.mu.Unlock()
-	done, ok := b.Track("a call", 100)
+	done, _, ok := b.Track("a call", 100)
 	if !ok {
 		t.Fatal("a call within the limits was refused")
 	}
 	defer done()
-	if _, ok := b.Track("too large to count", math.MaxInt); ok {
+	if _, _, ok := b.Track("too large to count", math.MaxInt); ok {
 		t.Error("a call of the largest size there is was taken")
 	}
 	c.mu.Lock()
@@ -1590,7 +1590,7 @@ func TestShutdownTakesNoNewCallWhileItWaits(t *testing.T) {
 	<-sent
 	earlier := call("replied before", "ok")
 	earlierID, _ := fieldText(earlier, "callId")
-	built, ok := b.Track(earlierID, 1)
+	built, _, ok := b.Track(earlierID, 1)
 	if !ok {
 		t.Fatal("a call before Shutdown was refused")
 	}
@@ -1603,7 +1603,7 @@ func TestShutdownTakesNoNewCallWhileItWaits(t *testing.T) {
 	for !b.Closed() {
 		time.Sleep(time.Millisecond)
 	}
-	if _, ok := b.Track("a call after", 1); ok {
+	if _, _, ok := b.Track("a call after", 1); ok {
 		t.Error("a call was taken after Shutdown was called")
 	}
 	b.Record(earlier, nil)
@@ -1617,7 +1617,7 @@ func TestShutdownTakesNoNewCallWhileItWaits(t *testing.T) {
 // Sizes are never added up past what an int holds, whatever limit the app sets.
 func TestTheQueuesLimitIsNeverLargeEnoughToOverflow(t *testing.T) {
 	c := New(Options{DryRun: DryRunOn, Logger: &lines{}, MaxQueueBytes: math.MaxInt, MaxQueueEvents: 3})
-	release, ok := bridge.Of(c).Track("held", c.maxQueueBytes-100)
+	release, _, ok := bridge.Of(c).Track("held", c.maxQueueBytes-100)
 	if !ok {
 		t.Fatal("a call within the limit was refused")
 	}
@@ -1683,24 +1683,24 @@ func TestADailyLimitIsDecidedAsTheCallReplies(t *testing.T) {
 	c.mu.Lock()
 	c.holdback = held
 	c.mu.Unlock()
-	if _, ok := b.Track("dropped", 10); ok || held.dropped != 1 {
+	if _, _, ok := b.Track("dropped", 10); ok || held.dropped != 1 {
 		t.Fatalf("a call under the limit was taken, or not counted: %d dropped", held.dropped)
 	}
 	// Its turn to check.
 	c.mu.Lock()
 	held.nextCheck = time.Now().Add(-time.Second)
 	c.mu.Unlock()
-	gaveUp, ok := b.Track("gives up", 10)
+	gaveUp, _, ok := b.Track("gives up", 10)
 	if !ok {
 		t.Fatal("the call whose turn it was to check was refused")
 	}
-	if _, ok := b.Track("meanwhile", 10); ok {
+	if _, _, ok := b.Track("meanwhile", 10); ok {
 		t.Error("a second call was taken as the check")
 	}
 	gaveUp()
 	check := call("the check", "ok")
 	checkID, _ := fieldText(check, "callId")
-	built, ok := b.Track(checkID, 10)
+	built, _, ok := b.Track(checkID, 10)
 	if !ok {
 		t.Fatal("the turn wasn't given to the next call")
 	}
@@ -1728,7 +1728,7 @@ func TestADailyLimitThatHasResetIsOverForTheNextCall(t *testing.T) {
 	c.mu.Lock()
 	c.holdback = &holdback{until: time.Now().Add(-time.Second), resetsAt: "earlier", nextCheck: time.Now().Add(time.Hour), dropped: 2}
 	c.mu.Unlock()
-	if _, ok := bridge.Of(c).Track("too large", 1_025); ok {
+	if _, _, ok := bridge.Of(c).Track("too large", 1_025); ok {
 		t.Error("a call larger than the queue was taken")
 	}
 	flush(t, c)

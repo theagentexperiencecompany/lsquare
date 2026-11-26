@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 	"weak"
@@ -811,26 +810,28 @@ func TestAfterShutdownNothingIsRead(t *testing.T) {
 // Identify's second is counted from when the tool returned: an answer after it doesn't count,
 // even one that is there before anyone looks for it.
 func TestIdentifysAnswerAfterItsDeadlineDoesntCount(t *testing.T) {
-	call := &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(-time.Millisecond)}
-	call.returned.Store(time.Now().UnixNano())
+	gated := func(deadline time.Time) *running {
+		return &running{identified: make(chan identified, 1), gate: &gate{deadline: deadline}, deadline: deadline}
+	}
+	call := gated(time.Now().Add(-time.Millisecond))
+	call.gate.returned(false, nil)
 	call.identified <- identified{ids: nil, at: time.Now()}
 	if who := call.who(); who == nil || who.why != "took longer than its deadline" {
 		t.Errorf("a late answer counted: %+v", who)
 	}
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(50 * time.Millisecond)}
+	call = gated(time.Now().Add(50 * time.Millisecond))
 	call.identified <- identified{at: time.Now()}
 	if who := call.who(); who == nil || who.why != "" {
 		t.Errorf("an answer in time didn't count: %+v", who)
 	}
 	// Still running at its deadline: late, without waiting for it any longer.
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(10 * time.Millisecond)}
+	call = gated(time.Now().Add(10 * time.Millisecond))
 	if who := call.who(); who == nil || who.why != "took longer than its deadline" {
 		t.Errorf("an Identify that never answered counted: %+v", who)
 	}
 	// Back in time, its answer still being read as the deadline passes: it counts.
-	call = &running{identified: make(chan identified, 1), returned: new(atomic.Int64), deadline: time.Now().Add(20 * time.Millisecond)}
-	at := time.Now()
-	call.returned.Store(at.UnixNano())
+	call = gated(time.Now().Add(20 * time.Millisecond))
+	at, _ := call.gate.returned(false, nil)
 	go func(answers chan identified) {
 		time.Sleep(80 * time.Millisecond)
 		answers <- identified{at: at}
@@ -1574,5 +1575,248 @@ func TestJSONAlreadyWrittenIsTheSameByValueAndByPointer(t *testing.T) {
 	}
 	if html != 2 || null != 3 {
 		t.Errorf("%d events with the content, %d with null", html, null)
+	}
+}
+
+// Identify is judged in time or late once, by the same rule for the event and for what the
+// client learns from it: in time while the tool runs, then before its deadline, never at it, and
+// never once the event has given up on it, whenever its goroutine got round to saying so.
+func TestIdentifysGateDecidesOnce(t *testing.T) {
+	closed := func(g *gate, deadline time.Time) *gate {
+		g.mu.Lock()
+		g.closeLocked(time.Now(), deadline)
+		g.mu.Unlock()
+		return g
+	}
+	if _, inTime := (&gate{}).returned(false, nil); !inTime {
+		t.Error("an answer while the tool ran was late")
+	}
+	// Its deadline passes first: the answer that comes after is late.
+	g := closed(&gate{}, time.Now().Add(time.Hour))
+	if !g.expire() {
+		t.Error("the deadline passed without an answer, and the event kept waiting")
+	}
+	if _, inTime := g.returned(false, nil); inTime {
+		t.Error("an answer after the event gave up on it counted")
+	}
+	// It answers first: the deadline passing finds it in time.
+	g = closed(&gate{}, time.Now().Add(time.Hour))
+	if _, inTime := g.returned(false, nil); !inTime || g.expire() {
+		t.Error("an answer before the deadline was late")
+	}
+	// At its deadline: late.
+	g = closed(&gate{}, time.Now())
+	if _, inTime := g.returned(false, nil); inTime {
+		t.Error("an answer at its deadline was in time")
+	}
+	// Refused before it ran: a failure, answered in time, never a timeout.
+	g = &gate{}
+	at, _ := g.returned(true, nil)
+	closed(g, time.Now().Add(time.Hour))
+	if g.expire() || !g.failed || g.failedAt != at {
+		t.Error("a refused Identify was a timeout")
+	}
+}
+
+// history is answers as the client keeps them, by when they returned, on a clock of its own.
+type history struct {
+	mu      sync.Mutex
+	now     time.Time
+	answers []struct {
+		at   time.Time
+		keys []string
+	}
+}
+
+func (h *history) note(at time.Time, keys ...string) {
+	if keys == nil {
+		keys = []string{}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.answers = append(h.answers, struct {
+		at   time.Time
+		keys []string
+	}{at, keys})
+}
+
+func (h *history) IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time {
+	h.mu.Lock()
+	at := h.now
+	h.mu.Unlock()
+	if learn(at) {
+		h.note(at, keys...)
+	}
+	return at
+}
+
+func (h *history) IdentifiedKeys() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.answers) == 0 {
+		return nil
+	}
+	return h.answers[len(h.answers)-1].keys
+}
+
+func (h *history) IdentifiedKeysAt(at time.Time) []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var keys []string
+	for _, answer := range h.answers {
+		if answer.at.Before(at) {
+			keys = answer.keys
+		}
+	}
+	return keys
+}
+
+// An answer is in what the client learned from the very time it returned, which is when it is
+// noted, its IDs checked first: a call that failed after it needs what it gave, whenever that
+// call looks, and an answer found invalid failed when it returned.
+func TestAnAnswerCountsFromWhenItReturned(t *testing.T) {
+	client := lsquare.New(lsquare.Options{APIKey: "lsq_test", Endpoint: "http://localhost:1", DryRun: lsquare.DryRunOff})
+	defer client.Shutdown(context.Background())
+	history := bridgeOf(client)
+	failed := &gate{history: history}
+	ended := time.Now()
+	failed.mu.Lock()
+	failed.closeLocked(ended, ended.Add(time.Hour))
+	failed.mu.Unlock()
+	// Another call's Identify answers with two IDs after this call's tool returned; then this
+	// call's returns one that isn't valid, and a third call's answers with none.
+	if _, inTime := (&gate{history: history}).returned(false, []string{"orgId", "userId"}); !inTime {
+		t.Fatal("an answer while the tool ran was late")
+	}
+	at, inTime := failed.returned(true, nil)
+	if !inTime || !failed.failed || !failed.failedAt.Equal(at) {
+		t.Fatalf("an invalid answer: in time %v, failed %v at %v", inTime, failed.failed, failed.failedAt)
+	}
+	(&gate{history: history}).returned(false, nil)
+	if got := strings.Join(failed.requiredKeys(), ","); got != "orgId,userId" {
+		t.Errorf("a call that failed after an answer needs %q", got)
+	}
+	// A stronger one after that: the call's event, built now, needs it too.
+	(&gate{history: history}).returned(false, []string{"userId", "conversationId"})
+	if got := strings.Join(failed.requiredKeys(), ","); got != "orgId,userId,conversationId" {
+		t.Errorf("after a stronger answer, a call that failed needs %q", got)
+	}
+	(&gate{history: history}).returned(false, nil)
+	if got := strings.Join(history.IdentifiedKeysAt(time.Now().Add(time.Second)), ","); got != "" {
+		t.Errorf("the answer that came last: %q", got)
+	}
+}
+
+// As its event is built, a failed call also needs what the client learned last, as in
+// TypeScript: an answer of another call that came after the call failed can ask for more, at any
+// time after it or at that very time, and never for less.
+func TestAnAnswerAfterACallFailedCanOnlyAskForMore(t *testing.T) {
+	start := time.Now()
+	ms := func(n int) time.Time { return start.Add(time.Duration(n) * time.Millisecond) }
+	needs := func(g *gate) string { return strings.Join(g.requiredKeys(), ",") }
+	failed := func(h *history, at time.Time) *gate {
+		g := &gate{history: h}
+		g.mu.Lock()
+		g.closeLocked(ms(5), ms(1000))
+		g.mu.Unlock()
+		h.now = at
+		g.returned(true, nil)
+		return g
+	}
+	h := &history{}
+	h.note(ms(0), "userId")
+	g := failed(h, ms(10))
+	if got := needs(g); got != "userId" {
+		t.Errorf("as it failed: needs %q", got)
+	}
+	h.note(ms(20), "orgId", "userId")
+	if got := needs(g); got != "userId,orgId" {
+		t.Errorf("after a stronger answer: needs %q", got)
+	}
+	h.note(ms(30))
+	if got := needs(g); got != "userId" {
+		t.Errorf("after a weaker answer: needs %q", got)
+	}
+	// One at the very time a call failed, noted after it.
+	g = failed(h, ms(40))
+	h.note(ms(40), "conversationId")
+	if got := needs(g); got != "conversationId" {
+		t.Errorf("after one at the same time: needs %q", got)
+	}
+	// Before any answer, a userId, and with one that came after, each field either asks for.
+	h = &history{}
+	g = failed(h, ms(10))
+	if got := g.requiredKeys(); got != nil {
+		t.Errorf("before any answer: needs %v", got)
+	}
+	h.note(ms(20), "orgId")
+	if got := needs(g); got != "userId,orgId" {
+		t.Errorf("after the first answer: needs %q", got)
+	}
+}
+
+// What a failed call froze of its needs is what was in effect at its cutoff: once the tool had
+// returned and Identify had failed, its deadline at the latest. An answer of another call that
+// returned after that changes none of it, however soon it was noted, and whenever the call
+// looks; at build, the last answer only adds to it (TestAnAnswerAfterACallFailedCanOnlyAskForMore).
+func TestAFailedCallsNeedsAreThoseAtItsCutoff(t *testing.T) {
+	start := time.Now()
+	ms := func(n int) time.Time { return start.Add(time.Duration(n) * time.Millisecond) }
+	needs := func(g *gate) string {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return strings.Join(g.required, ",")
+	}
+	h := &history{}
+	h.note(ms(0), "orgId", "userId")
+	h.note(ms(20), "userId")
+	h.note(ms(40))
+	h.note(ms(60), "conversationId")
+
+	// Failed while the tool ran (at 10), which returned at 30: what was in effect at 30.
+	g := &gate{history: h}
+	g.mu.Lock()
+	g.failLocked(ms(10))
+	g.closeLocked(ms(30), ms(1000))
+	g.mu.Unlock()
+	if got := needs(g); got != "userId" {
+		t.Errorf("failed while the tool ran: needs %q", got)
+	}
+	// Failed after the return (at 50): then.
+	g = &gate{history: h}
+	g.mu.Lock()
+	g.closeLocked(ms(5), ms(1000))
+	g.mu.Unlock()
+	h.now = ms(50)
+	if at, inTime := g.returned(true, nil); !at.Equal(ms(50)) || !inTime {
+		t.Errorf("failed after the return: at %v, in time %v", at, inTime)
+	}
+	if got := needs(g); got != "" {
+		t.Errorf("failed after the return: needs %q", got)
+	}
+	// Timed out at 15, the timer running late: what was in effect at its deadline.
+	g = &gate{history: h}
+	g.mu.Lock()
+	g.closeLocked(ms(5), ms(15))
+	g.mu.Unlock()
+	g.expire()
+	if got := needs(g); got != "orgId,userId" {
+		t.Errorf("timed out: needs %q", got)
+	}
+	// An answer that came late (at 70, past its deadline at 35): as at its deadline, and the
+	// client learns nothing from it.
+	g = &gate{history: h}
+	g.mu.Lock()
+	g.closeLocked(ms(5), ms(35))
+	g.mu.Unlock()
+	h.now = ms(70)
+	if _, inTime := g.returned(false, []string{"orgId"}); inTime {
+		t.Error("a late answer was in time")
+	}
+	if got := needs(g); got != "userId" {
+		t.Errorf("late: needs %q", got)
+	}
+	if got := strings.Join(h.IdentifiedKeysAt(ms(1000)), ","); got != "conversationId" {
+		t.Errorf("the client learned from a late answer: %q", got)
 	}
 }
