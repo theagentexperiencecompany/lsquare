@@ -588,6 +588,7 @@ type gate struct {
 type identifyHistory interface {
 	IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time
 	IdentifiedKeysAt(at time.Time) []string
+	IdentifiedKeys() []string
 }
 
 // returned notes that Identify returned, now, failed or not, with the ID fields it gave, and
@@ -629,7 +630,8 @@ func (g *gate) closeLocked(ended, deadline time.Time) {
 
 // freezeLocked fixes what a failed call needs, once the tool has returned and Identify failed:
 // what was in effect at the later of the two, and at its deadline at the latest. That is never
-// after now, and the client knows for good what was in effect up to now.
+// after now, and every answer timed before now has been noted: an answer of another call that
+// returned before the call failed counts, and one after it doesn't take any of that away.
 func (g *gate) freezeLocked() {
 	if !g.failed || g.deadline.IsZero() || g.frozen {
 		return
@@ -661,15 +663,40 @@ func (g *gate) expire() bool {
 	return true
 }
 
-// requiredKeys is what the client required of the failed call's capture: nil before any Identify
-// answered in time.
+// requiredKeys is what the client requires of the failed call's capture as its event is built:
+// what was in effect as the call failed, and what it learned last, as TypeScript reads it then,
+// each field either asks for; nil when neither had an answer (a userId).
 func (g *gate) requiredKeys() []string {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.frozen && g.history != nil {
-		return g.history.IdentifiedKeysAt(time.Now())
+	if g.history == nil {
+		return g.required
 	}
-	return g.required
+	required := g.required
+	if !g.frozen {
+		required = g.history.IdentifiedKeysAt(time.Now())
+	}
+	return bothKeys(required, g.history.IdentifiedKeys())
+}
+
+// bothKeys is each ID field one of two requirements asks for, where nil (no answer) asks for a
+// userId: nil when both are.
+func bothKeys(a, b []string) []string {
+	if a == nil && b == nil {
+		return nil
+	}
+	out := []string{}
+	for _, keys := range [][]string{a, b} {
+		if keys == nil {
+			keys = []string{"userId"}
+		}
+		for _, key := range keys {
+			if !slices.Contains(out, key) {
+				out = append(out, key)
+			}
+		}
+	}
+	return out
 }
 
 // session is the session a call is grouped into, and where its ID came from: the agent sent it,

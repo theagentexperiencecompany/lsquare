@@ -1629,6 +1629,9 @@ type history struct {
 }
 
 func (h *history) note(at time.Time, keys ...string) {
+	if keys == nil {
+		keys = []string{}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.answers = append(h.answers, struct {
@@ -1645,6 +1648,15 @@ func (h *history) IdentifyReturned(keys []string, learn func(at time.Time) bool)
 		h.note(at, keys...)
 	}
 	return at
+}
+
+func (h *history) IdentifiedKeys() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.answers) == 0 {
+		return nil
+	}
+	return h.answers[len(h.answers)-1].keys
 }
 
 func (h *history) IdentifiedKeysAt(at time.Time) []string {
@@ -1684,19 +1696,77 @@ func TestAnAnswerCountsFromWhenItReturned(t *testing.T) {
 	if got := strings.Join(failed.requiredKeys(), ","); got != "orgId,userId" {
 		t.Errorf("a call that failed after an answer needs %q", got)
 	}
+	// A stronger one after that: the call's event, built now, needs it too.
+	(&gate{history: history}).returned(false, []string{"userId", "conversationId"})
+	if got := strings.Join(failed.requiredKeys(), ","); got != "orgId,userId,conversationId" {
+		t.Errorf("after a stronger answer, a call that failed needs %q", got)
+	}
+	(&gate{history: history}).returned(false, nil)
 	if got := strings.Join(history.IdentifiedKeysAt(time.Now().Add(time.Second)), ","); got != "" {
 		t.Errorf("the answer that came last: %q", got)
 	}
 }
 
-// What a failed call needs of its capture is what was in effect at its cutoff: once the tool had
-// returned and Identify had failed, its deadline at the latest. An answer of another call that
-// returned after that applies to later calls only, however soon it was noted, and whenever the
-// call looks.
-func TestAFailedCallsNeedsAreThoseAtItsCutoff(t *testing.T) {
+// As its event is built, a failed call also needs what the client learned last, as in
+// TypeScript: an answer of another call that came after the call failed can ask for more, at any
+// time after it or at that very time, and never for less.
+func TestAnAnswerAfterACallFailedCanOnlyAskForMore(t *testing.T) {
 	start := time.Now()
 	ms := func(n int) time.Time { return start.Add(time.Duration(n) * time.Millisecond) }
 	needs := func(g *gate) string { return strings.Join(g.requiredKeys(), ",") }
+	failed := func(h *history, at time.Time) *gate {
+		g := &gate{history: h}
+		g.mu.Lock()
+		g.closeLocked(ms(5), ms(1000))
+		g.mu.Unlock()
+		h.now = at
+		g.returned(true, nil)
+		return g
+	}
+	h := &history{}
+	h.note(ms(0), "userId")
+	g := failed(h, ms(10))
+	if got := needs(g); got != "userId" {
+		t.Errorf("as it failed: needs %q", got)
+	}
+	h.note(ms(20), "orgId", "userId")
+	if got := needs(g); got != "userId,orgId" {
+		t.Errorf("after a stronger answer: needs %q", got)
+	}
+	h.note(ms(30))
+	if got := needs(g); got != "userId" {
+		t.Errorf("after a weaker answer: needs %q", got)
+	}
+	// One at the very time a call failed, noted after it.
+	g = failed(h, ms(40))
+	h.note(ms(40), "conversationId")
+	if got := needs(g); got != "conversationId" {
+		t.Errorf("after one at the same time: needs %q", got)
+	}
+	// Before any answer, a userId, and with one that came after, each field either asks for.
+	h = &history{}
+	g = failed(h, ms(10))
+	if got := g.requiredKeys(); got != nil {
+		t.Errorf("before any answer: needs %v", got)
+	}
+	h.note(ms(20), "orgId")
+	if got := needs(g); got != "userId,orgId" {
+		t.Errorf("after the first answer: needs %q", got)
+	}
+}
+
+// What a failed call froze of its needs is what was in effect at its cutoff: once the tool had
+// returned and Identify had failed, its deadline at the latest. An answer of another call that
+// returned after that changes none of it, however soon it was noted, and whenever the call
+// looks; at build, the last answer only adds to it (TestAnAnswerAfterACallFailedCanOnlyAskForMore).
+func TestAFailedCallsNeedsAreThoseAtItsCutoff(t *testing.T) {
+	start := time.Now()
+	ms := func(n int) time.Time { return start.Add(time.Duration(n) * time.Millisecond) }
+	needs := func(g *gate) string {
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		return strings.Join(g.required, ",")
+	}
 	h := &history{}
 	h.note(ms(0), "orgId", "userId")
 	h.note(ms(20), "userId")

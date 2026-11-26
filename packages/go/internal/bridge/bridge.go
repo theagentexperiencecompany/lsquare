@@ -52,12 +52,15 @@ type Client interface {
 	// time, says whether the client learns from it (it returned in time, and its IDs are valid):
 	// keys, the ID fields it gave, are then what a call whose Identify fails needs of a capture,
 	// on any server instrumented with the client, from then on. It is noted as its time is taken,
-	// under the client's lock on what it learned, and learn takes no lock: what was in effect at
-	// a time no later than now is known for good. IdentifiedKeysAt gives it, for a call decided
-	// at at, whenever it asks: the fields of the last answer before at and of any at at itself,
-	// a userId before any, and every ID field once the client has let go of answers that old.
+	// under the client's lock on what it learned, and learn takes no lock: every answer timed
+	// before now has been noted (one noted later may still be given the same time as now, the
+	// clock being no finer). IdentifiedKeysAt gives what was in effect for a call decided at at,
+	// whenever it asks: the fields of the last answer before at and of any at at itself, a
+	// userId before any, and every ID field once the client has let go of answers that old.
+	// IdentifiedKeys gives those of the answer it learned from last: nil before any.
 	IdentifyReturned(keys []string, learn func(at time.Time) bool) time.Time
 	IdentifiedKeysAt(at time.Time) []string
+	IdentifiedKeys() []string
 	// FlushTimeout is how long a reply waits for its call's event at most (see Settle): 0, none.
 	FlushTimeout() time.Duration
 	// Settle waits for the call's event to be built and then sent or dropped (tracked, as Track

@@ -593,6 +593,16 @@ func (b bridged) IdentifiedKeysAt(at time.Time) []string {
 	return addKeys(keys, []string{"userId"})
 }
 
+func (b bridged) IdentifiedKeys() []string {
+	c := b.c
+	c.identifiedMu.Lock()
+	defer c.identifiedMu.Unlock()
+	if len(c.identified) == 0 {
+		return nil
+	}
+	return slices.Clone(c.identified[len(c.identified)-1].keys)
+}
+
 // addKeys is keys with each of more it doesn't have yet: never nil.
 func addKeys(keys, more []string) []string {
 	if keys == nil {
