@@ -11,7 +11,8 @@ nothing else yet ([below](#not-yet-supported)). LSquare is an invite-only beta, 
   and why each was made ([the extras](#the-extras)). `extras(false)` leaves your tools as they are.
 - A tool's reply never waits on the network, and `flush()` waits up to 2 seconds by default.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
-- Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11. Rust 1.88 or later.
+- Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11 or 3.12. Rust 1.88 or
+  later.
 - Events are stored in the United States. If you serve customers in the EU, take that into account.
 
 ## Quickstart
@@ -27,12 +28,13 @@ folder.
    ```
 
    ```sh
-   cargo add rmcp@~3.11 --features server,macros,transport-streamable-http-server
+   cargo add rmcp@~3.12 --features server,macros,transport-streamable-http-server
    ```
 
-   `lsquare` is a beta: its only version on crates.io is a pre-release, which `cargo add` picks
-   while there is no stable one. A requirement written by hand needs the version in full, as
-   `cargo add` writes it (`lsquare = "0.2.0-beta.2"`): one such as `"0.2"` doesn't match a
+   The second is for a new project: a server on `rmcp` 3.11 or 3.12 already keeps the
+   requirement it has. `lsquare` is a beta: its only version on crates.io is a pre-release, which
+   `cargo add` picks while there is no stable one. A requirement written by hand needs the version in full, as
+   `cargo add` writes it (`lsquare = "0.2.0-beta.3"`): one such as `"0.2"` doesn't match a
    pre-release.
 
 2. **Instrument the server:**
@@ -271,9 +273,10 @@ This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and
 - **`get_more_tools`**, the tool agents call when none fits. The other two
   [extras](#the-extras), `session_id` and `intent`, are here.
 - **`capture()` and `turn` events:** agent turns, inside a tool call or outside MCP.
-- **Other Rust MCP libraries.** Only `rmcp`, and only 3.11: `lsquare` forwards each method of
-  rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that forwards what
-  that one adds. A test compares the two lists.
+- **Other Rust MCP libraries.** Only `rmcp`, and only 3.11 and 3.12: `lsquare` forwards each
+  method of rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that
+  forwards what that one adds. A test compares the two lists, and CI runs the tests with each end
+  of the range.
 - **`flushBeforeReply` and `waitUntil`**, for hosts that stop a process once it has replied.
 - **`rmcp`'s `local` feature** (handlers that aren't `Send`): the crate builds with it, but
   `identify` must still be `Send`, and its tests don't run that way.

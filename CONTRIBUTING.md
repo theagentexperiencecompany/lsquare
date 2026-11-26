@@ -78,6 +78,16 @@ CI also builds the library with the oldest Rust its `Cargo.toml` declares (`rust
 the same `Cargo.lock`. `.cargo/config.toml` has `cargo update` keep to versions that build with
 it; to check here, `rustup toolchain install 1.88` and `cargo +1.88 check --locked`.
 
+`Cargo.lock` has the newest `rmcp` the crate accepts, and CI runs the tests with the oldest too.
+To check here, keeping a copy of the lockfile and putting it back after:
+
+```sh
+cp Cargo.lock Cargo.lock.saved
+cargo update -p rmcp --precise 3.11.0 && cargo update -p rmcp-macros --precise 3.11.0
+cargo test
+mv Cargo.lock.saved Cargo.lock
+```
+
 One test makes 1,500 inputs and fails if any event differs from the one TypeScript writes for it.
 After a change to shaping or redaction, run it on more, from other seeds:
 
