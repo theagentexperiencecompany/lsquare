@@ -607,6 +607,24 @@ jobs:
           rustup toolchain install "$minimum" --profile minimal
           cargo "+$minimum" check --locked
           cargo "+$minimum" check --locked --no-default-features
+      # The oldest rmcp the crate accepts, the lower bound of its requirement (Cargo.lock has the
+      # newest): the tests again with it, and with its macros of the same version. Last, since it
+      # changes Cargo.lock.
+      - name: The oldest rmcp the crate accepts
+        working-directory: packages/rust
+        run: |
+          oldest=$(cargo metadata --format-version 1 --no-deps | python3 -c '
+          import json, re, sys
+          requirements = {d["req"] for d in json.load(sys.stdin)["packages"][0]["dependencies"] if d["name"] == "rmcp"}
+          assert len(requirements) == 1, f"the library and its tests take rmcp differently: {requirements}"
+          bound = re.fullmatch(r">=\s*(\d+)\.(\d+)(?:\.(\d+))?\s*,\s*<.*", requirements.pop())
+          assert bound, "the rmcp requirement has no lower bound"
+          print(f"{bound[1]}.{bound[2]}.{bound[3] or 0}")
+          ')
+          cargo update -p rmcp --precise "$oldest"
+          cargo update -p rmcp-macros --precise "$oldest"
+          test "$(cargo tree -i rmcp --depth 0 --prefix none | head -1)" = "rmcp v$oldest"
+          cargo test --locked
 
   # What a branch rule requires: green only if no other job failed or was cancelled, and a skipped
   # one is fine. A rule can't require the matrix jobs here: on a pull request that skips one, it
