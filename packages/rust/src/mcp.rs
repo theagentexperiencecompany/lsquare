@@ -23,7 +23,8 @@
 //! It also adds two optional inputs to the tools it can, `session_id` and `intent` (see
 //! [`InstrumentOptions::extras`]): `list_tools` shows them, `call_tool` takes them out before the
 //! handler sees the call, and a call that came without a session gets one, told to the agent in a
-//! text block at the end of the tool's result.
+//! text block at the end of the tool's result. And it adds one tool, `get_more_tools`, which it
+//! answers itself: an agent calls it to say what it needed and couldn't do.
 
 use std::any::Any;
 use std::borrow::Cow;
@@ -49,7 +50,8 @@ use rmcp::model::{
     ListToolsResult, PaginatedRequestParams, ProgressNotificationParam, ProtocolVersion,
     ReadResourceDirectoryRequestParams, ReadResourceDirectoryResult, ReadResourceRequestParams,
     ReadResourceResponse, RequestId, ResourceContents, ServerConfig, SetLevelRequestParams,
-    SubscribeRequestParams, SubscriptionFilter, Tool, UnsubscribeRequestParams, UpdateTaskParams,
+    SubscribeRequestParams, SubscriptionFilter, Tool, ToolAnnotations, UnsubscribeRequestParams,
+    UpdateTaskParams,
 };
 use rmcp::service::{
     MaybeSendFuture, NotificationContext, Peer, RequestContext, RoleServer, SubscriptionContext,
@@ -63,8 +65,9 @@ use tokio::task::JoinHandle;
 use crate::client::{Client, Error, ErrorCode, Inner, Level};
 use crate::event::{BlockIn, CallData, CallHead, CallShaper, ResourceIn, ResultIn, TypedResult};
 use crate::extras::{
-    advertise, id_block, is_session_id, listed_ownership, new_session_id, Ownership, INTENT,
-    SESSION_ID,
+    advertise, id_block, is_session_id, listed_ownership, missing_tools_reply,
+    missing_tools_schema, new_session_id, Ownership, INTENT, MISSING_TOOLS,
+    MISSING_TOOLS_DESCRIPTION, SESSION_ID,
 };
 use crate::json::stringify;
 use crate::normalize::is_valid_id;
@@ -208,6 +211,7 @@ pub struct InstrumentOptions {
     instructions: bool,
     sessions: bool,
     intent: bool,
+    missing_tools: bool,
 }
 
 impl Default for InstrumentOptions {
@@ -220,6 +224,7 @@ impl Default for InstrumentOptions {
             instructions: true,
             sessions: true,
             intent: true,
+            missing_tools: true,
         }
     }
 }
@@ -308,8 +313,9 @@ impl InstrumentOptions {
     }
 
     /// What the wrapper adds to the server's tools, all of it (the default) or none: the
-    /// `session_id` and `intent` inputs. [`sessions`](Self::sessions) and
-    /// [`intent`](Self::intent) choose one by one.
+    /// `session_id` and `intent` inputs, and the `get_more_tools` tool.
+    /// [`sessions`](Self::sessions), [`intent`](Self::intent) and
+    /// [`missing_tools`](Self::missing_tools) choose one by one.
     ///
     /// A tool gets an input when the handler's `get_tool` gives its definition (a server made with
     /// rmcp's `#[tool_handler]` does), its input schema is an object of named properties
@@ -320,6 +326,7 @@ impl InstrumentOptions {
     pub fn extras(mut self, add: bool) -> InstrumentOptions {
         self.sessions = add;
         self.intent = add;
+        self.missing_tools = add;
         self
     }
 
@@ -337,6 +344,20 @@ impl InstrumentOptions {
         self.intent = add;
         self
     }
+
+    /// Give agents a tool to say what they needed and couldn't do (the default), or not:
+    /// `get_more_tools`, with a required `need`. The wrapper lists it after the server's own
+    /// tools and answers it itself ("Noted. No other tools are available right now."); the call
+    /// is recorded as any other, marked `extra: "missing_tools"`.
+    ///
+    /// It is there while the handler's `get_tool` gives a definition for a tool of its own and
+    /// none for one of that name, the `inputs` option records its arguments, and the client
+    /// hasn't been shut down. Otherwise nothing is listed, and a call to that name goes to the
+    /// handler like any other.
+    pub fn missing_tools(mut self, add: bool) -> InstrumentOptions {
+        self.missing_tools = add;
+        self
+    }
 }
 
 struct Shared {
@@ -346,6 +367,8 @@ struct Shared {
     listed: Mutex<HashMap<String, String>>,
     /// What the server calls itself, read as it was instrumented.
     server: Option<Value>,
+    /// The same as one text: what the client keeps this server's tool names by.
+    server_key: String,
     /// The instructions it gives clients, read then too, when they are recorded and it has some.
     instructions: Option<Value>,
     /// The tools whose warnings about the extras' inputs were given already.
@@ -475,6 +498,7 @@ pub fn instrument<H: ServerHandler>(
             client: inner,
             options,
             listed: Mutex::new(HashMap::new()),
+            server_key: server.as_ref().map(Value::to_string).unwrap_or_default(),
             server,
             instructions,
             noted: Mutex::new(HashSet::new()),
@@ -485,20 +509,32 @@ pub fn instrument<H: ServerHandler>(
 
 /// What dry run says of the extras: which are on, and for which tools.
 fn extras_line(options: &InstrumentOptions) -> Value {
-    let on: Vec<Value> = [(options.sessions, SESSION_ID), (options.intent, INTENT)]
-        .into_iter()
-        .filter(|(on, _)| *on)
-        .map(|(_, name)| name.into())
-        .collect();
+    let on: Vec<Value> = [
+        (options.sessions, SESSION_ID),
+        (options.intent, INTENT),
+        (options.missing_tools, MISSING_TOOLS),
+    ]
+    .into_iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, name)| name.into())
+    .collect();
     if on.is_empty() {
         return "off".into();
     }
     let mut line = Map::new();
     line.insert("on".into(), on.into());
-    line.insert(
-        "for".into(),
-        "tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name".into(),
-    );
+    if options.sessions || options.intent {
+        line.insert(
+            "for".into(),
+            "tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name".into(),
+        );
+    }
+    if options.missing_tools {
+        line.insert(
+            MISSING_TOOLS.into(),
+            "listed and answered while the handler's get_tool gives a definition for a tool of its own and none of that name, and inputs are recorded for it".into(),
+        );
+    }
     Value::Object(line)
 }
 
@@ -543,6 +579,15 @@ struct Registered {
     further_in: bool,
 }
 
+/// What the extras change of a listed page.
+#[derive(Default)]
+struct Listed {
+    /// The tools shown with the extras' inputs: their place in the page, and their schema.
+    schemas: Vec<(usize, Arc<Map<String, Value>>)>,
+    /// The wrapper's own `get_more_tools`, to go after the page's tools.
+    more: Option<Tool>,
+}
+
 /// What the extras took out of a call, and what they may add to its reply.
 #[derive(Default)]
 struct Extra {
@@ -554,6 +599,51 @@ struct Extra {
     sent: Option<String>,
     /// Why the call was made, as the agent said it: a string that isn't empty.
     intent: Option<Value>,
+}
+
+/// `get_more_tools` as it is listed, with `session_id` where sessions are on: TypeScript's
+/// definition. It changes nothing on the server, so it is read-only, and what the agent writes
+/// leaves the server.
+fn missing_tools_tool(sessions: bool) -> Tool {
+    Tool::new(
+        MISSING_TOOLS,
+        MISSING_TOOLS_DESCRIPTION,
+        missing_tools_schema(sessions),
+    )
+    .with_annotations(
+        ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .open_world(true),
+    )
+}
+
+/// The wrapper's reply to a call of `get_more_tools`: TypeScript's, an error result without a
+/// `need` that is a string.
+fn missing_tools_result(arguments: Option<&Map<String, Value>>) -> CallToolResult {
+    let (text, refused) = missing_tools_reply(arguments);
+    let content = vec![ContentBlock::text(text)];
+    if refused {
+        return CallToolResult::error(content);
+    }
+    // As TypeScript's reply: no `isError` on one that isn't.
+    let mut reply = CallToolResult::success(content);
+    reply.is_error = None;
+    reply
+}
+
+/// What is known of a call as it arrives, before it is read.
+struct Arrival {
+    /// What the handler said of the tool, if it was asked already.
+    looked: Option<Option<Registered>>,
+    /// What the extras took out of the call.
+    extra: Extra,
+    /// Its connection's session.
+    protocol_session: Option<String>,
+    /// What the `inputs` option said of the tool, if it was asked already: it is asked once.
+    inputs: Option<bool>,
+    /// A call to the wrapper's own `get_more_tools`, which the wrapper answers.
+    answer: bool,
 }
 
 /// Whether a protocol version has no sessions: 2026-07-28 and later. One that isn't a date
@@ -667,6 +757,8 @@ struct Call {
     extra: Extra,
     /// The connection's own session, where the protocol version has sessions and sessions apply.
     protocol_session: Option<String>,
+    /// A call to the wrapper's own `get_more_tools`.
+    answer: bool,
 }
 
 fn named(name: &str, version: &str) -> Value {
@@ -729,10 +821,97 @@ impl<H: ServerHandler> Instrumented<H> {
         let further_in = FURTHER_IN
             .try_with(|raised| raised.replace(false))
             .unwrap_or(false);
-        Some(Registered {
-            tool: tool.ok()?,
-            further_in,
-        })
+        let tool = tool.ok()?;
+        // A name to ask this server's handlers about (see `answers()`): the definition's own.
+        if let (Some(defined), false) = (&tool, further_in) {
+            self.shared
+                .client
+                .hint_tool(&self.shared.server_key, &defined.name);
+        }
+        Some(Registered { tool, further_in })
+    }
+
+    /// Whether the handler has no tool named `get_more_tools`, given what its `get_tool` said of
+    /// that name. One it has is its own, and stays: logged once per client.
+    fn name_is_free(&self, looked: Option<&Registered>) -> bool {
+        match looked {
+            Some(Registered { tool: None, .. }) => true,
+            Some(_) => {
+                self.shared.client.warn_once("extras-own/get_more_tools", "[lsquare] The server has its own get_more_tools tool: it is left as it is, and LSquare's isn't added.");
+                false
+            }
+            // Its `get_tool` panicked: nothing is known.
+            None => false,
+        }
+    }
+
+    /// Whether the `inputs` option records `get_more_tools`' arguments, asked as a page is
+    /// listed. Where it doesn't, the tool isn't offered, since what it tells agents wouldn't be
+    /// true: logged once per client, and a function that panics is said so in words of its own.
+    fn lists_need(&self) -> bool {
+        let recorded = match &self.shared.options.inputs {
+            Choice::All => true,
+            Choice::None => false,
+            Choice::PerTool(ask) => match catch_unwind(AssertUnwindSafe(|| ask(MISSING_TOOLS))) {
+                Ok(recorded) => recorded,
+                Err(_) => {
+                    self.shared.client.warn_once("inputs-unanswered/get_more_tools", "[lsquare] The inputs function panicked when asked about get_more_tools: it isn't listed.");
+                    return false;
+                }
+            },
+        };
+        if !recorded {
+            self.shared.client.warn_once("extras-no-inputs/get_more_tools", "[lsquare] get_more_tools isn't offered: inputs are off for it, so what an agent asks for wouldn't be recorded.");
+        }
+        recorded
+    }
+
+    /// Whether a call to `get_more_tools` is the wrapper's to answer, and what the `inputs`
+    /// option said of it if it was asked, which it is once per call. It is the wrapper's while
+    /// the extra is on, the client hasn't been shut down, the handler has no tool of that name
+    /// and defines one of its own, and the call's arguments are recorded.
+    ///
+    /// The handler's own tool is one this client has seen a handler of this server define, asked
+    /// of this handler again: a wrapper built for one request has seen no tool itself, and never
+    /// lists the server's tools to find one. `looked` is what the handler said of the name.
+    fn answers(&self, looked: Option<&Registered>) -> (bool, Option<bool>) {
+        let options = &self.shared.options;
+        let client = &self.shared.client;
+        if !options.missing_tools || client.closed() || !self.name_is_free(looked) {
+            return (false, None);
+        }
+        let hints = client.tool_hints(&self.shared.server_key);
+        let defines = hints.iter().any(|name| {
+            self.registered(name)
+                .is_some_and(|registered| registered.tool.is_some() && !registered.further_in)
+        });
+        if !defines {
+            return (false, None);
+        }
+        // Why it isn't offered was said as it wasn't listed.
+        let inputs = self.chooses(&options.inputs, "inputs", MISSING_TOOLS);
+        (inputs, Some(inputs))
+    }
+
+    /// What the wrapper takes out of a call to its own `get_more_tools`: the `session_id`, when
+    /// sessions are on. Anything else the agent sent stays, and is recorded with the need.
+    fn prepare_answer(&self, request: &mut CallToolRequestParams) -> Extra {
+        let sessions = self.shared.options.sessions;
+        let mut extra = Extra {
+            grouping: sessions,
+            sessions,
+            ..Extra::default()
+        };
+        if sessions {
+            if let Some(Value::String(id)) = request
+                .arguments
+                .as_mut()
+                .and_then(|arguments| arguments.shift_remove(SESSION_ID))
+            {
+                extra.sent = Some(id).filter(|id| is_session_id(id));
+            }
+        }
+        extra
     }
 
     /// The tool's description as agents are listed it now: the registered tool's, or else the one
@@ -850,19 +1029,34 @@ impl<H: ServerHandler> Instrumented<H> {
         extra
     }
 
-    /// The listed tools that get the extras' inputs, by their place in the page, each with the
-    /// schema it is shown with: those the handler gives a definition for now that says of the
-    /// inputs what the listing says, where the listed schema takes them.
-    fn advertised(&self, page: &ListToolsResult) -> Vec<(usize, Arc<Map<String, Value>>)> {
+    /// What the extras change of a listed page: the tools that get the inputs, by their place in
+    /// the page, each with the schema it is shown with, and the wrapper's own `get_more_tools`
+    /// where it is added.
+    ///
+    /// A tool gets the inputs when the handler gives a definition for it now that says of them
+    /// what the listing says, where the listed schema takes them. `get_more_tools` goes on a last
+    /// page that lists a tool the handler defines and none of that name, while the handler has
+    /// none either, its arguments are recorded and the client hasn't been shut down.
+    fn advertised(&self, page: &ListToolsResult) -> Listed {
         let options = &self.shared.options;
-        let mut shown = Vec::new();
-        if !self.shared.client.enabled()
-            || !(options.sessions || options.intent)
-            || page.tools.len() > MAX_LISTED
-        {
-            return shown;
+        let client = &self.shared.client;
+        let mut listed = Listed::default();
+        let inputs = options.sessions || options.intent;
+        let more = options.missing_tools && page.next_cursor.is_none();
+        if !client.enabled() || !(inputs || more) || page.tools.len() > MAX_LISTED {
+            return listed;
         }
+        // A tool on the page that the handler defines, and not through a wrapper further in.
+        let mut defines = false;
+        // A tool on the page named `get_more_tools`.
+        let mut named = false;
         for (index, tool) in page.tools.iter().enumerate() {
+            let own = tool.name == MISSING_TOOLS;
+            named |= own;
+            // With the inputs off, one tool the handler defines is all that is looked for.
+            if !inputs && defines {
+                continue;
+            }
             let Some(registered) = self.registered(&tool.name) else {
                 continue;
             };
@@ -871,9 +1065,17 @@ impl<H: ServerHandler> Instrumented<H> {
                 continue;
             }
             let Some(current) = registered.tool else {
-                self.note_undefined(&tool.name);
+                // Nothing is said of a `get_more_tools` without a definition: it is a wrapper's
+                // further in, which gave it its inputs, where it isn't the server's own.
+                if inputs && !own {
+                    self.note_undefined(&tool.name);
+                }
                 continue;
             };
+            defines = true;
+            if !inputs {
+                continue;
+            }
             let ownership = listed_ownership(&current.input_schema);
             self.note_ownership(&tool.name, ownership);
             if ownership == Ownership::Unreadable
@@ -887,10 +1089,16 @@ impl<H: ServerHandler> Instrumented<H> {
                 .map(|(_, name)| name)
                 .collect();
             if let Some(schema) = advertise(&tool.input_schema, &adding) {
-                shown.push((index, Arc::new(schema)));
+                listed.schemas.push((index, Arc::new(schema)));
             }
         }
-        shown
+        // Whose the name is comes first, so a server with its own is told, with inputs off too.
+        let free = more && self.name_is_free(self.registered(MISSING_TOOLS).as_ref());
+        // Whether the client was shut down comes last, after the app's `inputs` function ran.
+        if free && !named && defines && self.lists_need() && !client.closed() {
+            listed.more = Some(missing_tools_tool(options.sessions));
+        }
+        listed
     }
 
     /// Notes the connection an `initialize` starts, with an ID of its own for as long as it is
@@ -972,27 +1180,33 @@ impl<H: ServerHandler> Instrumented<H> {
     }
 
     /// Reads the call as it arrives, its arguments where they are, and what `identify` will be
-    /// given. `looked` is what the handler said of the tool, if it was asked already; `extra`,
-    /// what the extras took out of the call; `protocol_session`, its connection's session.
+    /// given.
     fn start(
         &self,
         request: &CallToolRequestParams,
         context: &RequestContext<RoleServer>,
-        looked: Option<Option<Registered>>,
-        mut extra: Extra,
-        protocol_session: Option<String>,
+        arrival: Arrival,
     ) -> Call {
+        let Arrival {
+            looked,
+            mut extra,
+            protocol_session,
+            inputs,
+            answer,
+        } = arrival;
         let options = &self.shared.options;
         let tool_name = request.name.to_string();
-        let inputs = self.chooses(&options.inputs, "inputs", &tool_name);
+        let inputs = inputs.unwrap_or_else(|| self.chooses(&options.inputs, "inputs", &tool_name));
         let results = self.chooses(&options.results, "results", &tool_name);
-        let description = if self.chooses(&options.descriptions, "descriptions", &tool_name) {
-            let registered = looked.unwrap_or_else(|| self.registered(&tool_name));
-            self.description(&tool_name, registered.as_ref())
-                .map(Value::String)
-        } else {
-            None
-        };
+        // The wrapper's own tool has none: its text is LSquare's, the same on every server.
+        let description =
+            if !answer && self.chooses(&options.descriptions, "descriptions", &tool_name) {
+                let registered = looked.unwrap_or_else(|| self.registered(&tool_name));
+                self.description(&tool_name, registered.as_ref())
+                    .map(Value::String)
+            } else {
+                None
+            };
         let mut shaper = CallShaper::new(self.shared.client.context());
         // The intent first, whether or not arguments are recorded. As it came, it is let go here:
         // only what was read of it waits for the tool.
@@ -1034,6 +1248,7 @@ impl<H: ServerHandler> Instrumented<H> {
             identification,
             extra,
             protocol_session,
+            answer,
         }
     }
 
@@ -1097,20 +1312,38 @@ impl<H: ServerHandler> Instrumented<H> {
         // shut down still serves tools listed with them.
         let options = &self.shared.options;
         let mut request = request;
-        let looked = (options.sessions || options.intent).then(|| {
+        // What the handler says of the tool, asked once: for the inputs, for the wrapper's own
+        // tool, which is the wrapper's only while the handler has none of that name, and so the
+        // client learns that this server's handlers define their tools.
+        let with_inputs = options.sessions || options.intent;
+        let looked = (with_inputs || options.missing_tools).then(|| {
             catch_unwind(AssertUnwindSafe(|| self.registered(&request.name)))
                 .ok()
                 .flatten()
         });
-        let extra = match &looked {
-            Some(registered) => catch_unwind(AssertUnwindSafe(|| {
+        // A call to the wrapper's own tool is answered here, while it is offered; one that isn't
+        // goes to the handler like any other. The `inputs` option is asked of it once.
+        let (answer, inputs) = if request.name == MISSING_TOOLS {
+            let of_the_name = looked.as_ref().and_then(Option::as_ref);
+            catch_unwind(AssertUnwindSafe(|| self.answers(of_the_name))).unwrap_or((false, None))
+        } else {
+            (false, None)
+        };
+        let mut extra = match &looked {
+            Some(registered) if with_inputs && !answer => catch_unwind(AssertUnwindSafe(|| {
                 self.prepare(&mut request, registered.as_ref())
             }))
             .unwrap_or_default(),
-            None => Extra::default(),
+            _ => Extra::default(),
         };
         if !client.recording() {
             return self.handler.call_tool(request, context).await;
+        }
+        // Its own tool's `session_id` is taken out only now that the call is the wrapper's: one
+        // that went to the handler above went as it came.
+        if answer {
+            extra = catch_unwind(AssertUnwindSafe(|| self.prepare_answer(&mut request)))
+                .unwrap_or_default();
         }
         // The connection's session: the one a wrapper further out found, or else this one's own.
         // Looked up for a call a wrapper further in will record too: it is given it there.
@@ -1131,11 +1364,14 @@ impl<H: ServerHandler> Instrumented<H> {
             connection: connection.clone(),
         });
         // Whatever fails in here, the call goes on as it would without it.
-        let grouped = connection.filter(|_| extra.grouping);
-        let call = catch_unwind(AssertUnwindSafe(|| {
-            self.start(&request, &context, looked, extra, grouped)
-        }))
-        .ok();
+        let arrival = Arrival {
+            protocol_session: connection.filter(|_| extra.grouping),
+            looked,
+            extra,
+            inputs,
+            answer,
+        };
+        let call = catch_unwind(AssertUnwindSafe(|| self.start(&request, &context, arrival))).ok();
         // Should the MCP SDK let go of the call before the handler answers (its connection
         // closed), it is recorded as it goes.
         let mut unanswered = Unanswered {
@@ -1148,29 +1384,38 @@ impl<H: ServerHandler> Instrumented<H> {
                 let _ = catch_unwind(AssertUnwindSafe(|| self.identify(call, &taken)));
             }
         };
-        // A handler can panic making its future, before it is ever polled.
-        let outcome = match catch_unwind(AssertUnwindSafe(|| {
-            self.handler.call_tool(request, context)
-        })) {
-            Ok(answering) => {
-                let mut answering = CatchUnwind(Box::pin(TAKEN.scope(taken.clone(), answering)));
-                // `identify` starts once the handler was polled for the first time: never
-                // before the tool, and not at all when a wrapper further in took the call. The
-                // handler is polled when this is, no more: what it does, it does as it would
-                // without the wrapper.
-                let mut started = false;
-                std::future::poll_fn(|context| {
-                    let answer = Pin::new(&mut answering).poll(context);
-                    if !std::mem::replace(&mut started, true) {
-                        identify(&mut unanswered);
-                    }
-                    answer
-                })
-                .await
-            }
-            Err(panic) => {
-                identify(&mut unanswered);
-                Err(panic)
+        let outcome = if answer {
+            // The wrapper's own tool: the handler isn't called, and `identify` starts as it
+            // would with a tool that ran.
+            identify(&mut unanswered);
+            let reply = missing_tools_result(request.arguments.as_ref());
+            Ok(Ok(CallToolResponse::Complete(reply)))
+        } else {
+            // A handler can panic making its future, before it is ever polled.
+            match catch_unwind(AssertUnwindSafe(|| {
+                self.handler.call_tool(request, context)
+            })) {
+                Ok(answering) => {
+                    let mut answering =
+                        CatchUnwind(Box::pin(TAKEN.scope(taken.clone(), answering)));
+                    // `identify` starts once the handler was polled for the first time: never
+                    // before the tool, and not at all when a wrapper further in took the call.
+                    // The handler is polled when this is, no more: what it does, it does as it
+                    // would without the wrapper.
+                    let mut started = false;
+                    std::future::poll_fn(|context| {
+                        let answer = Pin::new(&mut answering).poll(context);
+                        if !std::mem::replace(&mut started, true) {
+                            identify(&mut unanswered);
+                        }
+                        answer
+                    })
+                    .await
+                }
+                Err(panic) => {
+                    identify(&mut unanswered);
+                    Err(panic)
+                }
             }
         };
         // A new session's ID, to tell the agent.
@@ -1279,7 +1524,12 @@ impl<H: ServerHandler> Instrumented<H> {
                     let is_error = complete.is_error == Some(true);
                     if is_error {
                         status = "error";
-                        let mut returned = failed("tool_error");
+                        // The wrapper's own tool refuses arguments as the MCP SDKs do.
+                        let mut returned = failed(if call.answer {
+                            "protocol"
+                        } else {
+                            "tool_error"
+                        });
                         if error_text {
                             if let Some(text) = first_text(complete) {
                                 returned.insert("message".into(), text.into());
@@ -1375,7 +1625,7 @@ impl<H: ServerHandler> Instrumented<H> {
             session_id: session_id.map(Value::String),
             session_source: session_source.map(str::to_owned),
             round: round.map(str::to_owned),
-            extra: None,
+            extra: call.answer.then(|| "missing_tools".to_owned()),
             metadata: None,
             diagnostics: false,
         };
@@ -1714,13 +1964,14 @@ impl<H: ServerHandler> ServerHandler for Instrumented<H> {
             // Unnoted, these tools' calls carry the description last noted, or none.
             let _ = catch_unwind(AssertUnwindSafe(|| self.note(page)));
             // A page that can't be read is listed as it came.
-            let shown =
+            let listed =
                 catch_unwind(AssertUnwindSafe(|| self.advertised(page))).unwrap_or_default();
-            for (index, schema) in shown {
+            for (index, schema) in listed.schemas {
                 if let Some(tool) = page.tools.get_mut(index) {
                     tool.input_schema = schema;
                 }
             }
+            page.tools.extend(listed.more);
         }
         listed
     }
@@ -1863,5 +2114,65 @@ mod tests {
             session_hash("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    const TYPESCRIPT: &str = "import { readFileSync } from 'node:fs'
+const { missingToolsTool, missingToolsReply } = await import(process.argv[1])
+const calls = JSON.parse(readFileSync(0, 'utf8'))
+process.stdout.write(JSON.stringify({
+  tools: [missingToolsTool(true), missingToolsTool(false)],
+  replies: calls.map((sent) => missingToolsReply(sent === null ? undefined : sent.need)),
+}))
+";
+
+    /// `get_more_tools` as TypeScript's own functions give it: the tool as it is listed, and the
+    /// reply to each kind of call.
+    #[test]
+    fn typescript_lists_and_answers_get_more_tools_the_same() {
+        use crate::cases_test::{contract_dir, file_url, node, skip_without_node};
+        let source = std::env::var_os("LSQUARE_TYPESCRIPT_SRC")
+            .map_or_else(
+                || contract_dir().join("../lsquare/src"),
+                std::path::PathBuf::from,
+            )
+            .join("mcp/extras.ts");
+        if !source.exists() {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "the TypeScript SDK's source isn't at {}",
+                source.display()
+            );
+            eprintln!(
+                "skipped: the TypeScript SDK's source isn't at {}",
+                source.display()
+            );
+            return;
+        }
+        if skip_without_node("that TypeScript lists and answers get_more_tools the same") {
+            return;
+        }
+        // No arguments at all, then arguments with each kind of `need`.
+        let calls = serde_json::json!([
+            null, {}, { "need": "A refund." }, { "need": "" }, { "need": 5 }, { "need": null },
+            { "need": ["a"] }, { "need": { "a": 1 } }, { "need": true }, { "other": "x" }
+        ]);
+        let out = node(TYPESCRIPT, &[file_url(&source)], &calls.to_string());
+        let theirs: Value = serde_json::from_str(&out).expect("TypeScript's answers");
+        for (sessions, tool) in [true, false]
+            .into_iter()
+            .zip(theirs["tools"].as_array().unwrap())
+        {
+            let mine = serde_json::to_value(missing_tools_tool(sessions)).unwrap();
+            // Character for character: the order of the fields is what agents are shown.
+            assert_eq!(mine.to_string(), tool.to_string(), "sessions: {sessions}");
+        }
+        let replies = theirs["replies"].as_array().unwrap();
+        assert_eq!(replies.len(), calls.as_array().unwrap().len());
+        for (sent, theirs) in calls.as_array().unwrap().iter().zip(replies) {
+            let mine = serde_json::to_value(missing_tools_result(sent.as_object())).unwrap();
+            // What the reply says: rmcp adds `resultType` for the protocol versions that have it.
+            assert_eq!(mine["content"], theirs["content"], "{sent}");
+            assert_eq!(mine.get("isError"), theirs.get("isError"), "{sent}");
+        }
     }
 }

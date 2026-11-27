@@ -43,6 +43,28 @@ struct Desk {
     /// `waits` says here that it has started, and goes on once it is released.
     entered: Arc<tokio::sync::Notify>,
     release: Arc<tokio::sync::Notify>,
+    /// It has a `get_more_tools` of its own.
+    own_more: bool,
+    /// It gives no definition for any tool, as a handler written by hand without `get_tool`.
+    undefined: bool,
+    /// It lists its tools over two pages; with `Some(true)`, the second is empty.
+    paged: Option<bool>,
+    /// What it calls itself, where that isn't `desk`.
+    name: Option<&'static str>,
+    /// How often its tools were listed, and how often it was asked to define `get_more_tools`.
+    listings: Arc<std::sync::atomic::AtomicUsize>,
+    lookups: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Desk {
+    /// Its tools: the catalog's, and a `get_more_tools` of its own where it has one.
+    fn tools(&self) -> Vec<(&'static str, Value, Option<Value>)> {
+        let mut tools = catalog();
+        if self.own_more {
+            tools.insert(1, ("get_more_tools", plain(), Some(plain())));
+        }
+        tools
+    }
 }
 
 fn plain() -> Value {
@@ -80,7 +102,7 @@ fn catalog() -> Vec<(&'static str, Value, Option<Value>)> {
 impl ServerHandler for Desk {
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
-        info.server_info.name = "desk".into();
+        info.server_info.name = self.name.unwrap_or("desk").into();
         info.server_info.version = "1.0.0".into();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info
@@ -113,15 +135,45 @@ impl ServerHandler for Desk {
                 self.release.notified().await;
                 Ok(CallToolResult::success(vec![ContentBlock::text("done")]).into())
             }
-            _ => Ok(CallToolResult::success(vec![ContentBlock::text("done")]).into()),
+            name if self.many.is_some()
+                || self.tools().iter().any(|(tool, _, _)| *tool == name) =>
+            {
+                Ok(CallToolResult::success(vec![ContentBlock::text("done")]).into())
+            }
+            // As rmcp's own router answers a tool it doesn't have.
+            _ => Err(McpError::invalid_params("tool not found", None)),
         }
     }
 
     async fn list_tools(
         &self,
-        _request: Option<PaginatedRequestParams>,
+        request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
+        self.listings
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let listed = |tools: Vec<(&'static str, Value, Option<Value>)>| -> Vec<Tool> {
+            tools
+                .into_iter()
+                .map(|(name, listed, _)| Tool::new(name, "A tool.", arguments(listed)))
+                .collect()
+        };
+        if let Some(empty_last) = self.paged {
+            let mut first = self.tools();
+            let second = if empty_last {
+                Vec::new()
+            } else {
+                first.split_off(3)
+            };
+            return Ok(match request.and_then(|request| request.cursor) {
+                None => {
+                    let mut page = ListToolsResult::with_all_items(listed(first));
+                    page.next_cursor = Some("2".into());
+                    page
+                }
+                Some(_) => ListToolsResult::with_all_items(listed(second)),
+            });
+        }
         if let Some((count, schema)) = &self.many {
             return Ok(ListToolsResult::with_all_items(
                 (0..*count)
@@ -131,23 +183,26 @@ impl ServerHandler for Desk {
                     .collect(),
             ));
         }
-        Ok(ListToolsResult::with_all_items(
-            catalog()
-                .into_iter()
-                .map(|(name, listed, _)| Tool::new(name, "A tool.", arguments(listed)))
-                .collect(),
-        ))
+        Ok(ListToolsResult::with_all_items(listed(self.tools())))
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        if let Some((_, schema)) = &self.many {
-            return Some(Tool::new(
-                name.to_owned(),
-                "A tool.",
-                arguments(schema.clone()),
-            ));
+        if name == "get_more_tools" {
+            self.lookups
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
-        catalog()
+        if self.undefined {
+            return None;
+        }
+        if let Some((_, schema)) = &self.many {
+            // Its tools are `t0` onwards, and no other.
+            let numbered = name.strip_prefix('t').is_some_and(|rest| {
+                !rest.is_empty() && rest.bytes().all(|byte| byte.is_ascii_digit())
+            });
+            return numbered
+                .then(|| Tool::new(name.to_owned(), "A tool.", arguments(schema.clone())));
+        }
+        self.tools()
             .into_iter()
             .find(|(tool, _, _)| *tool == name)
             .and_then(|(name, _, defined)| {
@@ -247,6 +302,28 @@ fn schema_of(tools: &[Tool], name: &str) -> Value {
     Value::Object((*tool.input_schema).clone())
 }
 
+/// `get_more_tools` as the wrapper lists it, with `session_id` where sessions are on.
+fn more_tools(sessions: bool) -> Value {
+    let mut tool = json!({
+        "name": "get_more_tools",
+        "description": "Call this when none of the available tools fits what you need, or one fits only in part. It doesn't return new tools: it tells the server's developers what to add.",
+        "inputSchema": {
+            "type": "object",
+            "properties": { "need": { "type": "string", "description": "What you needed to do and couldn't, in one or two sentences. No personal data or secrets." } },
+            "required": ["need"]
+        },
+        "annotations": { "readOnlyHint": true, "destructiveHint": false, "openWorldHint": true }
+    });
+    if sessions {
+        tool["inputSchema"]["properties"]["session_id"] =
+            json!({ "type": "string", "description": SESSION_DESCRIPTION });
+    }
+    tool
+}
+
+const NOTED: &str = "Noted. No other tools are available right now.";
+const NO_NEED: &str = "Invalid arguments for tool get_more_tools: need is required, as a string saying what you needed to do and couldn't.";
+
 fn the_two() -> (Value, Value) {
     (
         json!({ "type": "string", "description": SESSION_DESCRIPTION }),
@@ -299,6 +376,9 @@ async fn listed_tools_get_the_inputs_they_can_take() {
     let bare = connect(Desk::default()).await;
     let theirs = serde_json::to_value(bare.list_tools(None).await.unwrap()).unwrap();
     let mut shown = serde_json::to_value(mcp.list_tools(None).await.unwrap()).unwrap();
+    // After the handler's tools comes the wrapper's own (see the tests of `get_more_tools`).
+    let more = shown["tools"].as_array_mut().unwrap().pop().unwrap();
+    assert_eq!(more, more_tools(true));
     let mut added = 0;
     for (tool, original) in shown["tools"]
         .as_array_mut()
@@ -847,12 +927,14 @@ async fn a_long_listing_is_read_within_bounds() {
         })
     };
 
-    // 10,000 tools are each given the inputs; a page of more is listed as it came.
+    // 10,000 tools are each given the inputs, and the wrapper's own tool follows them; a page of
+    // more is listed as it came.
     let tools = listing(10_000, plain()).await;
-    assert!(tools.len() == 10_000 && all(&tools, &with_both));
+    assert!(tools.len() == 10_001 && all(&tools[..10_000], &with_both));
+    assert_eq!(tools[10_000].name, "get_more_tools");
     let tools = listing(10_001, plain()).await;
     assert!(tools.len() == 10_001 && all(&tools, &plain()));
-    assert!(seen.lines().is_empty());
+    assert!(seen.lines().is_empty(), "{:?}", seen.lines());
     // A client warns of the first 1,000 tools it leaves alone, no more. One call at a time, so
     // each warning is written before the next: no more than 100 wait at once.
     let open = json!({ "type": "object", "additionalProperties": true });
@@ -1205,6 +1287,33 @@ async fn a_server_that_passes_calls_on_to_an_instrumented_one_adds_them_to_its_o
     assert_eq!(outside[1]["sessionSource"], "protocol");
     assert_eq!(inside[1]["sessionSource"], "protocol");
     assert_eq!(outside[1]["sessionId"], inside[1]["sessionId"]);
+
+    // The inner wrapper listed `get_more_tools`, and the outer adds no second one beside it.
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|tool| tool.name == "get_more_tools")
+            .count(),
+        1
+    );
+    // A call to it is answered once, and recorded once.
+    let result = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&result), [NOTED]);
+    settled(&outer).await;
+    settled(&inner).await;
+    let marked = |events: Vec<Value>| {
+        events
+            .iter()
+            .filter(|event| event["extra"] == "missing_tools")
+            .count()
+    };
+    assert_eq!(
+        marked(outer_ingestion.events()) + marked(inner_ingestion.events()),
+        1
+    );
 }
 
 #[tokio::test]
@@ -1708,4 +1817,697 @@ async fn over_http_without_sessions_each_call_is_given_an_id() {
     ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 4);
+}
+
+// The wrapper's own tool, `get_more_tools`.
+
+/// Whether a server lists `get_more_tools`, and what a call to it gets.
+async fn offered<H: ServerHandler>(
+    server: H,
+) -> (bool, Result<CallToolResult, rmcp::ServiceError>) {
+    let mcp = modern(server).await;
+    let tools = mcp.list_all_tools().await.unwrap();
+    let listed = tools
+        .iter()
+        .filter(|tool| tool.name == "get_more_tools")
+        .count();
+    assert!(listed <= 1, "listed {listed} times");
+    let answer = call(&mcp, "get_more_tools", json!({ "need": "A refund." })).await;
+    (listed == 1, answer)
+}
+
+/// What a client logged about `get_more_tools`: the test server's tools have warnings of their
+/// own, about the two inputs.
+fn said_of_more(seen: &common::Seen) -> Vec<String> {
+    seen.lines()
+        .into_iter()
+        .filter(|line| line.contains("get_more_tools"))
+        .collect()
+}
+
+/// What a handler without the tool answers a call to it.
+fn not_found(answer: &Result<CallToolResult, rmcp::ServiceError>) -> bool {
+    matches!(answer, Err(rmcp::ServiceError::McpError(error)) if error.message == "tool not found")
+}
+
+#[tokio::test]
+async fn the_wrapper_lists_and_answers_get_more_tools() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, seen) = client(&ingestion, |options| options);
+    let desk = Desk::default();
+    let described: Arc<Mutex<Vec<String>>> = Arc::default();
+    let asked = described.clone();
+    let options = InstrumentOptions::new().descriptions_for(move |tool| {
+        asked.lock().unwrap().push(tool.to_owned());
+        true
+    });
+    let mcp = modern(instrument(desk.clone(), &lsquare, options)).await;
+    // Listed last, after the server's own tools.
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), catalog().len() + 1);
+    assert_eq!(
+        serde_json::to_value(tools.last().unwrap()).unwrap(),
+        more_tools(true)
+    );
+
+    let result = call(
+        &mcp,
+        "get_more_tools",
+        json!({ "need": "Refund an order for ann@example.com.", "intent": "To help.", "order": 7 }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(texts(&result)[0], NOTED);
+    assert_eq!(result.is_error, None);
+    // A complete result, said so to a client on a protocol version that says it.
+    assert_eq!(result.result_type, Some(rmcp::model::ResultType::COMPLETE));
+    // A call without a session is given one, as with any tool.
+    let id = told(&result).expect("a new task's ID");
+    // Sent back, it is the session. A need that says nothing is still a need.
+    let again = call(
+        &mcp,
+        "get_more_tools",
+        json!({ "session_id": id, "need": "" }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(texts(&again), [NOTED]);
+    // One that isn't an ID the wrapper gives is taken out all the same, and a new one given.
+    let other = call(
+        &mcp,
+        "get_more_tools",
+        json!({ "session_id": "mine", "need": "x" }),
+    )
+    .await
+    .unwrap();
+    let new = told(&other).expect("a new ID");
+    assert!(
+        new.starts_with("ses_") && new.len() == 26 && new != id,
+        "{new}"
+    );
+    // The handler saw none of the calls, and the `descriptions` option was never asked of a tool
+    // that has none of the server's.
+    assert!(desk.got.lock().unwrap().is_empty());
+    assert!(described.lock().unwrap().is_empty());
+
+    settled(&lsquare).await;
+    let events = ingestion.events();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[2]["input"], json!({ "need": "x" }));
+    assert_eq!(events[2]["sessionId"], new.as_str());
+    assert_eq!(events[2]["sessionSource"], "issued");
+    if let Some(answers) = ingestion_says(&events) {
+        assert!(
+            answers.iter().all(|answer| answer == "valid"),
+            "{answers:?}"
+        );
+    }
+    let events = &events[..2];
+    let event = &events[0];
+    assert_eq!(event["toolName"], "get_more_tools");
+    assert_eq!(event["extra"], "missing_tools");
+    assert_eq!(event["status"], "completed");
+    // Its arguments as they came, redacted as any: only `session_id` is the wrapper's to take.
+    assert_eq!(
+        event["input"],
+        json!({ "need": "Refund an order for [EMAIL_1].", "intent": "To help.", "order": 7 })
+    );
+    assert!(event.get("intent").is_none());
+    // Its words are LSquare's, the same on every server: they aren't recorded as a description.
+    assert!(event.get("toolDescription").is_none());
+    // The reply as the wrapper made it, without the block that tells the ID.
+    assert_eq!(
+        event["result"]["content"],
+        json!([{ "type": "text", "text": NOTED }])
+    );
+    assert_eq!(event["sessionId"], id.as_str());
+    assert_eq!(event["sessionSource"], "issued");
+    assert_eq!(events[1]["extra"], "missing_tools");
+    assert_eq!(events[1]["input"], json!({ "need": "" }));
+    assert_eq!(events[1]["sessionId"], id.as_str());
+    assert_eq!(events[1]["sessionSource"], "sent");
+    assert_eq!(said_of_more(&seen), [""; 0]);
+}
+
+#[tokio::test]
+async fn get_more_tools_refuses_a_call_that_says_no_need() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, _) = client(&ingestion, |options| options);
+    let mcp = modern(instrument(
+        Desk::default(),
+        &lsquare,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    // A call to any tool teaches the client that the handler defines its tools.
+    call(&mcp, "search", json!({ "q": "x", "session_id": SENT }))
+        .await
+        .unwrap();
+
+    for sent in [
+        json!({}),
+        json!({ "need": 5 }),
+        json!({ "need": null }),
+        json!({ "need": ["a"] }),
+    ] {
+        let refused = call(&mcp, "get_more_tools", sent.clone()).await.unwrap();
+        // As the MCP SDKs refuse arguments: an error result, and no new session with it.
+        assert_eq!(refused.is_error, Some(true), "{sent}");
+        assert_eq!(texts(&refused), [NO_NEED], "{sent}");
+        assert_eq!(refused.result_type, Some(rmcp::model::ResultType::COMPLETE));
+    }
+    // And with no arguments at all.
+    let refused = mcp
+        .call_tool(CallToolRequestParams::new("get_more_tools"))
+        .await
+        .unwrap();
+    assert_eq!(texts(&refused), [NO_NEED]);
+
+    settled(&lsquare).await;
+    let events = ingestion.events();
+    assert_eq!(events.len(), 6);
+    for event in &events[1..] {
+        assert_eq!(event["extra"], "missing_tools");
+        assert_eq!(event["status"], "error");
+        assert_eq!(
+            event["error"],
+            json!({ "category": "protocol", "message": NO_NEED })
+        );
+        assert_eq!(
+            event["result"]["content"],
+            json!([{ "type": "text", "text": NO_NEED }])
+        );
+        assert!(event.get("sessionId").is_none(), "{event}");
+    }
+    assert_eq!(events[2]["input"], json!({ "need": 5 }));
+    assert_eq!(events[5]["input"], json!({}));
+    if let Some(answers) = ingestion_says(&events) {
+        assert!(
+            answers.iter().all(|answer| answer == "valid"),
+            "{answers:?}"
+        );
+    }
+
+    // With results off, neither the reply nor what it says is recorded.
+    let mcp = modern(instrument(
+        Desk::default(),
+        &lsquare,
+        InstrumentOptions::new().results(false),
+    ))
+    .await;
+    let refused = call(&mcp, "get_more_tools", json!({})).await.unwrap();
+    assert_eq!(texts(&refused), [NO_NEED]);
+    let noted = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&noted)[0], NOTED);
+    settled(&lsquare).await;
+    let events = ingestion.events();
+    assert_eq!(events.len(), 8);
+    assert_eq!(events[6]["error"], json!({ "category": "protocol" }));
+    assert!(events[6].get("result").is_none() && events[7].get("result").is_none());
+    assert_eq!(events[7]["input"], json!({ "need": "A refund." }));
+}
+
+#[tokio::test]
+async fn get_more_tools_is_offered_only_where_it_would_work() {
+    let ingestion = Ingestion::accepting().await;
+    let fresh = || client(&ingestion, |options| options);
+
+    // As it comes: listed and answered.
+    let (lsquare, seen) = fresh();
+    let (listed, answer) = offered(instrument(
+        Desk::default(),
+        &lsquare,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    assert!(listed);
+    assert_eq!(texts(&answer.unwrap())[0], NOTED);
+    settled(&lsquare).await;
+    assert_eq!(said_of_more(&seen), [""; 0]);
+
+    // Turned off, by itself or with the other extras: the server is as it was.
+    for options in [
+        InstrumentOptions::new().missing_tools(false),
+        InstrumentOptions::new().extras(false),
+    ] {
+        let (lsquare, seen) = fresh();
+        let (listed, answer) = offered(instrument(Desk::default(), &lsquare, options)).await;
+        assert!(!listed && not_found(&answer), "{answer:?}");
+        settled(&lsquare).await;
+        assert_eq!(said_of_more(&seen), [""; 0]);
+    }
+
+    // Where its arguments wouldn't be recorded, what it tells agents wouldn't be true.
+    let unrecorded = "[lsquare] get_more_tools isn't offered: inputs are off for it, so what an agent asks for wouldn't be recorded.";
+    for options in [
+        InstrumentOptions::new().inputs(false),
+        InstrumentOptions::new().inputs_for(|tool| tool != "get_more_tools"),
+    ] {
+        let (lsquare, seen) = fresh();
+        let (listed, answer) = offered(instrument(Desk::default(), &lsquare, options)).await;
+        assert!(!listed && not_found(&answer), "{answer:?}");
+        settled(&lsquare).await;
+        assert_eq!(said_of_more(&seen), [unrecorded]);
+    }
+    // An `inputs` function that panics when asked of it is said so, as the page is listed.
+    let (lsquare, seen) = fresh();
+    let options = InstrumentOptions::new().inputs_for(|tool| {
+        assert!(tool != "get_more_tools", "asked of get_more_tools");
+        true
+    });
+    let (listed, answer) = offered(instrument(Desk::default(), &lsquare, options)).await;
+    assert!(!listed && not_found(&answer), "{answer:?}");
+    settled(&lsquare).await;
+    assert_eq!(
+        said_of_more(&seen),
+        ["[lsquare] The inputs function panicked when asked about get_more_tools: it isn't listed."]
+    );
+
+    // A client without a key changes nothing.
+    let nothing = lsquare::Client::new(lsquare::Options::new().dry_run(false));
+    let (listed, answer) = offered(instrument(
+        Desk::default(),
+        &nothing,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    assert!(!listed && not_found(&answer), "{answer:?}");
+
+    // A handler that gives no definition for its tools could have one of that name: also for a
+    // client that has seen another handler define a tool, since each handler is asked itself.
+    let (lsquare, _) = fresh();
+    assert!(
+        offered(instrument(
+            Desk::default(),
+            &lsquare,
+            InstrumentOptions::new()
+        ))
+        .await
+        .0
+    );
+    let desk = Desk {
+        undefined: true,
+        ..Desk::default()
+    };
+    let (listed, answer) = offered(instrument(desk, &lsquare, InstrumentOptions::new())).await;
+    assert!(!listed && not_found(&answer), "{answer:?}");
+
+    // Once the client was shut down, nothing would record the need: the call goes to the
+    // handler as it came.
+    let (lsquare, _) = fresh();
+    let desk = Desk::default();
+    let server = instrument(desk.clone(), &lsquare, InstrumentOptions::new());
+    assert!(offered(server.clone()).await.0);
+    lsquare.shutdown().await;
+    let (listed, answer) = offered(server.clone()).await;
+    assert!(!listed && not_found(&answer), "{answer:?}");
+    let mcp = modern(server).await;
+    let sent = json!({ "need": "A refund.", "session_id": SENT });
+    assert!(not_found(&call(&mcp, "get_more_tools", sent.clone()).await));
+    assert_eq!(
+        desk.got.lock().unwrap().last().unwrap(),
+        &("get_more_tools".to_owned(), sent.to_string())
+    );
+}
+
+#[tokio::test]
+async fn a_server_with_its_own_get_more_tools_keeps_it() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, seen) = client(&ingestion, |options| options);
+    let desk = Desk {
+        own_more: true,
+        ..Desk::default()
+    };
+    let own = "[lsquare] The server has its own get_more_tools tool: it is left as it is, and LSquare's isn't added.";
+    // Said as the page is listed, before any call, and also where inputs aren't recorded.
+    let (unrecorded, heard) = client(&ingestion, |options| options);
+    let listing = modern(instrument(
+        desk.clone(),
+        &unrecorded,
+        InstrumentOptions::new().inputs(false),
+    ))
+    .await;
+    listing.list_all_tools().await.unwrap();
+    settled(&unrecorded).await;
+    assert_eq!(said_of_more(&heard), [own]);
+
+    let mcp = modern(instrument(desk.clone(), &lsquare, InstrumentOptions::new())).await;
+    let tools = mcp.list_all_tools().await.unwrap();
+    // Listed once, where the server lists it, as the server's: with the inputs of any tool.
+    let named: Vec<&Tool> = tools
+        .iter()
+        .filter(|tool| tool.name == "get_more_tools")
+        .collect();
+    assert_eq!(named.len(), 1);
+    assert_eq!(tools[1].name, "get_more_tools");
+    assert_eq!(
+        schema_of(&tools, "get_more_tools"),
+        schema_of(&tools, "search")
+    );
+    // And called as the server's, after one look at its definition.
+    let looked = desk.lookups.load(std::sync::atomic::Ordering::SeqCst);
+    let result = call(
+        &mcp,
+        "get_more_tools",
+        json!({ "q": "x", "intent": "Why." }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(texts(&result)[0], "done");
+    assert_eq!(
+        desk.lookups.load(std::sync::atomic::Ordering::SeqCst),
+        looked + 1
+    );
+    assert_eq!(
+        *desk.got.lock().unwrap(),
+        [("get_more_tools".to_owned(), r#"{"q":"x"}"#.to_owned())]
+    );
+    settled(&lsquare).await;
+    let event = &ingestion.events()[0];
+    assert!(event.get("extra").is_none(), "{event}");
+    assert_eq!(event["toolDescription"], "A tool.");
+    assert_eq!(event["intent"], "Why.");
+    // Said once, however often it is listed or called.
+    mcp.list_all_tools().await.unwrap();
+    call(&mcp, "get_more_tools", json!({ "q": "x" }))
+        .await
+        .unwrap();
+    settled(&lsquare).await;
+    assert_eq!(said_of_more(&seen), [own]);
+
+    // Listed on an earlier page, it is still the server's: the last page gets no other.
+    let desk = Desk {
+        own_more: true,
+        paged: Some(false),
+        ..Desk::default()
+    };
+    let mcp = modern(instrument(desk, &lsquare, InstrumentOptions::new())).await;
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), catalog().len() + 1);
+    assert_eq!(
+        tools
+            .iter()
+            .filter(|tool| tool.name == "get_more_tools")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn get_more_tools_goes_on_the_last_page_that_lists_a_tool() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, _) = client(&ingestion, |options| options);
+    let paged = |empty_last: bool| Desk {
+        paged: Some(empty_last),
+        ..Desk::default()
+    };
+    let mcp = modern(instrument(paged(false), &lsquare, InstrumentOptions::new())).await;
+    // A page that isn't the last is listed without it.
+    let first = mcp.list_tools(None).await.unwrap();
+    assert!(first.next_cursor.is_some());
+    assert_eq!(first.tools.len(), 3);
+    assert!(first.tools.iter().all(|tool| tool.name != "get_more_tools"));
+    let last = mcp
+        .list_tools(Some(
+            PaginatedRequestParams::default().with_cursor(first.next_cursor),
+        ))
+        .await
+        .unwrap();
+    assert!(last.next_cursor.is_none());
+    assert_eq!(last.tools.len(), catalog().len() - 3 + 1);
+    assert_eq!(last.tools.last().unwrap().name, "get_more_tools");
+
+    // A last page that lists no tool is listed as it came: an empty one stays empty.
+    let (lsquare, _) = client(&ingestion, |options| options);
+    let mcp = modern(instrument(paged(true), &lsquare, InstrumentOptions::new())).await;
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(tools.len(), catalog().len());
+    assert!(tools.iter().all(|tool| tool.name != "get_more_tools"));
+}
+
+fn sessionless() -> StreamableHttpServerConfig {
+    StreamableHttpServerConfig::default()
+        .with_legacy_session_mode(false)
+        .with_json_response(true)
+}
+
+#[tokio::test]
+async fn a_wrapper_built_for_each_request_answers_once_its_client_has_seen_a_tool() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, _) = client(&ingestion, |options| options);
+    // A new wrapper for each request, as a server without sessions is often built.
+    let recorder = lsquare.clone();
+    let desk = Desk::default();
+    let served = desk.clone();
+    let url = http(
+        move || instrument(served.clone(), &recorder, InstrumentOptions::new()),
+        sessionless(),
+    )
+    .await;
+    let listings = || desk.listings.load(std::sync::atomic::Ordering::SeqCst);
+    let more = |id: u32| json!({ "jsonrpc": "2.0", "id": id, "method": "tools/call", "params": { "name": "get_more_tools", "arguments": { "need": "A refund." } } });
+
+    // Before anything was listed or called, nothing says the handler defines its tools: the call
+    // goes to it, as a call to any tool it may have.
+    let (_, answer) = post(&url, None, more(1)).await;
+    assert_eq!(answer["error"]["message"], "tool not found", "{answer}");
+    // The wrapper didn't list the server's tools to find out.
+    assert_eq!(listings(), 0);
+    // A listing shows the tool, and from then on a wrapper that has seen nothing itself answers.
+    let (_, listing) = post(
+        &url,
+        None,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+    )
+    .await;
+    let tools = listing["result"]["tools"].as_array().expect("the tools");
+    assert_eq!(tools.last().unwrap(), &more_tools(true), "{listing}");
+    let (_, answer) = post(&url, None, more(3)).await;
+    let texts = said(&answer);
+    assert_eq!(texts.len(), 2, "{answer}");
+    assert_eq!(texts[0], NOTED);
+    assert!(texts[1].starts_with("Task ID: ses_"));
+    // On the wire, as TypeScript answers a client on this protocol version.
+    assert!(answer["result"].get("isError").is_none(), "{answer}");
+    assert!(answer["result"].get("resultType").is_none(), "{answer}");
+    // Only the client's own listing reached the handler.
+    assert_eq!(listings(), 1);
+
+    // Another server on the same client, with tools enough to fill what the client remembers:
+    // each server's names are kept apart, so the first is still answered.
+    let other = Desk {
+        many: Some((20, plain())),
+        name: Some("other"),
+        ..Desk::default()
+    };
+    let mcp = modern(instrument(other, &lsquare, InstrumentOptions::new())).await;
+    assert_eq!(mcp.list_all_tools().await.unwrap().len(), 21);
+    let (_, answer) = post(&url, None, more(4)).await;
+    assert_eq!(said(&answer)[0], NOTED, "{answer}");
+
+    settled(&lsquare).await;
+    let events = ingestion.events();
+    assert_eq!(events.len(), 3);
+    // The first went to the handler, and is a call like any other.
+    let unanswered: Vec<&Value> = events
+        .iter()
+        .filter(|event| event["status"] == "error")
+        .collect();
+    assert_eq!(unanswered.len(), 1);
+    assert!(unanswered[0].get("extra").is_none());
+    for event in events.iter().filter(|event| event["status"] != "error") {
+        assert_eq!(event["extra"], "missing_tools");
+        assert_eq!(event["sessionSource"], "issued");
+    }
+}
+
+#[tokio::test]
+async fn a_call_to_any_tool_teaches_the_client_that_the_handler_defines_its_tools() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, _) = client(&ingestion, |options| options);
+    // With nothing else the wrapper would look a tool up for: no inputs, no descriptions.
+    let options = InstrumentOptions::new()
+        .sessions(false)
+        .intent(false)
+        .descriptions(false);
+    let mcp = modern(instrument(Desk::default(), &lsquare, options)).await;
+    // No listing: one call to a tool the handler defines is enough.
+    call(&mcp, "search", json!({ "q": "x" })).await.unwrap();
+    let result = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&result), [NOTED]);
+}
+
+#[tokio::test]
+async fn wrapped_twice_get_more_tools_is_the_inner_wrappers() {
+    let (inner_ingestion, outer_ingestion) =
+        (Ingestion::accepting().await, Ingestion::accepting().await);
+    let (inner, _) = client(&inner_ingestion, |options| options);
+    let (outer, heard) = client(&outer_ingestion, |options| options);
+    let (listed, answer) = offered(instrument(
+        instrument(Desk::default(), &inner, InstrumentOptions::new()),
+        &outer,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    // Listed once, answered once, recorded once.
+    assert!(listed);
+    let answer = answer.unwrap();
+    assert_eq!(texts(&answer).len(), 2);
+    assert_eq!(texts(&answer)[0], NOTED);
+    settled(&inner).await;
+    settled(&outer).await;
+    assert_eq!(inner_ingestion.events().len(), 1);
+    assert_eq!(inner_ingestion.events()[0]["extra"], "missing_tools");
+    assert!(outer_ingestion.events().is_empty());
+    // The outer wrapper has nothing to say of a tool that is the inner one's.
+    assert_eq!(said_of_more(&heard), [""; 0]);
+
+    // The inner wrapper's options are the ones that count: with it off there, the outer adds none.
+    let (listed, answer) = offered(instrument(
+        instrument(
+            Desk::default(),
+            &inner,
+            InstrumentOptions::new().missing_tools(false),
+        ),
+        &outer,
+        InstrumentOptions::new(),
+    ))
+    .await;
+    assert!(!listed && not_found(&answer), "{answer:?}");
+
+    // Both on one client, which knows the handler's tools: the outer still leaves the call to
+    // the inner one, whose sessions are on, so the reply ends with an ID.
+    let (listed, answer) = offered(instrument(
+        instrument(Desk::default(), &inner, InstrumentOptions::new()),
+        &inner,
+        InstrumentOptions::new().sessions(false),
+    ))
+    .await;
+    assert!(listed);
+    assert!(told(&answer.unwrap()).is_some());
+}
+
+#[tokio::test]
+async fn get_more_tools_without_the_two_inputs() {
+    let ingestion = Ingestion::accepting().await;
+    let options = || InstrumentOptions::new().sessions(false).intent(false);
+    // What dry run says of it.
+    let (dry, seen) = client(&ingestion, |options| options.dry_run(true));
+    let _ = instrument(Desk::default(), &dry, options());
+    assert_eq!(
+        seen.lines()[0],
+        r#"[lsquare dry-run] {"server":"desk","records":"every tools/call","extras":{"on":["get_more_tools"],"get_more_tools":"listed and answered while the handler's get_tool gives a definition for a tool of its own and none of that name, and inputs are recorded for it"}}"#
+    );
+    let (lsquare, _) = client(&ingestion, |options| options);
+    let mcp = modern(instrument(Desk::default(), &lsquare, options())).await;
+    // The server's tools as they are, and the wrapper's own without `session_id`.
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(schema_of(&tools, "search"), plain());
+    assert_eq!(
+        serde_json::to_value(tools.last().unwrap()).unwrap(),
+        more_tools(false)
+    );
+    // With sessions off, nothing is taken out of the call, and no ID is given.
+    let result = call(
+        &mcp,
+        "get_more_tools",
+        json!({ "need": "A refund.", "session_id": SENT }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(texts(&result), [NOTED]);
+    settled(&lsquare).await;
+    let event = &ingestion.events()[0];
+    assert_eq!(
+        event["input"],
+        json!({ "need": "A refund.", "session_id": SENT })
+    );
+    assert!(event.get("sessionId").is_none(), "{event}");
+}
+
+#[tokio::test]
+async fn get_more_tools_is_recorded_as_any_call() {
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, seen) = client(&ingestion, |options| options);
+    // On a connection that is a session, it is grouped by it, and no ID is told.
+    let (mcp, _) = serve(
+        instrument(
+            Desk::default(),
+            &lsquare,
+            InstrumentOptions::new()
+                .identify(|_| async { Ok(lsquare::mcp::Identity::new().user_id("user_1")) }),
+        ),
+        Legacy,
+    )
+    .await;
+    mcp.list_all_tools().await.unwrap();
+    let result = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&result), [NOTED]);
+    // A client on a protocol version before results said what they are isn't told.
+    assert_eq!(result.result_type, None);
+    settled(&lsquare).await;
+    let event = &ingestion.events()[0];
+    assert_eq!(event["extra"], "missing_tools");
+    assert_eq!(event["sessionSource"], "protocol");
+    // `identify` says who needed it.
+    assert_eq!(event["userId"], "user_1");
+    assert_eq!(event["serverInstructions"], Value::Null);
+
+    // A call nobody could be named for is sent as limited diagnostics, as any call.
+    let mcp = modern(instrument(
+        Desk::default(),
+        &lsquare,
+        InstrumentOptions::new().identify(|_| async { Err(IdentifyError::new()) }),
+    ))
+    .await;
+    let result = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&result)[0], NOTED);
+    settled(&lsquare).await;
+    let event = ingestion.events().pop().unwrap();
+    assert_eq!(event["identity"], "failed");
+    assert_eq!(event["toolName"], "get_more_tools");
+    assert!(event.get("input").is_none(), "{event}");
+    until(|| seen.codes().contains(&"identify_failed".to_owned())).await;
+}
+
+#[tokio::test]
+async fn the_inputs_option_is_asked_of_get_more_tools_once_for_each_call() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let ingestion = Ingestion::accepting().await;
+    let (lsquare, _) = client(&ingestion, |options| options);
+    let asked = Arc::new(AtomicUsize::new(0));
+    let count = asked.clone();
+    // It answers yes, then no, then yes: each call is all recorded or not offered at all.
+    let options = InstrumentOptions::new().inputs_for(move |tool| {
+        tool != "get_more_tools" || count.fetch_add(1, Ordering::SeqCst).is_multiple_of(2)
+    });
+    let mcp = modern(instrument(Desk::default(), &lsquare, options)).await;
+    let tools = mcp.list_all_tools().await.unwrap();
+    assert_eq!(tools.last().unwrap().name, "get_more_tools");
+    assert_eq!(asked.load(Ordering::SeqCst), 1);
+
+    let refused = call(&mcp, "get_more_tools", json!({ "need": "A refund." })).await;
+    assert!(not_found(&refused), "{refused:?}");
+    assert_eq!(asked.load(Ordering::SeqCst), 2);
+    let noted = call(&mcp, "get_more_tools", json!({ "need": "A refund." }))
+        .await
+        .unwrap();
+    assert_eq!(texts(&noted)[0], NOTED);
+    assert_eq!(asked.load(Ordering::SeqCst), 3);
+
+    settled(&lsquare).await;
+    let events = ingestion.events();
+    assert_eq!(events.len(), 2);
+    // The one that went to the handler: its arguments aren't recorded, as the option said.
+    assert!(events[0].get("input").is_none() && events[0].get("extra").is_none());
+    assert_eq!(events[1]["input"], json!({ "need": "A refund." }));
+    assert_eq!(events[1]["extra"], "missing_tools");
 }
