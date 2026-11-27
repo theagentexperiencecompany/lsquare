@@ -596,6 +596,9 @@ jobs:
         run: cargo clippy --locked --no-default-features --all-targets -- -D warnings
       - working-directory: packages/rust
         run: cargo test --locked
+      # Without the wrapper the crate still records turns (`capture`): those tests again.
+      - working-directory: packages/rust
+        run: cargo test --locked --no-default-features
       # The oldest Rust the crate says it builds with (rust-version in its Cargo.toml): the
       # library, with the wrapper and without it, from the same Cargo.lock. Its tests and clippy
       # stay on the pinned toolchain.

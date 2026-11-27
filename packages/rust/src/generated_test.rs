@@ -531,6 +531,323 @@ fn generate(count: usize, seed: u64) -> String {
     out
 }
 
+/// An object large enough to use up much of an event's scan budget, or all of it.
+fn heavy(random: &mut Random, out: &mut String) {
+    out.push('{');
+    for index in 0..random.within(8, 70) {
+        if index > 0 {
+            out.push(',');
+        }
+        let length = random.within(6_000, 40_000);
+        let _ = write!(out, "\"k{index}\":{{\"$prose\":{length}}}");
+    }
+    out.push('}');
+}
+
+/// A value, sometimes a heavy one.
+fn weighed(random: &mut Random, out: &mut String) {
+    if random.chance(12) {
+        heavy(random, out);
+    } else {
+        value(random, 0, out);
+    }
+}
+
+/// Text as JSON, sometimes longer than any field keeps.
+fn said(random: &mut Random, out: &mut String) {
+    if random.chance(10) {
+        let _ = write!(out, "{{\"$prose\":{}}}", random.within(15_000, 60_000));
+    } else {
+        out.push_str(&stringify(&Value::String(text(random))));
+    }
+}
+
+/// An agent's turn as `capture()` is given one, with what it is given wrongly too.
+fn agent(random: &mut Random, out: &mut String) {
+    out.push('{');
+    let mut first = true;
+    let mut field = |out: &mut String, name: &str| {
+        if !std::mem::take(&mut first) {
+            out.push(',');
+        }
+        let _ = write!(out, "\"{name}\":");
+    };
+    // Its IDs are the call's, never part of the agent's turn.
+    if random.chance(30) {
+        field(out, "orgId");
+        out.push_str("\"org_1\"");
+        field(out, "conversationId");
+        out.push_str("\"conv_42\"");
+    }
+    for name in ["question", "answer"] {
+        if random.chance(70) {
+            field(out, name);
+            said(random, out);
+        }
+    }
+    if random.chance(60) {
+        field(out, "turnId");
+        out.push_str(random.pick(&[
+            "\"7\"",
+            "7",
+            "\"\"",
+            "1.5",
+            "{\"a\":1}",
+            "null",
+            "\"turn é\"",
+            "9007199254740993",
+        ]));
+    }
+    if random.chance(40) {
+        field(out, "status");
+        out.push_str(random.pick(&["\"completed\"", "\"error\"", "\"bogus\"", "3"]));
+    }
+    if random.chance(30) {
+        field(out, "error");
+        match random.below(4) {
+            0 => said(random, out),
+            1 => {
+                out.push_str("{\"message\":");
+                said(random, out);
+                out.push_str(",\"type\":\"Timeout\"}");
+            }
+            2 => out.push_str("{\"type\":\"Timeout\"}"),
+            _ => out.push('5'),
+        }
+    }
+    if random.chance(60) {
+        field(out, "toolCalls");
+        out.push('[');
+        for index in 0..random.below(5) {
+            if index > 0 {
+                out.push(',');
+            }
+            if random.chance(8) {
+                out.push_str(random.pick(&["7", "null", "\"search\"", "{\"input\":{}}"]));
+                continue;
+            }
+            let _ = write!(
+                out,
+                "{{\"name\":{}",
+                random.pick(&["\"search_docs\"", "\"find_order\"", "\"\"", "\"é\""])
+            );
+            if random.chance(70) {
+                out.push_str(",\"input\":");
+                weighed(random, out);
+            }
+            if random.chance(30) {
+                let _ = write!(out, ",\"resultChars\":{}", random.below(5_000));
+            }
+            if random.chance(20) {
+                out.push_str(",\"result\":");
+                weighed(random, out);
+            }
+            if random.chance(30) {
+                out.push_str(",\"resultIsError\":");
+                out.push_str(random.pick(&["true", "false", "\"yes\""]));
+            }
+            if random.chance(30) {
+                out.push_str(",\"errorMessage\":");
+                said(random, out);
+            }
+            if random.chance(30) {
+                let _ = write!(out, ",\"durationMs\":{}", random.below(90_000));
+            }
+            if random.chance(10) {
+                out.push_str(",\"unknown\":1");
+            }
+            out.push('}');
+        }
+        out.push(']');
+    }
+    if random.chance(40) {
+        field(out, "usage");
+        out.push_str(random.pick(&[
+            "{\"inputTokens\":812,\"outputTokens\":64,\"costUsd\":0.0031}",
+            "{\"inputTokens\":\"many\",\"outputTokens\":1e21}",
+            "{}",
+            "7",
+        ]));
+    }
+    for name in ["latency", "verification"] {
+        if random.chance(30) {
+            field(out, name);
+            weighed(random, out);
+        }
+    }
+    if random.chance(30) {
+        field(out, "client");
+        out.push_str(random.pick(&[
+            "\"web\"",
+            "{\"name\":\"web\",\"version\":\"2.4.0\"}",
+            "{\"version\":\"2.4.0\"}",
+            "\"\"",
+            "5",
+        ]));
+    }
+    if random.chance(20) {
+        field(out, "apiKeyId");
+        out.push_str(&stringify(&Value::String(text(random))));
+        field(out, "surface");
+        out.push_str(random.pick(&["\"support\"", "3", "\"\""]));
+    }
+    if random.chance(40) {
+        field(out, "metadata");
+        out.push_str(random.pick(&[
+            "{\"plan\":\"pro\",\"seats\":12,\"trial\":false,\"note\":null}",
+            "{\"plan\":\"pro\",\"nested\":{\"a\":1},\"list\":[1]}",
+            "{\"10\":\"ten\",\"2\":\"two\",\"mail\":\"ann@example.com\"}",
+            "\"not an object\"",
+            "{}",
+        ]));
+    }
+    out.push('}');
+}
+
+/// Calls with an agent part, as the text of a file of cases. Half are read as the wrapper reads
+/// a call (`early`): the agent part when `capture()` is called inside it, with a scan budget of
+/// its own, which is then charged to the call's.
+fn generate_agents(count: usize, seed: u64) -> String {
+    let mut random = Random(seed | 1);
+    let mut out = String::from("[");
+    // First, by hand, the ways an agent part read early and the rest of its call share the
+    // call's scan budget: each `wide` reads about 24,000 of its 1,000,000 an entry.
+    let wide = |entries: usize| {
+        let entries: Vec<String> = (0..entries)
+            .map(|index| format!("\"k{index}\":{{\"$prose\":30000}}"))
+            .collect();
+        format!("{{{}}}", entries.join(","))
+    };
+    let result = "{\"content\":[{\"type\":\"text\",\"text\":\"the result, for ann@example.com\"}],\"structuredContent\":{\"a\":{\"$prose\":9000},\"b\":{\"$prose\":9000}}}";
+    for (name, input, agent) in [
+        // The agent part uses its own budget up: the result gets none.
+        (
+            "uses its budget up",
+            None,
+            format!("{{\"latency\":{}}}", wide(60)),
+        ),
+        // It leaves the result a little, nothing, or enough: an entry reads all 30,000 of its
+        // characters, so the budget's edge is between 33 and 34 of them.
+        (
+            "leaves a little",
+            None,
+            format!("{{\"latency\":{}}}", wide(33)),
+        ),
+        (
+            "leaves nothing, just",
+            None,
+            format!("{{\"latency\":{}}}", wide(34)),
+        ),
+        (
+            "leaves less than the result reads",
+            None,
+            format!(
+                "{{\"latency\":{},\"verification\":{{\"a\":{{\"$prose\":9000}}}}}}",
+                wide(32)
+            ),
+        ),
+        (
+            "leaves enough",
+            None,
+            format!("{{\"latency\":{}}}", wide(30)),
+        ),
+        // The arguments used the call's budget up before it: read on its own, it is whole.
+        (
+            "after arguments that used it up",
+            Some(wide(60)),
+            "{\"answer\":\"kept\",\"verification\":{\"ok\":true}}".to_owned(),
+        ),
+        // Together they use it up, neither alone.
+        (
+            "with arguments, more than the budget",
+            Some(wide(25)),
+            format!("{{\"question\":\"q\",\"latency\":{}}}", wide(25)),
+        ),
+        (
+            "with arguments, within the budget",
+            Some(wide(10)),
+            format!(
+                "{{\"toolCalls\":[{{\"name\":\"t\",\"input\":{}}}]}}",
+                wide(10)
+            ),
+        ),
+    ] {
+        let _ = write!(
+            out,
+            "{{\"name\":\"agent budget: {name}\",\"early\":true,\"call\":{{\"agent\":{agent}"
+        );
+        if let Some(input) = input {
+            let _ = write!(out, ",\"input\":{input}");
+        }
+        let _ = write!(out, ",\"result\":{result}}}}},");
+    }
+    for index in 0..count {
+        if index > 0 {
+            out.push(',');
+        }
+        let early = random.chance(50);
+        let with_input = random.chance(70);
+        let _ = write!(out, "{{\"name\":\"generated agent {index}\"");
+        if early {
+            out.push_str(",\"early\":true");
+        }
+        if random.chance(15) {
+            out.push_str(",\"options\":{\"redactKeys\":[\"name\",\"note\"]}");
+        }
+        out.push_str(",\"call\":{\"agent\":");
+        agent(&mut random, &mut out);
+        if with_input {
+            out.push_str(",\"input\":");
+            // The wrapper's arguments are an object.
+            if random.chance(15) {
+                heavy(&mut random, &mut out);
+            } else {
+                out.push_str("{\"query\":");
+                value(&mut random, 0, &mut out);
+                let _ = write!(out, ",\"{}\":", random.pick(&["password", "note", "7"]));
+                value(&mut random, 0, &mut out);
+                out.push('}');
+            }
+        }
+        if random.chance(70) {
+            out.push_str(",\"result\":");
+            if random.chance(50) {
+                out.push_str("{\"content\":[{\"type\":\"text\",\"text\":");
+                said(&mut random, &mut out);
+                out.push_str("}],\"structuredContent\":");
+                weighed(&mut random, &mut out);
+                out.push('}');
+            } else {
+                weighed(&mut random, &mut out);
+            }
+        }
+        if random.chance(30) {
+            // identify's, which the agent part's is merged with.
+            out.push_str(",\"metadata\":");
+            out.push_str(random.pick(&[
+                "{\"plan\":\"free\",\"region\":\"eu\"}",
+                "{\"2\":\"zwei\",\"region\":\"eu\",\"nested\":{}}",
+            ]));
+        }
+        if random.chance(20) {
+            out.push_str(",\"toolDescription\":");
+            said(&mut random, &mut out);
+        }
+        // One that is read early with arguments leaves the error out: the wrapper reads it
+        // after the arguments, which is the one difference from reading a call at once.
+        if (!early || !with_input) && random.chance(15) {
+            out.push_str(
+                ",\"status\":\"error\",\"error\":{\"category\":\"tool_error\",\"message\":",
+            );
+            said(&mut random, &mut out);
+            out.push('}');
+        }
+        out.push_str("}}");
+    }
+    out.push(']');
+    out
+}
+
 fn setting(name: &str, default: u64) -> u64 {
     std::env::var(name)
         .ok()
@@ -552,9 +869,19 @@ fn generated_inputs_are_written_as_typescript_writes_them() {
     if skip_without_node("identity with TypeScript's output on generated inputs") {
         return;
     }
-    let count = setting("LSQUARE_GENERATED_CASES", 1_500) as usize;
+    let plain = setting("LSQUARE_GENERATED_CASES", 1_500) as usize;
     let seed = setting("LSQUARE_GENERATED_SEED", 0x00C0_FFEE);
-    let cases = generate(count, seed);
+    // The calls as before, then a third as many again with an agent part.
+    let with_agents = plain / 3;
+    let cases = if with_agents == 0 {
+        generate(plain, seed)
+    } else {
+        let (plain, agents) = (
+            generate(plain, seed),
+            generate_agents(with_agents, seed ^ 0xA6E7),
+        );
+        format!("{},{}", &plain[..plain.len() - 1], &agents[1..])
+    };
     let file = std::env::temp_dir().join(format!(
         "lsquare-generated-{}-{seed}.json",
         std::process::id()
@@ -575,6 +902,8 @@ fn generated_inputs_are_written_as_typescript_writes_them() {
         panic!("the generated cases aren't a list")
     };
     assert_eq!(ours.len(), theirs.len());
+    // With the few made by hand.
+    let count = ours.len();
     let mut differing = Vec::new();
     for (index, (case, theirs)) in ours.iter().zip(&theirs).enumerate() {
         let mine = match build(case).built {

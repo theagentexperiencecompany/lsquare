@@ -8,6 +8,9 @@
 //! events back to the queue. The app's own code never runs where an event is recorded or sent:
 //! `before_send` has a thread of its own for each event, and `on_error` and the logger share one
 //! for all they are told.
+//!
+//! `capture()` is in `client/capture.rs`, and what the client learns from `identify`'s answers in
+//! `client/identified.rs`.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
@@ -24,6 +27,16 @@ use crate::event::{after_hook, finish_call, Built, CallHead, Context, ShapedCall
 use crate::json::stringify;
 use crate::redact::{looks_like_contact, resolve_keys, Pattern, ORDER};
 use crate::time::{iso, next_midnight, now_ms, parse_iso};
+
+mod capture;
+mod identified;
+
+// The wrapper's side of both.
+#[cfg(feature = "rmcp")]
+pub(crate) use capture::{CallScope, Captured, CALL};
+pub(crate) use identified::Identified;
+#[cfg(feature = "rmcp")]
+pub(crate) use identified::{both, CONVERSATION, ORG, USER};
 
 pub(crate) const SDK_NAME: &str = "lsquare";
 pub(crate) const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -220,7 +233,7 @@ impl Error {
         }
     }
 
-    fn about(mut self, event_id: &str) -> Error {
+    pub(crate) fn about(mut self, event_id: &str) -> Error {
         self.event_id = Some(event_id.to_owned());
         self
     }
@@ -569,6 +582,8 @@ pub(crate) struct Inner {
     /// request asks its own handler whether it defines one of them, having seen no tool itself
     /// (see `mcp.rs`).
     tool_hints: Mutex<Vec<(String, Vec<String>)>>,
+    /// What `identify` last answered, on whichever server of this client.
+    identified: Identified,
 }
 
 impl fmt::Debug for Inner {
@@ -646,6 +661,8 @@ struct Telling {
 impl Telling {
     fn run(mut self) {
         self.started = true;
+        // Nothing captured from `on_error` or the logger is taken.
+        let _telling = capture::Telling::enter();
         loop {
             let (report, behind) = {
                 let mut state = self.inner.lock();
@@ -691,6 +708,13 @@ impl Drop for Telling {
             self.inner.changed.notify_waiters();
         }
     }
+}
+
+/// When something with `timeout` from now is due. A time too far off to count is a long way off.
+fn by(timeout: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(timeout)
+        .unwrap_or_else(|| now + Duration::from_secs(365 * 24 * 60 * 60))
 }
 
 /// An event once it is built and its hook has run: the event, nothing when the hook dropped it,
@@ -847,8 +871,21 @@ fn dry_run_summary(event: &Event, bytes: usize) -> String {
     ];
     let mut summary = Map::new();
     summary.insert("kind".into(), event.kind().into());
-    // Where the ID came from, never the ID.
-    summary.insert("eventId".into(), "the call".into());
+    // Where the ID came from, never the ID: a turn's is derived from its conversation and turn.
+    let turn = event.kind() == "turn";
+    let keyed = event
+        .get("eventId")
+        .and_then(Value::as_str)
+        .is_some_and(|id| id.starts_with("k/"));
+    summary.insert(
+        "eventId".into(),
+        match (turn, keyed) {
+            (false, _) => "the call",
+            (true, true) => "from turnId, hashed",
+            (true, false) => "random: no turnId",
+        }
+        .into(),
+    );
     let mut fields: Vec<&str> = event
         .0
         .keys()
@@ -858,6 +895,18 @@ fn dry_run_summary(event: &Event, bytes: usize) -> String {
     fields.sort_unstable();
     summary.insert("fields".into(), fields.into());
     summary.insert("bytes".into(), bytes.into());
+    // How many tools the agent called: a turn's own, or those of a call's agent part.
+    let turn_fields = if turn {
+        Some(&event.0)
+    } else {
+        event.get("agent").and_then(Value::as_object)
+    };
+    if let Some(calls) = turn_fields
+        .and_then(|fields| fields.get("toolCalls"))
+        .and_then(Value::as_array)
+    {
+        summary.insert("toolCalls".into(), calls.len().into());
+    }
     for key in ["truncated", "dropped", "redactions"] {
         if let Some(value) = event.get(key) {
             summary.insert(key.into(), value.clone());
@@ -972,6 +1021,7 @@ impl Client {
             hooks: Arc::new(Semaphore::new(max_concurrent_hooks)),
             identifying: std::sync::atomic::AtomicUsize::new(0),
             tool_hints: Mutex::new(Vec::new()),
+            identified: Identified::default(),
         };
         let client = Client {
             inner: Arc::new(inner),
@@ -1337,6 +1387,10 @@ impl Inner {
         &self.context
     }
 
+    pub(crate) fn identified(&self) -> &Identified {
+        &self.identified
+    }
+
     pub(crate) fn enabled(&self) -> bool {
         self.mode != Mode::Disabled
     }
@@ -1355,6 +1409,9 @@ impl Inner {
 
     pub(crate) fn log(&self, level: Level, line: &str) {
         let logger = self.logger.clone();
+        // Wherever it is called from, the app's own thread included: nothing it captures is
+        // taken.
+        let _telling = capture::Telling::enter();
         // The app's logger must never break the app, nor the SDK.
         let _ = catch_unwind(AssertUnwindSafe(|| logger(level, line)));
     }
@@ -1507,7 +1564,7 @@ impl Inner {
         let closed = {
             let mut state = self.lock();
             if state.closed {
-                Self::refuse_closed(&mut state);
+                Self::refuse_closed(&mut state, false);
             }
             state.closed
         };
@@ -1524,72 +1581,92 @@ impl Inner {
         }
         let building = {
             let mut state = self.lock();
-            if state.closed {
-                Self::refuse_closed(&mut state);
-                None
-            } else {
-                let check = match Self::held_back(&mut state) {
-                    Admission::Drop => None,
-                    Admission::Send => Some(None),
-                    Admission::Check(holdback) => Some(Some(holdback)),
-                };
-                match check {
-                    None => None,
-                    Some(check)
-                        if !state.make_room(
-                            estimate,
-                            self.max_queue_events,
-                            self.max_queue_bytes,
-                        ) =>
-                    {
-                        if let (Some(id), Some(holdback)) = (check, &mut state.holdback) {
-                            if holdback.id == id {
-                                holdback.checking = false;
-                            }
-                        }
-                        state.report(
-                            Error::new(
-                                ErrorCode::QueueFull,
-                                "The queue is full; the event was dropped.",
-                            )
-                            .about(call_id),
-                            None,
-                            0,
-                        );
-                        None
-                    }
-                    Some(check) => {
-                        let tracker = Arc::new(Tracker {
-                            event_id: call_id.to_owned(),
-                            outcome: AtomicU8::new(0),
-                            retry_at: Mutex::new(None),
-                        });
-                        state.building.push(tracker.clone());
-                        state.bytes += estimate;
-                        state.reserved += estimate;
-                        Some(Building {
-                            inner: self.clone(),
-                            tracker,
-                            reserved: estimate,
-                            check,
-                            done: false,
-                        })
-                    }
-                }
+            match Self::admission(&mut state, false) {
+                None => None,
+                Some(check) => self.register(&mut state, call_id, estimate, check),
             }
         };
         self.after();
         building
     }
 
+    /// Whether an event recorded now is taken at all: not after shutdown, which is said once,
+    /// nor while a daily limit holds, unless it is the one that checks whether the limit still
+    /// does: then that limit's hold-back, by its ID, which the event keeps until it is queued
+    /// (`register`), or gives back (`release_check`). `turn`: it comes from `capture()`.
+    fn admission(state: &mut State, turn: bool) -> Option<Option<u64>> {
+        if state.closed {
+            Self::refuse_closed(state, turn);
+            return None;
+        }
+        match Self::held_back(state) {
+            Admission::Drop => None,
+            Admission::Send => Some(None),
+            Admission::Check(holdback) => Some(Some(holdback)),
+        }
+    }
+
+    /// The check an event was to be never went: the next one can be.
+    fn release_check(state: &mut State, check: Option<u64>) {
+        if let (Some(id), Some(holdback)) = (check, &mut state.holdback) {
+            if holdback.id == id {
+                holdback.checking = false;
+            }
+        }
+    }
+
+    /// Makes room for an admitted event that holds about `estimate` bytes until it is queued,
+    /// and counts it among those being built. `None`: the queue is full, which is said.
+    fn register(
+        self: &Arc<Self>,
+        state: &mut State,
+        event_id: &str,
+        estimate: usize,
+        check: Option<u64>,
+    ) -> Option<Building> {
+        if !state.make_room(estimate, self.max_queue_events, self.max_queue_bytes) {
+            Self::release_check(state, check);
+            state.report(
+                Error::new(
+                    ErrorCode::QueueFull,
+                    "The queue is full; the event was dropped.",
+                )
+                .about(event_id),
+                None,
+                0,
+            );
+            return None;
+        }
+        let tracker = Arc::new(Tracker {
+            event_id: event_id.to_owned(),
+            outcome: AtomicU8::new(0),
+            retry_at: Mutex::new(None),
+        });
+        state.building.push(tracker.clone());
+        state.bytes += estimate;
+        state.reserved += estimate;
+        Some(Building {
+            inner: self.clone(),
+            tracker,
+            reserved: estimate,
+            check,
+            done: false,
+        })
+    }
+
     /// Said once: an `on_error` that records after shutdown must not feed itself.
-    fn refuse_closed(state: &mut State) {
+    fn refuse_closed(state: &mut State, turn: bool) {
         if !state.reported_closed {
             state.reported_closed = true;
+            let what = if turn {
+                "capture() was called"
+            } else {
+                "A call was recorded"
+            };
             state.report(
                 Error::new(
                     ErrorCode::Shutdown,
-                    "A call was recorded after shutdown(); this and later events are dropped.",
+                    format!("{what} after shutdown(); this and later events are dropped."),
                 ),
                 None,
                 0,
@@ -1683,7 +1760,7 @@ impl Inner {
     /// the event is refused for shutdown.
     pub(crate) async fn record(
         self: &Arc<Self>,
-        mut building: Building,
+        building: Building,
         data: ShapedCallData,
         head: CallHead,
         diagnostic: Option<Error>,
@@ -1716,9 +1793,23 @@ impl Inner {
             }
         };
         let built = match (built, hook) {
-            (Ok(Some(draft)), Some(hook)) => self.run_hook(draft, hook, &call_id).await,
+            (Ok(Some(draft)), Some(hook)) => {
+                let deadline = by(self.before_send_timeout);
+                self.run_hook(draft, hook, &building, deadline, 0).await
+            }
             (built, _) => built,
         };
+        self.conclude(building, built, diagnostic);
+    }
+
+    /// An event's end once it is built and its hook has run: queued, or dropped, which is said.
+    /// `diagnostic` is what a call has to say of its `identify`.
+    fn conclude(
+        self: &Arc<Self>,
+        mut building: Building,
+        built: Finished,
+        diagnostic: Option<Error>,
+    ) {
         let tracker = building.tracker.clone();
         // What there is to say of the call waits for `on_error` before its event can be sent, or
         // shows its end: whoever sees either finds the report waiting, and waits for it. After
@@ -1753,23 +1844,37 @@ impl Inner {
         self.pump();
     }
 
-    /// Runs `before_send` on a thread of its own, within its deadline and the hook limit, then
+    /// Runs `before_send` on a thread of its own, by `deadline` and within the hook limit, then
     /// checks, shortens and redacts what it returned. `Ok(None)`: the hook dropped the event.
     /// A hook past its deadline is left to end by itself: its thread belongs to no runtime, so it
-    /// holds up neither the runtime's end nor the process's.
+    /// holds up neither the runtime's end nor the process's. `depth` is how deep in the clients'
+    /// callbacks the event was captured: what the hook captures is one deeper.
     async fn run_hook(
         self: &Arc<Self>,
         draft: Box<crate::event::Draft>,
         hook: BeforeSend,
-        call_id: &str,
+        building: &Building,
+        deadline: Instant,
+        depth: u8,
     ) -> Finished {
+        let tracker = building.tracker.clone();
+        let call_id = building.tracker.event_id.as_str();
         let fail = |code: ErrorCode, message: String| -> Finished {
             Err(Some(Box::new(Error::new(code, message).about(call_id))))
         };
         let timeout = self.before_send_timeout;
-        let deadline = Instant::now() + timeout;
+        let late = || {
+            fail(
+                ErrorCode::HookTimeout,
+                format!(
+                    "before_send did not finish within {} ms; the event was dropped.",
+                    timeout.as_millis()
+                ),
+            )
+        };
         let context = self.context.clone();
         let hooks = self.hooks.clone();
+        let wanted = tracker.clone();
         let work = async move {
             // Its deadline counts the wait for a free slot too. The slot is the hook's until it
             // returns, even past its deadline: a hook that runs on still takes its thread.
@@ -1778,6 +1883,14 @@ impl Inner {
             let (answer, answered) = tokio::sync::oneshot::channel();
             let run = move || {
                 let _slot = slot;
+                // Looked at once more where the hook is about to run: its time may have run out
+                // while it waited for its turn, and shutdown may have ended its event. Then the
+                // app's code isn't run for it.
+                if Instant::now() >= deadline || wanted.outcome() != 0 {
+                    let _ = answer.send((Hooked::NotRun, Instant::now()));
+                    return;
+                }
+                capture::in_hook(depth);
                 let returned = catch_unwind(AssertUnwindSafe(|| hook(given)));
                 let returned_at = Instant::now();
                 let hooked = match returned {
@@ -1799,15 +1912,6 @@ impl Inner {
                 .ok()?;
             answered.await.ok()
         };
-        let late = || {
-            fail(
-                ErrorCode::HookTimeout,
-                format!(
-                    "before_send did not finish within {} ms; the event was dropped.",
-                    timeout.as_millis()
-                ),
-            )
-        };
         let hooked = match tokio::time::timeout_at(deadline.into(), work).await {
             Err(_) => return late(),
             Ok(None) => {
@@ -1822,6 +1926,9 @@ impl Inner {
             Ok(Some((hooked, _))) => hooked,
         };
         match hooked {
+            // Ended by shutdown, which said so; or out of time.
+            Hooked::NotRun if tracker.outcome() != 0 => Err(None),
+            Hooked::NotRun => late(),
             Hooked::Panicked => fail(ErrorCode::HookFailed, "before_send panicked; the event was dropped.".into()),
             Hooked::Dropped => Ok(None),
             Hooked::RedactionFailed => fail(ErrorCode::RedactionFailed, "Redaction failed; the event was dropped, not sent unredacted.".into()),
@@ -2342,6 +2449,8 @@ enum Admission {
 }
 
 enum Hooked {
+    /// The hook wasn't called: its time had run out, or its event had ended already.
+    NotRun,
     Panicked,
     Dropped,
     RedactionFailed,

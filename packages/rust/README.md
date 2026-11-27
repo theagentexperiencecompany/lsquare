@@ -1,16 +1,18 @@
 # lsquare
 
-Record every tool call your MCP server handles in LSquare. A first beta for Rust: it records tool
+Record every tool call your MCP server handles in LSquare. A beta for Rust: it records tool
 calls on servers built with [`rmcp`](https://crates.io/crates/rmcp), the official Rust MCP SDK, and
-nothing else yet ([below](#not-yet-supported)). LSquare is an invite-only beta, so
-[request access](https://lsquare.io) to get an API key.
+the turns of an agent your own code runs, with [`capture()`](#agent-turns-capture). What the other
+SDKs do that this one doesn't yet is [below](#not-yet-supported). LSquare is an invite-only beta,
+so [request access](https://lsquare.io) to get an API key.
 
 - One line per MCP server. Nothing the SDK does can make a tool call fail: it never panics, and
   the handler's answer, error or panic reaches the client as it would without it.
 - Two optional inputs on your tools, `session_id` and `intent`, say which calls belong to one task
   and why each was made, and one more tool, `get_more_tools`, lets agents say what they needed and
   found no tool for ([the extras](#the-extras)). `extras(false)` leaves your server as it is.
-- A tool's reply never waits on the network, and `flush()` waits up to 2 seconds by default.
+- A tool's reply never waits on the network, nor does `capture()`, and `flush()` waits up to 2
+  seconds by default.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
 - Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11 or 3.12. Rust 1.88 or
   later.
@@ -35,7 +37,7 @@ folder.
    The second is for a new project: a server on `rmcp` 3.11 or 3.12 already keeps the
    requirement it has. `lsquare` is a beta: its only version on crates.io is a pre-release, which
    `cargo add` picks while there is no stable one. A requirement written by hand needs the version in full, as
-   `cargo add` writes it (`lsquare = "0.2.0-beta.4"`): one such as `"0.2"` doesn't match a
+   `cargo add` writes it (`lsquare = "0.2.0-beta.5"`): one such as `"0.2"` doesn't match a
    pre-release.
 
 2. **Instrument the server:**
@@ -117,7 +119,8 @@ calls on its way is an event of its own. Each `tools/call` becomes one `tool_cal
 | `result` | MCP's result as your handler returned it: text cut at 4,000 characters, images, audio and blobs as their size in bytes |
 | `error` | For a failed call, its `category`: `protocol` (the handler returned an `ErrorData`; its `code` is kept), `tool_error` (an `isError` result), `timeout` (the request was cancelled), `thrown` (the handler panicked). Its message is kept only when both inputs and results are recorded for the tool, since it can quote either |
 | `client`, `protocolVersion`, `server` | The calling app as it named itself, the protocol version, and your server's name and version. A client that gave no name has none: `rmcp` fills in its own name for a request that came without one, which is left out |
-| `orgId`, `userId`, `conversationId`, `metadata` | What `identify` returns |
+| `orgId`, `userId`, `conversationId`, `metadata` | What `identify` returns, and what a [`capture()` inside the tool](#inside-a-tool) gives, which comes first |
+| `agent`, `turnRef` | The turn of the agent your tool ran, from a [`capture()` inside the tool](#inside-a-tool), and that turn's key when it has a conversation and a turn ID |
 | `sessionId`, `sessionSource`, `intent` | The task the call belongs to, where its ID came from (`sent`, `issued` or `protocol`), and why the agent made the call: [the extras](#the-extras) |
 | `extra` | `missing_tools` on a call to the wrapper's own [`get_more_tools`](#get_more_tools-what-agents-looked-for), which has no `toolDescription` |
 | `task`, `round` | A task the call created, and whether the call asked for input or brought it |
@@ -137,7 +140,7 @@ let options = InstrumentOptions::new()
 
 | Option | Default | What it does |
 | --- | --- | --- |
-| `identify` | none | Who the call is for. It starts once the tool has, never before it, and is waited for at most a second after the tool returns. If it fails (any error converts with `?`), takes longer, panics or returns an invalid ID, the call is sent as limited diagnostics (its tool, status, duration and error category, nothing that could name anyone) and `on_error` is told (`identify_failed`). It gets its own copy of the arguments, as your handler gets them (without the extras' inputs), the only copy the SDK makes of a call: without `identify`, arguments and results are read where they are |
+| `identify` | none | Who the call is for. It starts once the tool has, never before it, and is waited for at most a second after the tool returns. If it fails (any error converts with `?`), takes longer, panics or returns an invalid ID, the call is sent as limited diagnostics (its tool, status, duration and error category, nothing that could name anyone) and `on_error` is told (`identify_failed`); a [`capture()` inside the tool](#inside-a-tool) that says whose call it is keeps it whole. It gets its own copy of the arguments, as your handler gets them (without the extras' inputs), the only copy the SDK makes of a call: without `identify`, arguments and results are read where they are |
 | `inputs`, `inputs_for` | everywhere | Record arguments: everywhere, nowhere, or for the tools a function returns true for |
 | `results`, `results_for` | everywhere | Record results, the same way |
 | `descriptions`, `descriptions_for` | everywhere | Record each call's tool description, the same way |
@@ -241,6 +244,104 @@ more optional inputs, and some results end with one more text block; `extras(fal
 everything as it was then. From 0.2.0-beta.2 or beta.3, your server is listed with one more tool,
 `get_more_tools`; `missing_tools(false)` keeps it as it was, with the two inputs.
 
+## Agent turns: `capture()`
+
+When your own code runs an agent, `capture()` records one of its turns: what it was asked and
+what it answered, the tools it called, what it used.
+
+```rust
+use lsquare::{ToolCall, Turn, Usage};
+
+lsquare.capture(
+    Turn::new()
+        .org_id(org_id)
+        .user_id(user_id)
+        .conversation_id(conversation_id)
+        .turn_id(turn_id)
+        .question(question)
+        .answer(answer)
+        .tool_call(ToolCall::new("search_docs").input(serde_json::json!({ "query": query })).duration_ms(120))
+        .usage(Usage::new().input_tokens(812).output_tokens(64).cost_usd(0.0031)),
+);
+```
+
+Every field is optional; [`Turn`](https://docs.rs/lsquare/latest/lsquare/struct.Turn.html) lists
+them. `capture()` never fails, never panics and never waits, neither for the network nor for
+`before_send`: the turn is read and shortened as it is captured, redacted by the rules of
+[what leaves your process](#what-leaves-your-process) before it is sent (after `before_send`,
+where there is one, which sees it as it does a call's event), and sent like any other event;
+`flush()` waits for it.
+Its IDs are sent as you give them: use your internal IDs, never an email address.
+
+### Outside MCP
+
+Anywhere in your app, a capture is a `turn` event of its own. With a `conversation_id` and a
+`turn_id` it gets the same event ID every time it is sent, so a retry or a re-import is recognised
+as a duplicate. This needs no MCP server, and works without the `rmcp` feature
+(`default-features = false`).
+
+### Inside a tool
+
+When a tool of an instrumented server runs an agent, a capture inside it adds the agent's details
+to the call's own event:
+
+- **The first `capture()` before the tool returns becomes the call's `agent` part**, and its
+  `org_id`, `user_id` and `conversation_id` the call's, ahead of `identify`'s, each by itself
+  (one left out or empty leaves `identify`'s). Its
+  metadata is merged with `identify`'s, and wins key by key. With a `conversation_id` and a
+  `turn_id`, the call also carries `turnRef`, that turn's key. An `org_id`, `user_id` or
+  `conversation_id` given there that isn't valid drops the call's event (`invalid_id`), as it
+  would anywhere; a `turn_id` that can't be kept is left out.
+- **Any other capture is a `turn` event of its own, linked to the call** by `callId`, unless you
+  give one with `Turn::call_id`.
+- **A conversation given this way groups the call**, so the call gets no session from
+  [the extras](#the-extras), unless the agent sent one.
+- **"Inside" is the task your handler runs on**, from the moment rmcp calls `call_tool` until its
+  answer: what a handler does before it returns its future counts too. A task the tool spawns is
+  outside, and so is `identify`. For a turn captured there, or later in a background job,
+  `lsquare.current_call_id()` gives the call's ID while still inside the tool, and
+  `Turn::call_id` links the turn to it.
+- **Call it on the client you gave `instrument()`**, or a clone of it. A capture on another client
+  is a turn of its own, not linked to the call. Of two wrappers one inside the other, the inner
+  one records the call, and the capture is its client's. What a handler between the two
+  captured before the inner one took the call stays the call's when both wrappers have the same
+  client; on another client, the first capture is dropped with the outer one's record of it.
+  When a tool calls a tool of another instrumented server on its way, that call is an event of
+  its own, and a capture made inside it on the first server's client is still the first call's.
+- **Its data is read when you call it**, though the call's event is built once the tool has
+  returned: what the tool does afterwards changes nothing. What you gave is let go of there; the
+  call keeps what was read of it, already shortened, and redacts it with the rest of its event.
+- **If `identify` fails for the call**, the call's event is still sent whole when a capture inside
+  it gave a valid value for every ID `identify` last returned, on any server of the same client (a
+  `user_id`, before it has returned any). Otherwise it is limited diagnostics. "Last" is both as
+  the call failed, once its tool had returned (a second after that at the latest), and as its
+  event is built: the capture needs each ID either asks for, so an answer that came in between can
+  add one, never take one away. At the very instant of an answer, it and the one before both
+  count. The client keeps the last 32 answers, each with its time: where it would have to look
+  further back than those for the one in effect as the call failed, all three IDs are needed.
+
+### Where `capture()` differs from the TypeScript SDK's
+
+- A turn is made with `Turn`'s methods, not given as JSON: there is no field of a wrong type or
+  an unknown name to report, so the dry run has no `ignoredFields`.
+- A failed `identify` keeps the call whole only when a turn was captured inside it. TypeScript
+  also keeps it when `identify` last returned no ID at all, capture or not; here, as in the Go
+  SDK, a tool that said nothing of whose call it is never has it sent whole on a failure.
+- A turn captured from `on_error` or the logger is ignored: each could bring the next report. One
+  captured from `before_send` is taken two levels deep, as in TypeScript, counted across clients.
+- "Inside a tool" is the handler's task, not what it spawns: TypeScript follows the promises a
+  tool starts.
+- With `before_send` set, a capture needs a Tokio runtime to wait for the hook on: the one it is
+  called on, or else the last one the client was used on. With neither, the turn is dropped
+  (`internal_error`). Without a hook, a turn captured off any runtime is queued, and sent once the
+  client is next used on one, by a `flush()` say.
+- The hook's time counts from the capture. One whose time ran out before a busy runtime could
+  start it, or while it waited for a free hook slot, isn't run (`hook_timeout`).
+- `flush()` counts the events still on their way as it is called. A turn already logged in dry
+  run, or dropped as it was captured, isn't among them; TypeScript's `flush()` counts it when it
+  is called at once.
+- A reply never waits for the call's event or its turns: see [below](#not-yet-supported).
+
 ## What leaves your process
 
 The same as from the [TypeScript](../lsquare/README.md#what-leaves-your-process) and Python SDKs,
@@ -302,14 +403,16 @@ the limit resets, and checks every 15 minutes whether it was raised.
 
 ## Not yet supported
 
-This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and Python SDKs:
+This beta is the client, `capture()` and the `rmcp` wrapper. Compared with the TypeScript and
+Python SDKs:
 
-- **`capture()` and `turn` events:** agent turns, inside a tool call or outside MCP.
+- **A reply that waits for its call's event**, and for the turns captured inside the call:
+  `flushBeforeReply`, `waitUntil`, and `flush()` inside a tool, for hosts that stop a process once
+  it has replied.
 - **Other Rust MCP libraries.** Only `rmcp`, and only 3.11 and 3.12: `lsquare` forwards each
   method of rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that
   forwards what that one adds. A test compares the two lists, and CI runs the tests with each end
   of the range.
-- **`flushBeforeReply` and `waitUntil`**, for hosts that stop a process once it has replied.
 - **`rmcp`'s `local` feature** (handlers that aren't `Send`): the crate builds with it, but
   `identify` must still be `Send`, and its tests don't run that way.
 - **Calls `rmcp` refuses before your handler** (a malformed request, a missing header) aren't

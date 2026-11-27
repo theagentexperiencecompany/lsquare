@@ -35,7 +35,7 @@ use std::future::Future;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::task::{Context as TaskContext, Poll};
 use std::time::{Duration, Instant};
 
@@ -60,9 +60,13 @@ use rmcp::{ErrorData as McpError, ServerHandler};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use tokio::runtime::Handle;
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
-use crate::client::{Client, Error, ErrorCode, Inner, Level};
+use crate::client::{
+    both, CallScope, Captured, Client, Error, ErrorCode, Inner, Level, CALL, CONVERSATION, ORG,
+    USER,
+};
 use crate::event::{BlockIn, CallData, CallHead, CallShaper, ResourceIn, ResultIn, TypedResult};
 use crate::extras::{
     advertise, id_block, is_session_id, listed_ownership, missing_tools_reply,
@@ -70,7 +74,7 @@ use crate::extras::{
     MISSING_TOOLS_DESCRIPTION, SESSION_ID,
 };
 use crate::json::stringify;
-use crate::normalize::is_valid_id;
+use crate::normalize::{is_valid_id, turn_id_value, turn_key, Check};
 use crate::shape::MAX_ENTRIES;
 use crate::time::{iso, now_ms};
 
@@ -548,6 +552,20 @@ struct Taken {
     /// further in records the call with it, so one connection is one session whichever wrapper
     /// records its calls.
     connection: Option<String>,
+    /// The call as `capture()` inside it sees it: over once a wrapper further in takes the call.
+    scope: Arc<CallScope>,
+    /// Where this wrapper's `identify` is decided: revoked as a wrapper further in takes the call.
+    gate: Option<Arc<Gate>>,
+}
+
+/// What a wrapper further in takes over of a call from the one that had it.
+struct Handed {
+    /// The connection's session, as the outer wrapper knows it.
+    connection: Option<String>,
+    /// The call's ID, the first time it is taken over: turns captured so far are linked by it.
+    call_id: Option<String>,
+    /// What was captured as its agent part so far, on this wrapper's own client.
+    captured: Option<Result<Box<Captured>, ()>>,
 }
 
 impl Taken {
@@ -636,6 +654,10 @@ fn missing_tools_result(arguments: Option<&Map<String, Value>>) -> CallToolResul
 struct Arrival {
     /// What the handler said of the tool, if it was asked already.
     looked: Option<Option<Registered>>,
+    /// The call as `capture()` inside it sees it, with its ID.
+    scope: Arc<CallScope>,
+    /// Where its `identify` is decided, when it has one.
+    gate: Option<Arc<Gate>>,
     /// What the extras took out of the call.
     extra: Extra,
     /// Its connection's session.
@@ -697,22 +719,203 @@ struct Unanswered<'a, H: ServerHandler> {
 impl<H: ServerHandler> Drop for Unanswered<'_, H> {
     fn drop(&mut self) {
         if let Some(call) = self.call.take() {
-            if !self.taken.further_in() {
+            if self.taken.further_in() {
+                call.superseded();
+            } else {
                 let _ = catch_unwind(AssertUnwindSafe(|| self.wrapper.finish(call, None)));
             }
         }
     }
 }
 
-/// What `identify` gave, and when.
-type Identified = (Result<Identity, IdentifyError>, Instant);
+/// What `identify` gave, its IDs checked, or why it failed; and whether that was in time.
+type Identified = (Result<Identity, String>, bool);
 
-/// A running `identify`: stopped if the call it is for goes away.
-struct Identifying(JoinHandle<Identified>);
+/// Where a call's `identify` is found in time or late, once: for the call's event and for what
+/// the client learns from the answer alike. A failed or late one is decided here too, with the
+/// ID fields the client then required of a `capture()` inside the call: those in effect at the
+/// call's cutoff, once the tool had returned and `identify` had failed (its deadline at the
+/// latest), whenever that is looked up. The task `identify` runs on holds it, not the call.
+struct Gate {
+    client: Arc<Inner>,
+    state: Mutex<GateState>,
+}
+
+#[derive(Default)]
+struct GateState {
+    /// When the tool returned, and `identify`'s deadline: set together as it returns.
+    closed: Option<(Instant, Instant)>,
+    /// When `identify` returned.
+    returned: Option<Instant>,
+    /// Its deadline passed with no answer: none counts from then on.
+    expired: bool,
+    /// `identify` failed, or was late, and when that was known.
+    failed: Option<Instant>,
+    /// The ID fields required of the failed call's capture, once fixed: none, before any answer.
+    frozen: Option<Option<u8>>,
+}
+
+impl Gate {
+    fn new(client: &Arc<Inner>) -> Gate {
+        Gate {
+            client: client.clone(),
+            state: Mutex::default(),
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, GateState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// `identify` returned, now, failed or not, with the ID fields it gave. Whether that was in
+    /// time: before its deadline, or while the tool still ran, and not once its deadline passed
+    /// without it. One in time that didn't fail is what the client learns from, from that very
+    /// time; one that wasn't in time failed.
+    fn returned(&self, failed: bool, fields: u8) -> bool {
+        let mut state = self.state();
+        let (expired, deadline) = (state.expired, state.closed.map(|(_, deadline)| deadline));
+        let mut in_time = false;
+        let at = self.client.identified().returned(fields, |at| {
+            in_time = !expired && deadline.is_none_or(|deadline| at < deadline);
+            in_time && !failed
+        });
+        state.returned = Some(at);
+        if failed || !in_time {
+            self.fail_at(&mut state, at);
+        }
+        in_time
+    }
+
+    /// `identify` failed without returning (it was never started, or was stopped), known now.
+    fn fail(&self) {
+        let mut state = self.state();
+        let at = self.client.identified().now();
+        self.fail_at(&mut state, at);
+    }
+
+    /// The call isn't this wrapper's to record after all: whatever its `identify` answers from
+    /// now on is nobody's rule.
+    fn revoke(&self) {
+        self.state().expired = true;
+    }
+
+    fn fail_at(&self, state: &mut GateState, at: Instant) {
+        state.failed.get_or_insert(at);
+        self.freeze(state);
+    }
+
+    /// The tool returned, now: `identify` has `wait` more. Returns when that was, taken here,
+    /// where its answer is decided: one that returned before it met no deadline, and one that
+    /// returns after it has this one to meet, however long the tool's own thread then takes.
+    fn close(&self, wait: Duration) -> Instant {
+        let mut state = self.state();
+        let ended = self.client.identified().now();
+        let deadline = ended
+            .checked_add(wait)
+            .unwrap_or_else(|| ended + IDENTIFY_WAIT);
+        Self::close_at(self, &mut state, ended, deadline);
+        ended
+    }
+
+    fn close_at(&self, state: &mut GateState, ended: Instant, deadline: Instant) {
+        state.closed = Some((ended, deadline));
+        self.freeze(state);
+    }
+
+    /// Fixes what a failed call needs, once the tool has returned and `identify` failed: what
+    /// was in effect at the later of the two, and at its deadline at the latest. That is never
+    /// after now, and every answer timed before now has been noted: an answer of another call
+    /// that returned before this one failed counts, and one after it takes none of that away.
+    fn freeze(&self, state: &mut GateState) {
+        let (Some(failed), Some((ended, deadline)), None) =
+            (state.failed, state.closed, state.frozen)
+        else {
+            return;
+        };
+        let cutoff = failed.max(ended).min(deadline);
+        state.frozen = Some(self.client.identified().at(cutoff));
+    }
+
+    /// `identify`'s deadline passing, as the event waits for it. False: it had returned in time,
+    /// and only its answer is still to be read. True: none of its answers counts any more.
+    fn expire(&self) -> bool {
+        let mut state = self.state();
+        let deadline = state.closed.map(|(_, deadline)| deadline);
+        if let (Some(returned), false, Some(deadline)) = (state.returned, state.expired, deadline) {
+            if returned < deadline {
+                return false;
+            }
+        }
+        state.expired = true;
+        let at = deadline.unwrap_or_else(Instant::now);
+        self.fail_at(&mut state, at);
+        true
+    }
+
+    /// The ID fields required of the failed call's capture as its event is built: those in
+    /// effect as the call failed, and those of the client's latest answer, as TypeScript reads
+    /// them then: each field either asks for. None: no answer on either count (a userId).
+    fn required(&self) -> Option<u8> {
+        let state = self.state();
+        let identified = self.client.identified();
+        let failed = state
+            .frozen
+            .unwrap_or_else(|| identified.at(Instant::now()));
+        both(failed, identified.latest())
+    }
+}
+
+/// `identify`'s IDs, checked: an empty one is none, and one that isn't valid fails it.
+fn checked(mut identity: Identity) -> Result<Identity, String> {
+    for (name, id) in [
+        ("org_id", &mut identity.org_id),
+        ("user_id", &mut identity.user_id),
+        ("conversation_id", &mut identity.conversation_id),
+    ] {
+        if id.as_deref() == Some("") {
+            *id = None;
+        }
+        if id.as_deref().is_some_and(|id| !is_valid_id(id)) {
+            return Err(format!("returned an invalid {name}"));
+        }
+    }
+    Ok(identity)
+}
+
+/// The ID fields an identity gives, as the client keeps them.
+fn id_fields(identity: &Identity) -> u8 {
+    [
+        (&identity.org_id, ORG),
+        (&identity.user_id, USER),
+        (&identity.conversation_id, CONVERSATION),
+    ]
+    .into_iter()
+    .filter(|(id, _)| id.is_some())
+    .fold(0, |fields, (_, field)| fields | field)
+}
+
+/// A running `identify`: stopped if the call it is for goes away. Its answer comes from where
+/// it is decided, the moment it returns, not from the end of its task: what the app's future
+/// does as it is let go of holds nothing up.
+struct Identifying {
+    task: JoinHandle<()>,
+    answer: oneshot::Receiver<Identified>,
+}
 
 impl Drop for Identifying {
     fn drop(&mut self) {
-        self.0.abort();
+        self.task.abort();
+    }
+}
+
+/// An `identify` that hasn't answered: let go of like that, it failed, and its gate is told.
+struct Undecided(Option<Arc<Gate>>);
+
+impl Drop for Undecided {
+    fn drop(&mut self) {
+        if let Some(gate) = self.0.take() {
+            gate.fail();
+        }
     }
 }
 
@@ -759,6 +962,20 @@ struct Call {
     protocol_session: Option<String>,
     /// A call to the wrapper's own `get_more_tools`.
     answer: bool,
+    /// The call as `capture()` inside it sees it.
+    scope: Arc<CallScope>,
+    /// Where its `identify` is decided, when it has one.
+    gate: Option<Arc<Gate>>,
+}
+
+impl Call {
+    /// A wrapper further in took the call: it is that one's to record, with its own `identify`.
+    /// This one's, if it started, is stopped, and whatever it still answers teaches nothing.
+    fn superseded(self) {
+        if let Some(gate) = &self.gate {
+            gate.revoke();
+        }
+    }
 }
 
 fn named(name: &str, version: &str) -> Value {
@@ -1189,6 +1406,8 @@ impl<H: ServerHandler> Instrumented<H> {
     ) -> Call {
         let Arrival {
             looked,
+            scope,
+            gate,
             mut extra,
             protocol_session,
             inputs,
@@ -1227,7 +1446,7 @@ impl<H: ServerHandler> Instrumented<H> {
         });
         let protocol_version = context.protocol_version();
         Call {
-            call_id: uuid::Uuid::new_v4().to_string(),
+            call_id: scope.call_id().to_owned(),
             captured_at: iso(now_ms()),
             started: Instant::now(),
             tool_name,
@@ -1249,6 +1468,8 @@ impl<H: ServerHandler> Instrumented<H> {
             extra,
             protocol_session,
             answer,
+            scope,
+            gate,
         }
     }
 
@@ -1269,20 +1490,64 @@ impl<H: ServerHandler> Instrumented<H> {
             call.identification = Some(Identification::Ready(input));
             return;
         };
+        let Some(gate) = call.gate.clone() else {
+            call.identification = Some(Identification::Ready(input));
+            return;
+        };
         if client.identifying.fetch_add(1, Ordering::AcqRel) >= client.max_concurrent_hooks() {
             client.identifying.fetch_sub(1, Ordering::AcqRel);
             call.identification = Some(Identification::Skipped);
+            gate.fail();
             return;
         }
         let slot = HookSlot(client.clone());
         let identify = identify.clone();
-        call.identification = Some(Identification::Running(Identifying(runtime.spawn(
-            async move {
-                let _slot = slot;
-                let identity = identify(*input).await;
-                (identity, Instant::now())
-            },
-        ))));
+        let (answer, answered) = oneshot::channel();
+        // Should the task end with no answer (it is stopped, even before it starts, or its
+        // runtime ends), that is a failure, known as it happens.
+        let undecided = Undecided(Some(gate));
+        let task = runtime.spawn(async move {
+            let _slot = slot;
+            let (mut undecided, mut answer) = (undecided, Some(answer));
+            // Its panic is a failure like another. What it panicked with is the app's too, and
+            // is let go of only once the failure is known.
+            let (mut running, _panicked) = match catch_unwind(AssertUnwindSafe(|| identify(*input)))
+            {
+                Ok(running) => (Some(CatchUnwind(Box::pin(running))), None),
+                Err(panic) => (None, Some(panic)),
+            };
+            std::future::poll_fn(move |context| {
+                let answered = match &mut running {
+                    None => Err(None),
+                    Some(running) => match Pin::new(running).poll(context) {
+                        Poll::Pending => return Poll::Pending,
+                        Poll::Ready(answered) => answered.map_err(Some),
+                    },
+                };
+                let (identity, _panicked) = match answered {
+                    Err(panic) => (Err("panicked".to_owned()), panic),
+                    Ok(Err(_)) => (Err("failed".to_owned()), None),
+                    Ok(Ok(identity)) => (checked(identity), None),
+                };
+                // Decided here, the moment it returns, before its future is let go of (which
+                // is the app's code too, and may take its time): in time or late, and what the
+                // client learns from it. The event gets the answer from here as well.
+                let fields = identity.as_ref().map_or(0, id_fields);
+                let in_time = undecided
+                    .0
+                    .take()
+                    .is_some_and(|gate| gate.returned(identity.is_err(), fields));
+                if let Some(answer) = answer.take() {
+                    let _ = answer.send((identity, in_time));
+                }
+                Poll::Ready(())
+            })
+            .await;
+        });
+        call.identification = Some(Identification::Running(Identifying {
+            task,
+            answer: answered,
+        }));
     }
 
     async fn record(
@@ -1300,14 +1565,31 @@ impl<H: ServerHandler> Instrumented<H> {
         let handed = TAKEN
             .try_with(|outer| {
                 if outer.id == context.id && outer.tool_name == request.name.as_ref() {
-                    outer.further_in.store(true, Ordering::Release);
-                    outer.connection.clone()
+                    // Taken over once: a handler that passes the same call on again (a retry)
+                    // has each attempt recorded as an event of its own.
+                    let first = !outer.further_in.swap(true, Ordering::AcqRel);
+                    // From here on the call isn't the outer wrapper's: neither a `capture()`
+                    // inside it, nor whatever its `identify` still answers.
+                    if let Some(gate) = &outer.gate {
+                        gate.revoke();
+                    }
+                    let captured = outer.scope.close();
+                    Some(Handed {
+                        connection: outer.connection.clone(),
+                        call_id: first.then(|| outer.scope.call_id().to_owned()),
+                        // Another client's capture is no part of this one's event.
+                        captured: captured.filter(|_| outer.scope.is_of(client)),
+                    })
                 } else {
                     None
                 }
             })
             .ok()
             .flatten();
+        let (handed, taken_over) = match handed {
+            Some(handed) => (handed.connection, Some((handed.call_id, handed.captured))),
+            None => (None, None),
+        };
         // The extras' inputs are taken out whether or not the call is recorded: a client that was
         // shut down still serves tools listed with them.
         let options = &self.shared.options;
@@ -1357,21 +1639,50 @@ impl<H: ServerHandler> Instrumented<H> {
             .ok()
             .flatten()
         });
+        // The call's ID is the one it had, when it is taken over from a wrapper further out (the
+        // turns captured so far are linked by it), with what this client captured for it there;
+        // or else random. Should that fail, the call goes on as it would without the wrapper,
+        // and the wrapper's own tool is answered all the same.
+        let Ok(scope) = catch_unwind(AssertUnwindSafe(|| {
+            let (call_id, captured) = taken_over.unwrap_or_default();
+            let call_id = call_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            let scope = CallScope::new(client, call_id);
+            scope.adopt(captured);
+            Arc::new(scope)
+        })) else {
+            if answer {
+                let reply = missing_tools_result(request.arguments.as_ref());
+                return Ok(CallToolResponse::Complete(reply));
+            }
+            return self.handler.call_tool(request, context).await;
+        };
+        let gate = options
+            .identify
+            .as_ref()
+            .map(|_| Arc::new(Gate::new(client)));
         let taken = Arc::new(Taken {
             id: context.id.clone(),
             tool_name: request.name.to_string(),
             further_in: AtomicBool::new(false),
             connection: connection.clone(),
+            scope: scope.clone(),
+            gate: gate.clone(),
         });
         // Whatever fails in here, the call goes on as it would without it.
         let arrival = Arrival {
             protocol_session: connection.filter(|_| extra.grouping),
             looked,
+            scope: scope.clone(),
+            gate,
             extra,
             inputs,
             answer,
         };
         let call = catch_unwind(AssertUnwindSafe(|| self.start(&request, &context, arrival))).ok();
+        if call.is_none() {
+            // Not recorded: a `capture()` inside it is a turn of its own.
+            scope.close();
+        }
         // Should the MCP SDK let go of the call before the handler answers (its connection
         // closed), it is recorded as it goes.
         let mut unanswered = Unanswered {
@@ -1391,13 +1702,18 @@ impl<H: ServerHandler> Instrumented<H> {
             let reply = missing_tools_result(request.arguments.as_ref());
             Ok(Ok(CallToolResponse::Complete(reply)))
         } else {
-            // A handler can panic making its future, before it is ever polled.
+            // A handler can panic making its future, before it is ever polled. What it does
+            // there is the tool's own code already, as what its future does: a `capture()` in
+            // either is inside the call.
             match catch_unwind(AssertUnwindSafe(|| {
-                self.handler.call_tool(request, context)
+                CALL.sync_scope(scope.clone(), || {
+                    TAKEN.sync_scope(taken.clone(), || self.handler.call_tool(request, context))
+                })
             })) {
                 Ok(answering) => {
-                    let mut answering =
-                        CatchUnwind(Box::pin(TAKEN.scope(taken.clone(), answering)));
+                    let mut answering = CatchUnwind(Box::pin(
+                        CALL.scope(scope.clone(), TAKEN.scope(taken.clone(), answering)),
+                    ));
                     // `identify` starts once the handler was polled for the first time: never
                     // before the tool, and not at all when a wrapper further in took the call.
                     // The handler is polled when this is, no more: what it does, it does as it
@@ -1422,7 +1738,7 @@ impl<H: ServerHandler> Instrumented<H> {
         let mut issued = None;
         if let Some(call) = unanswered.call.take() {
             if taken.further_in() {
-                drop(call);
+                call.superseded();
             } else {
                 match catch_unwind(AssertUnwindSafe(|| self.finish(call, Some(&outcome)))) {
                     Ok(id) => issued = id,
@@ -1457,9 +1773,25 @@ impl<H: ServerHandler> Instrumented<H> {
     ///
     /// Returns the ID of the session it started for the call, if it did: the reply tells the
     /// agent.
-    fn finish(&self, call: Call, outcome: Option<&Outcome>) -> Option<String> {
+    fn finish(&self, mut call: Call, outcome: Option<&Outcome>) -> Option<String> {
         let client = &self.shared.client;
-        let finished = Instant::now();
+        // The tool has returned: `identify` has a second more, and a `capture()` from now on is
+        // a turn of its own.
+        let finished = match &call.gate {
+            Some(gate) => {
+                // One that never started (there was nowhere to run it, or starting it failed)
+                // has failed, known now at the latest.
+                if !matches!(
+                    call.identification,
+                    Some(Identification::Running(_) | Identification::Skipped)
+                ) {
+                    gate.fail();
+                }
+                gate.close(IDENTIFY_WAIT)
+            }
+            None => Instant::now(),
+        };
+        let captured = call.scope.close();
         // A failed call's text can quote what the tool would have returned, and what it was sent:
         // it is kept only when both are recorded.
         let error_text = call.inputs && call.results;
@@ -1576,11 +1908,22 @@ impl<H: ServerHandler> Instrumented<H> {
                 if complete.is_error != Some(true)
                     && !(complete.content.is_empty() && complete.structured_content.is_none())
         );
+        // A conversation given by a `capture()` inside the call groups it: it needs no session.
+        let grouped = matches!(
+            &captured,
+            Some(Ok(captured)) if captured
+                .ids
+                .get("conversationId")
+                .and_then(Value::as_str)
+                .is_some_and(|conversation| !conversation.is_empty())
+        );
         let mut issued = None;
         let session = if !call.extra.grouping {
             None
         } else if let Some(sent) = call.extra.sent {
             Some((sent, "sent"))
+        } else if grouped {
+            None
         } else if let Some(connection) = call.protocol_session {
             Some((session_hash(&connection), "protocol"))
         } else if call.extra.sessions && own_result {
@@ -1591,6 +1934,26 @@ impl<H: ServerHandler> Instrumented<H> {
             None
         };
         let failure = failure.map(Value::Object);
+        let captured = match captured {
+            // A `capture()` inside the call couldn't be read: the event is dropped, never built
+            // from what was half read.
+            Some(Err(())) => {
+                client.report(
+                    Error::new(
+                        ErrorCode::RedactionFailed,
+                        "Building the event failed; it was dropped, never sent unredacted.",
+                    )
+                    .about(&call.call_id),
+                );
+                return issued;
+            }
+            Some(Ok(captured)) => {
+                let Captured { ids, agent } = *captured;
+                call.shaper.agent(agent);
+                Some(ids)
+            }
+            None => None,
+        };
         let data = CallData {
             tool_description: call.description.as_ref(),
             // The server's, whichever tool is called.
@@ -1630,34 +1993,13 @@ impl<H: ServerHandler> Instrumented<H> {
             diagnostics: false,
         };
         let identification = call.identification;
+        let gate = call.gate;
         let client = client.clone();
         let rest = async move {
             let mut head = head;
-            let diagnostic = match identified(identification, finished + IDENTIFY_WAIT).await {
-                Ok(None) => None,
-                Ok(Some(identity)) => {
-                    let mut ids = Map::new();
-                    for (key, id) in [
-                        ("orgId", identity.org_id),
-                        ("userId", identity.user_id),
-                        ("conversationId", identity.conversation_id),
-                    ] {
-                        if let Some(id) = id {
-                            ids.insert(key.into(), id.into());
-                        }
-                    }
-                    head.ids = Some(Value::Object(ids));
-                    head.metadata = identity.metadata.map(Value::Object);
-                    None
-                }
-                Err(why) => {
-                    head.diagnostics = true;
-                    Some(Error::new(
-                        ErrorCode::IdentifyFailed,
-                        format!("identify {why}; the call was sent as limited diagnostics."),
-                    ))
-                }
-            };
+            let waited =
+                identified(identification, gate.as_deref(), finished + IDENTIFY_WAIT).await;
+            let diagnostic = who(&mut head, waited, captured, gate.as_deref());
             client.record(building, shaped, head, diagnostic).await;
         };
         match Handle::try_current() {
@@ -1672,48 +2014,134 @@ impl<H: ServerHandler> Instrumented<H> {
 }
 
 /// What `identify` gave, waited for until `deadline`: its IDs, none when there is no `identify`,
-/// or why it failed. One still running at the deadline is stopped, and one that answered past it
-/// is late, whenever its answer is seen.
+/// or why it failed. One still running at the deadline is stopped. Whether one that returned was
+/// in time was decided as it did, at its gate, whenever its answer is seen.
 async fn identified(
     identification: Option<Identification>,
+    gate: Option<&Gate>,
     deadline: Instant,
 ) -> Result<Option<Identity>, String> {
-    let mut running = match identification {
-        None => return Ok(None),
-        Some(Identification::Ready(_)) => return Err("could not be started".into()),
-        Some(Identification::Skipped) => return Err("was skipped at the hook limit".into()),
-        Some(Identification::Running(running)) => running,
+    let (mut running, gate) = match (identification, gate) {
+        // No `identify` to ask.
+        (None, None) => return Ok(None),
+        (Some(Identification::Skipped), _) => return Err("was skipped at the hook limit".into()),
+        (Some(Identification::Running(running)), Some(gate)) => (running, gate),
+        // There is one, and it never started: starting it failed, or there was nowhere to.
+        (None | Some(Identification::Ready(_)), _) | (_, None) => {
+            return Err("could not be started".into())
+        }
     };
     let late = || Err("took longer than its deadline".to_owned());
-    let identity = match tokio::time::timeout_at(deadline.into(), &mut running.0).await {
-        Err(_) => return late(),
-        Ok(Err(stopped)) => {
-            return Err(if stopped.is_panic() {
-                "panicked"
-            } else {
-                "was stopped"
-            }
-            .into())
-        }
-        Ok(Ok((_, answered))) if answered > deadline => return late(),
-        Ok(Ok((Err(_), _))) => return Err("failed".into()),
-        Ok(Ok((Ok(identity), _))) => identity,
+    let answered = match tokio::time::timeout_at(deadline.into(), &mut running.answer).await {
+        Ok(answered) => answered,
+        // Its deadline passed, and none of its answers counts any more.
+        Err(_) if gate.expire() => return late(),
+        // It had returned in time: its answer was sent from where that was decided.
+        Err(_) => (&mut running.answer).await,
     };
-    let mut checked = identity;
-    for (name, id) in [
-        ("org_id", &mut checked.org_id),
-        ("user_id", &mut checked.user_id),
-        ("conversation_id", &mut checked.conversation_id),
-    ] {
-        // An empty ID is none.
-        if id.as_deref() == Some("") {
-            *id = None;
+    match answered {
+        // Its task ended with no answer: it was stopped, or its runtime is gone.
+        Err(_) => {
+            gate.fail();
+            Err("was stopped".into())
         }
-        if id.as_deref().is_some_and(|id| !is_valid_id(id)) {
-            return Err(format!("returned an invalid {name}"));
+        Ok((_, false)) => late(),
+        Ok((identity, true)) => identity.map(Some),
+    }
+}
+
+/// Who the call was for, into its head: `identify`'s IDs, then those of the `capture()` inside
+/// the call, which win, each by itself, and that turn's reference. Returns what there is to
+/// report of `identify`.
+///
+/// A call whose `identify` failed is sent as limited diagnostics, unless a `capture()` inside it
+/// gave a valid value for every ID field the client's `identify` last returned (a userId before
+/// any answer): then whose data it is, is known all the same.
+fn who(
+    head: &mut CallHead,
+    waited: Result<Option<Identity>, String>,
+    captured: Option<Map<String, Value>>,
+    gate: Option<&Gate>,
+) -> Option<Error> {
+    // What the capture gave of the call's own IDs: left out, null and an empty one are none.
+    let mut given = Map::new();
+    for key in ["orgId", "userId", "conversationId"] {
+        match captured.as_ref().and_then(|ids| ids.get(key)) {
+            None | Some(Value::Null) => {}
+            Some(Value::String(id)) if id.is_empty() => {}
+            Some(id) => {
+                given.insert(key.to_owned(), id.clone());
+            }
         }
     }
-    Ok(Some(checked))
+    let mut ids = Map::new();
+    let diagnostic = match waited {
+        Ok(None) => None,
+        Ok(Some(identity)) => {
+            for (key, id) in [
+                ("orgId", identity.org_id),
+                ("userId", identity.user_id),
+                ("conversationId", identity.conversation_id),
+            ] {
+                if let Some(id) = id {
+                    ids.insert(key.into(), id.into());
+                }
+            }
+            head.metadata = identity.metadata.map(Value::Object);
+            None
+        }
+        Err(why) => {
+            let needed = gate.and_then(Gate::required).unwrap_or(USER);
+            let supplied = captured.is_some()
+                && [
+                    ("orgId", ORG),
+                    ("userId", USER),
+                    ("conversationId", CONVERSATION),
+                ]
+                .into_iter()
+                .filter(|(_, field)| needed & field != 0)
+                .all(|(key, _)| {
+                    given
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(is_valid_id)
+                });
+            head.diagnostics = !supplied;
+            let sent = if supplied {
+                "with capture()'s IDs"
+            } else {
+                "as limited diagnostics"
+            };
+            Some(Error::new(
+                ErrorCode::IdentifyFailed,
+                format!("identify {why}; the call was sent {sent}."),
+            ))
+        }
+    };
+    // The turn's reference, from the turnId the event keeps: one it drops makes none. Nor does
+    // an orgId that isn't valid: the event is then dropped for it, as invalid_id.
+    let conversation = given.get("conversationId").and_then(Value::as_str);
+    let turn = captured
+        .as_ref()
+        .and_then(|captured| match turn_id_value(captured.get("turnId")) {
+            Check::Valid(turn) => Some(turn),
+            _ => None,
+        });
+    ids.extend(given.clone());
+    let org = match ids.get("orgId") {
+        None => Some(None),
+        Some(Value::String(org)) if is_valid_id(org) => Some(Some(org.as_str())),
+        Some(_) => None,
+    };
+    if let (Some(turn), Some(conversation), Some(org)) = (
+        turn,
+        conversation.filter(|conversation| is_valid_id(conversation)),
+        org,
+    ) {
+        head.turn_ref = Some(turn_key(org, conversation, &turn).into());
+    }
+    head.ids = Some(Value::Object(ids));
+    diagnostic
 }
 
 /// An isError result's message: its first text block.
@@ -2114,6 +2542,346 @@ mod tests {
             session_hash("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    /// A client that sends nothing, and the gate of one of its calls.
+    fn gated() -> (Client, Gate) {
+        let client = Client::new(crate::Options::new().dry_run(true).logger(|_, _| {}));
+        let gate = Gate::new(client.inner());
+        (client, gate)
+    }
+
+    /// Another call's `identify` answers, in time, with these ID fields.
+    fn answers(client: &Client, fields: u8) {
+        client.inner().identified().returned(fields, |_| true);
+    }
+
+    fn pause() {
+        std::thread::sleep(Duration::from_millis(3));
+    }
+
+    impl Gate {
+        /// The tool returned at `ended`, and `identify` has until `deadline`: at times of the
+        /// test's choosing.
+        fn closed(&self, ended: Instant, deadline: Instant) {
+            let mut state = self.state();
+            self.close_at(&mut state, ended, deadline);
+        }
+    }
+
+    #[test]
+    fn an_answer_counts_from_when_it_returns_and_only_one_in_time_that_did_not_fail() {
+        let (client, gate) = gated();
+        let latest = || client.inner().identified().latest();
+        // While the tool still runs, it is in time: a failure teaches nothing all the same.
+        assert!(gate.returned(true, 0));
+        assert_eq!(latest(), None);
+        let gate = Gate::new(client.inner());
+        assert!(gate.returned(false, ORG | USER));
+        assert_eq!(latest(), Some(ORG | USER));
+        // Within its second after the tool returned.
+        let gate = Gate::new(client.inner());
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        assert!(gate.returned(false, USER));
+        assert_eq!(latest(), Some(USER));
+        // Past its deadline it is late, and what it gives is nobody's rule.
+        let gate = Gate::new(client.inner());
+        let now = Instant::now();
+        gate.closed(now - Duration::from_secs(2), now - Duration::from_secs(1));
+        assert!(!gate.returned(false, CONVERSATION));
+        assert_eq!(latest(), Some(USER));
+    }
+
+    #[test]
+    fn once_its_deadline_passed_no_answer_of_an_identify_counts() {
+        let (client, gate) = gated();
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        // The event's wait gave up on it, however early its timer was seen to fire.
+        assert!(gate.expire());
+        assert!(!gate.returned(false, ORG));
+        assert_eq!(client.inner().identified().latest(), None);
+        // One that returned in time has only its answer left to read.
+        let gate = Gate::new(client.inner());
+        gate.closed(now, now + Duration::from_secs(60));
+        assert!(gate.returned(false, ORG));
+        assert!(!gate.expire());
+        assert_eq!(client.inner().identified().latest(), Some(ORG));
+    }
+
+    #[test]
+    fn a_failed_call_needs_what_was_in_effect_as_it_failed_and_what_was_learned_since() {
+        let (client, gate) = gated();
+        // Before any answer, a userId.
+        gate.fail();
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        assert_eq!(gate.required(), None);
+        // An answer that comes later, before its event is built, asks for more: never for less.
+        pause();
+        answers(&client, 0);
+        assert_eq!(gate.required(), Some(USER));
+        answers(&client, ORG);
+        assert_eq!(gate.required(), Some(USER | ORG));
+
+        // A call that fails once identify answers with an org and a user needs both, and an
+        // answer without IDs that comes after it failed takes none of that away.
+        let (client, gate) = gated();
+        answers(&client, ORG | USER);
+        pause();
+        assert!(gate.returned(true, 0));
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        pause();
+        answers(&client, 0);
+        assert_eq!(gate.required(), Some(ORG | USER));
+        answers(&client, CONVERSATION);
+        assert_eq!(gate.required(), Some(ORG | USER | CONVERSATION));
+    }
+
+    #[test]
+    fn a_timed_out_call_is_decided_by_what_was_in_effect_at_its_deadline() {
+        let (client, gate) = gated();
+        answers(&client, ORG | USER);
+        pause();
+        let ended = Instant::now();
+        gate.closed(ended, ended + Duration::from_millis(5));
+        // Its deadline passes; only then does another call's identify answer without IDs, and
+        // only after that is the timeout seen.
+        std::thread::sleep(Duration::from_millis(12));
+        answers(&client, 0);
+        pause();
+        assert!(gate.expire());
+        assert_eq!(gate.required(), Some(ORG | USER));
+
+        // The same when it is identify's own late answer that shows the deadline has passed.
+        let (client, gate) = gated();
+        answers(&client, ORG | USER);
+        pause();
+        let ended = Instant::now();
+        gate.closed(ended, ended + Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(12));
+        answers(&client, 0);
+        pause();
+        assert!(!gate.returned(false, CONVERSATION));
+        assert_eq!(gate.required(), Some(ORG | USER));
+
+        // An answer that came before the deadline is the one in effect at it.
+        let (client, gate) = gated();
+        answers(&client, ORG | USER);
+        pause();
+        let ended = Instant::now();
+        gate.closed(ended, ended + Duration::from_millis(40));
+        answers(&client, 0);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(gate.expire());
+        assert_eq!(gate.required(), Some(0));
+    }
+
+    #[test]
+    fn a_failure_known_while_the_tool_runs_is_decided_as_the_tool_returns() {
+        let (client, gate) = gated();
+        // identify fails early; another call's answer comes while the tool still runs.
+        assert!(gate.returned(true, 0));
+        pause();
+        answers(&client, ORG);
+        pause();
+        let ended = Instant::now();
+        gate.closed(ended, ended + Duration::from_secs(60));
+        pause();
+        // And one that comes once the tool has returned still adds to it.
+        answers(&client, CONVERSATION);
+        assert_eq!(gate.required(), Some(ORG | CONVERSATION));
+    }
+
+    #[test]
+    fn the_tools_return_is_timed_where_identifys_answer_is_decided() {
+        let (client, gate) = gated();
+        let before = Instant::now();
+        let ended = gate.close(Duration::from_secs(60));
+        assert!(ended >= before && ended <= Instant::now());
+        assert!(gate.returned(false, USER));
+        // With no time left after the tool, an answer that comes after it is late.
+        let gate = Gate::new(client.inner());
+        gate.close(Duration::ZERO);
+        pause();
+        assert!(!gate.returned(false, ORG));
+        assert_eq!(client.inner().identified().latest(), Some(USER));
+        // A wait too long to add to a time is still a wait.
+        let gate = Gate::new(client.inner());
+        gate.close(Duration::MAX);
+        assert!(gate.returned(false, ORG));
+    }
+
+    #[test]
+    fn a_call_another_wrapper_took_teaches_nothing_from_then_on() {
+        let (client, gate) = gated();
+        gate.revoke();
+        assert!(!gate.returned(false, ORG | USER));
+        assert_eq!(client.inner().identified().latest(), None);
+    }
+
+    #[test]
+    fn an_identify_that_never_started_failed_and_one_that_was_let_go_of_too() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (_client, gate) = gated();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        // No identify at all is no failure.
+        assert_eq!(
+            runtime
+                .block_on(identified(None, None, deadline))
+                .map(|_| ()),
+            Ok(())
+        );
+        // One that was to run and isn't there failed: its call is never sent as if it had none.
+        let lost = runtime.block_on(identified(None, Some(&gate), deadline));
+        assert_eq!(lost.map(|_| ()), Err("could not be started".to_owned()));
+        // A task that ends without an answer tells its gate as it goes.
+        let (_client, gate) = gated();
+        let gate = Arc::new(gate);
+        drop(Undecided(Some(gate.clone())));
+        gate.close(Duration::from_secs(60));
+        assert!(gate.state().failed.is_some() && gate.state().frozen.is_some());
+    }
+
+    #[test]
+    fn identifys_ids_are_checked_as_it_returns() {
+        let identity = Identity::new()
+            .org_id("org_1")
+            .user_id("")
+            .conversation_id("conv_42");
+        let identity = checked(identity).expect("valid IDs");
+        // An empty ID is none.
+        assert_eq!(identity.user_id, None);
+        assert_eq!(id_fields(&identity), ORG | CONVERSATION);
+        assert_eq!(id_fields(&Identity::new()), 0);
+        let invalid = checked(Identity::new().user_id("with\0nul")).map(|_| ());
+        assert_eq!(invalid, Err("returned an invalid user_id".to_owned()));
+    }
+
+    fn captured(ids: Value) -> Option<Map<String, Value>> {
+        ids.as_object().cloned()
+    }
+
+    #[test]
+    fn a_calls_ids_are_identifys_then_its_captures_and_its_turn_reference_theirs() {
+        let identity = || {
+            Ok(Some(
+                Identity::new()
+                    .org_id("org_identify")
+                    .user_id("user_identify"),
+            ))
+        };
+        let mut head = CallHead::default();
+        let said = who(
+            &mut head,
+            identity(),
+            captured(
+                serde_json::json!({ "userId": "user_capture", "orgId": "", "conversationId": "conv_42", "turnId": 7 }),
+            ),
+            None,
+        );
+        assert!(said.is_none());
+        assert_eq!(
+            head.ids,
+            Some(
+                serde_json::json!({ "orgId": "org_identify", "userId": "user_capture", "conversationId": "conv_42" })
+            )
+        );
+        // From the org in force, the capture's conversation, and its turn ID as the event keeps
+        // it: a number is its decimal text.
+        assert_eq!(
+            head.turn_ref,
+            Some(turn_key(Some("org_identify"), "conv_42", "7").into())
+        );
+        // Without a conversation of the capture's own, or with a turn ID the event drops, none.
+        for ids in [
+            serde_json::json!({ "turnId": "7" }),
+            serde_json::json!({ "conversationId": "conv_42" }),
+            serde_json::json!({ "conversationId": "conv_42", "turnId": 1.5 }),
+            serde_json::json!({ "conversationId": "conv_42", "turnId": "" }),
+            serde_json::json!({ "conversationId": "with\0nul", "turnId": "7" }),
+            serde_json::json!({ "conversationId": 42, "turnId": "7" }),
+            // An org that isn't valid drops the event: no reference is made from it.
+            serde_json::json!({ "orgId": 5, "conversationId": "conv_42", "turnId": "7" }),
+        ] {
+            let mut head = CallHead::default();
+            who(&mut head, identity(), captured(ids.clone()), None);
+            assert_eq!(head.turn_ref, None, "{ids}");
+        }
+        // No org at all is no org in the key.
+        let mut head = CallHead::default();
+        who(
+            &mut head,
+            Ok(None),
+            captured(serde_json::json!({ "conversationId": "conv_42", "turnId": "7" })),
+            None,
+        );
+        assert_eq!(head.turn_ref, Some(turn_key(None, "conv_42", "7").into()));
+        // What isn't a valid ID is kept for the event's own check, which drops it.
+        let mut head = CallHead::default();
+        who(
+            &mut head,
+            identity(),
+            captured(serde_json::json!({ "orgId": 5, "userId": null })),
+            None,
+        );
+        assert_eq!(
+            head.ids,
+            Some(serde_json::json!({ "orgId": 5, "userId": "user_identify" }))
+        );
+    }
+
+    #[test]
+    fn a_failed_identify_keeps_the_call_whole_only_with_a_capture_that_gives_what_is_needed() {
+        let (client, gate) = gated();
+        let failed = |gate: &Gate, ids: Option<Value>| {
+            let mut head = CallHead::default();
+            let said = who(
+                &mut head,
+                Err("failed".to_owned()),
+                ids.and_then(captured),
+                Some(gate),
+            )
+            .expect("a report");
+            assert_eq!(said.code, ErrorCode::IdentifyFailed);
+            (!head.diagnostics, said.message)
+        };
+        gate.fail();
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        // A userId before any answer.
+        assert_eq!(
+            failed(&gate, None),
+            (
+                false,
+                "identify failed; the call was sent as limited diagnostics.".to_owned()
+            )
+        );
+        assert!(!failed(&gate, Some(serde_json::json!({ "orgId": "org_1" }))).0);
+        assert!(!failed(&gate, Some(serde_json::json!({ "userId": "with\0nul" }))).0);
+        assert!(!failed(&gate, Some(serde_json::json!({ "userId": 5 }))).0);
+        assert!(!failed(&gate, Some(serde_json::json!({ "userId": "" }))).0);
+        assert_eq!(
+            failed(&gate, Some(serde_json::json!({ "userId": "user_8" }))),
+            (
+                true,
+                "identify failed; the call was sent with capture()'s IDs.".to_owned()
+            )
+        );
+        // Once identify answers without IDs, none is needed: a capture still is.
+        let gate = Gate::new(client.inner());
+        answers(&client, 0);
+        pause();
+        gate.fail();
+        let now = Instant::now();
+        gate.closed(now, now + Duration::from_secs(60));
+        assert!(!failed(&gate, None).0);
+        assert!(failed(&gate, Some(serde_json::json!({}))).0);
     }
 
     const TYPESCRIPT: &str = "import { readFileSync } from 'node:fs'
