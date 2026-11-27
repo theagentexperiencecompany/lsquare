@@ -290,6 +290,28 @@ pub(crate) fn stringify<T: Serialize + ?Sized>(value: &T) -> String {
 }
 
 /// A string's length in UTF-16 code units, which is how JavaScript measures one.
+/// Lets go of a value without recursion. `serde_json` drops one level inside the other: a value
+/// an app built deeper than its stack is, given to `capture()` to keep, would overflow it here.
+pub(crate) fn dispose(value: Value) {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        // Only what holds more is kept for later: a wide list of plain values takes no room
+        // here beyond its own.
+        let nested = |item: &Value| match item {
+            Value::Array(items) => !items.is_empty(),
+            Value::Object(entries) => !entries.is_empty(),
+            _ => false,
+        };
+        match value {
+            Value::Array(items) => pending.extend(items.into_iter().filter(nested)),
+            Value::Object(entries) => {
+                pending.extend(entries.into_iter().map(|(_, item)| item).filter(nested))
+            }
+            _ => {}
+        }
+    }
+}
+
 pub(crate) fn utf16_len(text: &str) -> usize {
     if text.is_ascii() {
         text.len()

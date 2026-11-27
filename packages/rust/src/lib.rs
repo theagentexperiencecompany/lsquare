@@ -27,9 +27,27 @@
 //! wrong is reported to [`Options::on_error`], or logged. With `LSQUARE_DRY_RUN=1` it sends
 //! nothing, and logs one line per event with its fields and size.
 //!
-//! This is a first beta: tool calls on `rmcp` servers only. `README.md` lists what the other SDKs
-//! do that this one doesn't yet.
-// Without the wrapper nothing records an event yet, so most of the crate has no caller.
+//! [`Client::capture`] records a turn of an agent your own code runs: as an event of its own, or,
+//! inside a tool of an instrumented server, as part of that call's event.
+//!
+//! ```no_run
+//! use lsquare::{ToolCall, Turn, Usage};
+//!
+//! # let lsquare = lsquare::Client::new(lsquare::Options::new());
+//! lsquare.capture(
+//!     Turn::new()
+//!         .conversation_id("conv_42")
+//!         .turn_id("7")
+//!         .user_id("user_8")
+//!         .question("Where is my order?")
+//!         .answer("It left the warehouse this morning.")
+//!         .tool_call(ToolCall::new("find_order").duration_ms(120))
+//!         .usage(Usage::new().input_tokens(812).output_tokens(64)),
+//! );
+//! ```
+//!
+//! This is a beta. `README.md` lists what the other SDKs do that this one doesn't yet.
+// Without the wrapper only `capture` records events, so what builds a call's has no caller.
 #![cfg_attr(not(feature = "rmcp"), allow(dead_code))]
 #![warn(missing_docs)]
 
@@ -44,9 +62,11 @@ mod normalize;
 mod redact;
 mod shape;
 mod time;
+mod turn;
 
 pub use client::{Client, Error, ErrorCode, Event, FlushResult, Level, Options, DEFAULT_ENDPOINT};
 pub use redact::patterns::Pattern;
+pub use turn::{ToolCall, Turn, TurnStatus, Usage};
 
 #[cfg(test)]
 mod cases_test;

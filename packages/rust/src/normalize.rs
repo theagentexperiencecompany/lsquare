@@ -3,6 +3,7 @@
 //! for JavaScript values.
 
 use serde_json::{Map, Number, Value};
+use sha2::{Digest, Sha256};
 
 use crate::json::{advance, js_entries, js_held, js_number, longer_than, stringify, utf16_len};
 use crate::redact::{Redactor, FREE_FORM, JSON_FIELD};
@@ -185,6 +186,33 @@ pub(crate) fn turn_id_value(value: Option<&Value>) -> Check<String> {
             }
         }
         Some(_) => Check::Dropped("wrong_type"),
+    }
+}
+
+/// A turn's key: `k/` and the SHA-256 of `[orgId, conversationId, turnId]` as JSON, the org null
+/// when there is none. The same for a turn whichever SDK sends it, and different for two orgs'
+/// turns.
+pub(crate) fn turn_key(org_id: Option<&str>, conversation_id: &str, turn_id: &str) -> String {
+    let org = org_id.map_or_else(|| "null".to_owned(), stringify);
+    let json = format!(
+        "[{org},{},{}]",
+        stringify(conversation_id),
+        stringify(turn_id)
+    );
+    let digest: String = Sha256::digest(json.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("k/{digest}")
+}
+
+/// A turn's event ID: its key with a conversation and a turnId, or else random.
+pub(crate) fn turn_event_id(ids: &Map<String, Value>, turn_id: Option<&str>) -> String {
+    match (ids.get("conversationId").and_then(Value::as_str), turn_id) {
+        (Some(conversation), Some(turn)) => {
+            turn_key(ids.get("orgId").and_then(Value::as_str), conversation, turn)
+        }
+        _ => uuid::Uuid::new_v4().to_string(),
     }
 }
 
@@ -719,6 +747,7 @@ fn usage_value(value: Option<&Value>, notes: &mut Notes, path: &str) -> Option<M
 }
 
 /// What metadata can be.
+#[derive(Debug)]
 pub(crate) enum Metadata {
     None,
     /// Past its budget: the event is dropped.

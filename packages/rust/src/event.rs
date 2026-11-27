@@ -261,6 +261,8 @@ pub(crate) struct ShapedCallData {
     /// The agent part's metadata, which the event's is merged with.
     agent_metadata: Option<Value>,
     agent_given: bool,
+    /// That metadata, and what was noted of it, when the agent part was read as it was captured.
+    early_metadata: Option<(Metadata, Notes)>,
 }
 
 impl ShapedCallData {
@@ -299,7 +301,97 @@ impl ShapedCallData {
         {
             bytes += weight(message);
         }
+        if let Some(agent) = &shaped.agent {
+            bytes += turn_weight(agent);
+        }
+        if let Some((Metadata::Some(metadata), _)) = &self.early_metadata {
+            bytes += metadata_weight(metadata);
+        }
         bytes
+    }
+}
+
+/// About what a turn's shaped fields hold in memory, in bytes.
+fn turn_weight(turn: &ShapedTurn) -> usize {
+    let mut bytes = 256;
+    for value in [
+        &turn.question,
+        &turn.answer,
+        &turn.latency,
+        &turn.verification,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bytes += weight(value);
+    }
+    if let Some(error) = &turn.error {
+        bytes += weight(&error.message) + error.kind.as_ref().map_or(0, String::len);
+    }
+    for call in turn.tool_calls.iter().flatten() {
+        bytes += 96 + call.name.len();
+        for value in [&call.input, &call.error_message].into_iter().flatten() {
+            bytes += weight(value);
+        }
+    }
+    for text in [&turn.turn_id, &turn.api_key_id, &turn.surface]
+        .into_iter()
+        .flatten()
+    {
+        bytes += text.len();
+    }
+    if let Some(Value::Object(client)) = &turn.client {
+        bytes += metadata_weight(client);
+    } else if let Some(Value::String(client)) = &turn.client {
+        bytes += client.len();
+    }
+    bytes
+}
+
+/// About what metadata holds in memory, in bytes.
+fn metadata_weight(metadata: &Map<String, Value>) -> usize {
+    metadata
+        .iter()
+        .map(|(key, value)| key.len() + 24 + value.as_str().map_or(0, str::len))
+        .sum()
+}
+
+/// A call's agent part, read as `capture()` was called inside the call: shaped as for the call's
+/// event, alone, so what the app does with its data afterwards changes nothing, and none of it is
+/// kept as it was given. What it read is charged to the call's scan budget in the agent's place.
+#[derive(Debug)]
+pub(crate) struct EarlyAgent {
+    body: ShapedTurn,
+    notes: Notes,
+    metadata: Metadata,
+    metadata_notes: Notes,
+    /// What reading it took of a scan budget of its own.
+    scanned: usize,
+}
+
+/// Reads a call's agent part from `capture()`'s fields.
+pub(crate) fn shape_agent(fields: &Map<String, Value>, context: &Context) -> EarlyAgent {
+    let redactor = Redactor::new(&context.patterns, &context.redact_keys);
+    let keys = redactor.key_names();
+    let mut state = ShapeState::new(keys.as_ref());
+    let mut notes = Notes::default();
+    let mut body = shape_turn_fields(
+        fields,
+        fields.get("turnId"),
+        &mut state,
+        &mut notes,
+        "agent.",
+    );
+    // As for a turn of its own: one without a status completed.
+    body.status.get_or_insert("completed");
+    let mut metadata_notes = Notes::default();
+    let metadata = metadata_value(fields.get("metadata"), &mut metadata_notes, METADATA_BUDGET);
+    EarlyAgent {
+        body,
+        notes,
+        metadata,
+        metadata_notes,
+        scanned: SCAN_BUDGET - state.remaining,
     }
 }
 
@@ -322,6 +414,8 @@ pub(crate) struct CallShaper {
     remaining: usize,
     /// What reading the intent took of the scan budget.
     intent_used: usize,
+    /// The agent part, read when `capture()` was called inside the call.
+    agent: Option<EarlyAgent>,
 }
 
 impl CallShaper {
@@ -336,7 +430,14 @@ impl CallShaper {
             keys,
             remaining: SCAN_BUDGET,
             intent_used: 0,
+            agent: None,
         }
+    }
+
+    /// The call's agent part, read already (`shape_agent`): put in its place by `finish`, between
+    /// the input and the result.
+    pub(crate) fn agent(&mut self, agent: EarlyAgent) {
+        self.agent = Some(agent);
     }
 
     /// Why the call was made, as the agent said it: read first, before anything else uses the
@@ -389,6 +490,7 @@ impl CallShaper {
             keys,
             remaining,
             intent_used,
+            agent,
         } = self;
         let mut notes = Notes::default();
         let error = data.error.and_then(Value::as_object);
@@ -419,8 +521,19 @@ impl CallShaper {
         }
         // The input's notes in their place: after the error's, before the result's.
         notes.merge(&input_notes);
+        let mut left = remaining.saturating_sub(used);
+        // The agent part in its place, with what it noted, and what it read charged here: with
+        // more left than it read, what is left for the result is what reading it now would
+        // leave. With less, the budget ran out there: it keeps what it read, the result none.
+        let mut early_metadata = None;
+        if let Some(agent) = agent {
+            shaped.agent = Some(agent.body);
+            notes.merge(&agent.notes);
+            left = left.saturating_sub(agent.scanned);
+            early_metadata = Some((agent.metadata, agent.metadata_notes));
+        }
         let mut state = ShapeState::new(keys.as_ref());
-        state.remaining = remaining.saturating_sub(used);
+        state.remaining = left;
         if let Some(result) = &data.result {
             shaped.result = shape_field(&mut state, &mut notes, "result", |state, notes| {
                 shape_result(result, state, notes, false)
@@ -460,7 +573,8 @@ impl CallShaper {
             redactor,
             category,
             agent_metadata: None,
-            agent_given: false,
+            agent_given: early_metadata.is_some(),
+            early_metadata,
         }
     }
 }
@@ -571,6 +685,7 @@ pub(crate) fn shape_call(data: &CallData, context: &Context) -> ShapedCallData {
         category,
         agent_metadata,
         agent_given,
+        early_metadata: None,
     }
 }
 
@@ -589,6 +704,7 @@ pub(crate) fn finish_call(
         category,
         agent_metadata,
         agent_given,
+        early_metadata,
     } = data;
     let (ids, invalid) = check_call(head);
     if !invalid.is_empty() {
@@ -601,10 +717,14 @@ pub(crate) fn finish_call(
     // Each is read within the budget, and the merged result must fit it too: a value one replaces
     // doesn't count. Oversized metadata drops the event, unless it's diagnostics, which leave it out.
     let identified = metadata_value(head.metadata.as_ref(), &mut notes, METADATA_BUDGET);
-    let captured = if agent_given {
-        metadata_value(agent_metadata.as_ref(), &mut notes, METADATA_BUDGET)
-    } else {
-        Metadata::None
+    let captured = match early_metadata {
+        // Read when it was captured: what was noted of it then comes here.
+        Some((metadata, early_notes)) => {
+            notes.merge(&early_notes);
+            metadata
+        }
+        None if agent_given => metadata_value(agent_metadata.as_ref(), &mut notes, METADATA_BUDGET),
+        None => Metadata::None,
     };
     let merged = match (identified, captured) {
         (Metadata::TooLarge, _) | (_, Metadata::TooLarge) => Metadata::TooLarge,
@@ -1712,5 +1832,90 @@ pub(crate) mod turn {
             redactor,
             true,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::json::stringify;
+
+    fn context() -> Context {
+        Context {
+            sdk: Value::Null,
+            patterns: Vec::new(),
+            redact_keys: Vec::new(),
+            max_event_bytes: 256 * 1024,
+        }
+    }
+
+    /// What a call holds while it waits for `identify`, with this agent part.
+    fn held(agent: Option<Value>) -> usize {
+        let context = context();
+        let mut shaper = CallShaper::new(&context);
+        if let Some(agent) = &agent {
+            shaper.agent(shape_agent(agent.as_object().expect("fields"), &context));
+        }
+        shaper.finish(&CallData::default()).held_bytes()
+    }
+
+    #[test]
+    fn a_call_waiting_for_identify_counts_what_its_agent_part_holds() {
+        let without = held(None);
+        let answer = "lorem ipsum ".repeat(1_000);
+        let with_answer = held(Some(serde_json::json!({ "answer": answer })));
+        assert!(with_answer >= without + 12_000, "{with_answer} {without}");
+        let tools = held(Some(serde_json::json!({
+            "toolCalls": [{ "name": "find_order", "input": { "note": answer }, "errorMessage": answer }],
+            "latency": { "note": answer },
+            "error": { "message": answer, "type": "Timeout" },
+        })));
+        assert!(tools >= without + 48_000, "{tools} {without}");
+        let metadata = held(Some(serde_json::json!({ "metadata": { "note": answer } })));
+        assert!(metadata >= without + 12_000, "{metadata} {without}");
+    }
+
+    #[test]
+    fn an_agent_part_read_early_is_charged_to_the_calls_budget_in_its_place() {
+        let context = context();
+        let result = serde_json::json!({ "content": [{ "type": "text", "text": "the result" }] });
+        let head = CallHead {
+            call_id: "call_1".into(),
+            tool_name: "ask".into(),
+            status: "completed".into(),
+            duration_ms: Value::from(1),
+            ..CallHead::default()
+        };
+        let events = |agent: &Value| {
+            let data = |agent| CallData {
+                result: Some(ResultIn::Json(&result)),
+                agent,
+                ..CallData::default()
+            };
+            let mut shaper = CallShaper::new(&context);
+            shaper.agent(shape_agent(agent.as_object().expect("fields"), &context));
+            let early = finish_call(shaper.finish(&data(None)), &head, &context, false)
+                .expect("an event")
+                .event;
+            let at_once = build_call(&data(Some(agent)), &head, &context, false)
+                .expect("an event")
+                .event;
+            (early, at_once)
+        };
+        // One that leaves the result its budget.
+        let (early, at_once) = events(&serde_json::json!({ "answer": "kept" }));
+        assert_eq!(early["agent"]["answer"], "kept");
+        assert_eq!(early["result"], result);
+        assert!(!early.contains_key("truncated"));
+        assert_eq!(stringify(&early), stringify(&at_once));
+        // One that reads more than a whole scan budget, in pieces each within a field's limit:
+        // it used the budget up, and the result gets none of it, as when all is read at once.
+        let wide: Map<String, Value> = (0..60)
+            .map(|index| (format!("k{index}"), Value::String("lorem ".repeat(5_000))))
+            .collect();
+        let (early, at_once) = events(&serde_json::json!({ "latency": wide }));
+        assert!(!early.contains_key("result"));
+        assert_eq!(early["truncated"], serde_json::json!(["agent", "result"]));
+        assert_eq!(stringify(&early), stringify(&at_once));
     }
 }

@@ -17,13 +17,13 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
 
 use crate::event::{
-    after_hook, build_call, finish_call, turn::build_turn, Built, CallData, CallHead, CallShaper,
-    Context, ResultIn,
+    after_hook, build_call, finish_call, shape_agent, turn::build_turn, Built, CallData, CallHead,
+    CallShaper, Context, ResultIn,
 };
 use crate::json::stringify;
+use crate::normalize::turn_event_id;
 use crate::redact::{resolve_keys, resolve_patterns};
 use crate::testing::{difference, expand, parse, text, to_value, Held, Js};
 
@@ -107,22 +107,6 @@ fn cases() -> Vec<Case> {
         }
     }
     all
-}
-
-/// A turn's event ID: its `k/` key with a conversation and a turnId, or else random.
-fn turn_event_id(ids: &Map<String, Value>, turn_id: Option<&str>) -> String {
-    match (ids.get("conversationId").and_then(Value::as_str), turn_id) {
-        (Some(conversation), Some(turn)) => {
-            let org = ids.get("orgId").map_or("null".to_owned(), stringify);
-            let json = format!("[{org},{},{}]", stringify(conversation), stringify(turn));
-            let digest: String = Sha256::digest(json.as_bytes())
-                .iter()
-                .map(|byte| format!("{byte:02x}"))
-                .collect();
-            format!("k/{digest}")
-        }
-        _ => uuid::Uuid::new_v4().to_string(),
-    }
 }
 
 /// What a case gave: its event, or why it was dropped.
@@ -214,7 +198,31 @@ pub(crate) fn build(case: &Js) -> Outcome {
             intent: call.get("intent"),
             agent: call.get("agent"),
         };
-        build_call(&data, &head, &context, hook.is_some())
+        if case.get("early").is_some() {
+            // As the wrapper reads a call: its arguments as it comes, the agent part when
+            // `capture()` is called inside it, the rest once the tool has answered.
+            let agent = call
+                .get("agent")
+                .and_then(Value::as_object)
+                .expect("an agent part to read early");
+            let mut shaper = CallShaper::new(&context);
+            if let Some(intent) = call.get("intent") {
+                shaper.intent(intent);
+            }
+            if let Some(input) = call.get("input") {
+                shaper.arguments(Some(input.as_object().expect("arguments")));
+            }
+            shaper.agent(shape_agent(agent, &context));
+            let rest = CallData {
+                input: None,
+                intent: None,
+                agent: None,
+                ..data
+            };
+            finish_call(shaper.finish(&rest), &head, &context, hook.is_some())
+        } else {
+            build_call(&data, &head, &context, hook.is_some())
+        }
     };
     let built = match (built, hook) {
         (Ok(draft), Some(hook)) => {
@@ -497,7 +505,7 @@ process.stdout.write(JSON.stringify(lines.map((line) => {
 pub(crate) const TYPESCRIPT: &str = r"
 import { readFileSync } from 'node:fs'
 const [src, file, sdk] = process.argv.slice(1)
-const { afterHook, buildCall, buildTurn } = await import(`${src}/event.ts`)
+const { afterHook, buildCall, buildTurn, capturedIds, readAgent } = await import(`${src}/event.ts`)
 const { resolveKeys, resolvePatterns } = await import(`${src}/redact.ts`)
 const CAPTURED_AT = '2026-10-28T00:00:00.000Z'
 function expand(value) {
@@ -519,6 +527,12 @@ const written = JSON.parse(readFileSync(file, 'utf8')).map((test) => {
     const { input, result, ...rest } = expand(test.call)
     const record = { callId: 'case-call', capturedAt: CAPTURED_AT, toolName: 'search_orders', status: 'completed', durationMs: 1, ids: {}, diagnostics: false, ...rest,
       ...(input === undefined ? {} : { input: { value: input } }), ...(result === undefined ? {} : { result: { value: result } }) }
+    // Read when capture() was called inside the call, as the client does it.
+    if (test.early) {
+      const captured = capturedIds(rest.agent)
+      readAgent(captured, rest.agent, context)
+      record.agent = captured
+    }
     built = buildCall(record, context, hook)
   }
   if (hook && built.ok) built = afterHook(structuredClone(built.draft.event), built.draft, context)
