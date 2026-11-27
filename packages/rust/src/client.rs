@@ -56,6 +56,11 @@ const ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
 /// How many reports can wait for `on_error` at once, as many as TypeScript holds callbacks: one
 /// past it is dropped.
 const MAX_WAITING_REPORTS: usize = 100;
+/// How many servers a client remembers tool names of, how many names for each, and how long a
+/// name it keeps.
+const MAX_HINTED_SERVERS: usize = 32;
+const MAX_TOOL_HINTS: usize = 8;
+const MAX_HINT_BYTES: usize = 256;
 /// How many of a server's tools a client warns of, each once.
 const MAX_WARNED_TOOLS: usize = 1_000;
 /// How long `flush` and `shutdown` wait, past their deadline, for `on_error` to be told of what
@@ -559,6 +564,11 @@ pub(crate) struct Inner {
     hooks: Arc<Semaphore>,
     /// How many `identify` hooks run now.
     pub(crate) identifying: std::sync::atomic::AtomicUsize,
+    /// Names of tools that handlers wrapped with this client were seen to define, newest first,
+    /// for each server by what it calls itself. Only names to ask about: a wrapper built for one
+    /// request asks its own handler whether it defines one of them, having seen no tool itself
+    /// (see `mcp.rs`).
+    tool_hints: Mutex<Vec<(String, Vec<String>)>>,
 }
 
 impl fmt::Debug for Inner {
@@ -961,6 +971,7 @@ impl Client {
             stop: Notify::new(),
             hooks: Arc::new(Semaphore::new(max_concurrent_hooks)),
             identifying: std::sync::atomic::AtomicUsize::new(0),
+            tool_hints: Mutex::new(Vec::new()),
         };
         let client = Client {
             inner: Arc::new(inner),
@@ -1353,6 +1364,47 @@ impl Inner {
     pub(crate) fn warn_once(self: &Arc<Self>, key: &str, line: &str) {
         self.lock().warn_once(key, line);
         self.after();
+    }
+
+    /// Remembers the name of a tool a server's handler defines: the newest first, a few for each
+    /// server, and a few servers. A name that is very long isn't kept.
+    pub(crate) fn hint_tool(&self, server: &str, name: &str) {
+        if name.len() > MAX_HINT_BYTES || server.len() > MAX_HINT_BYTES {
+            return;
+        }
+        let mut servers = self
+            .tool_hints
+            .lock()
+            .unwrap_or_else(|held| held.into_inner());
+        let at = match servers.iter().position(|(known, _)| known == server) {
+            Some(at) => at,
+            None => {
+                servers.insert(0, (server.to_owned(), Vec::new()));
+                servers.truncate(MAX_HINTED_SERVERS);
+                0
+            }
+        };
+        let names = &mut servers[at].1;
+        match names.iter().position(|known| known == name) {
+            Some(0) => {}
+            // One it knows comes first again, as it is.
+            Some(found) => names[..=found].rotate_right(1),
+            None => {
+                names.insert(0, name.to_owned());
+                names.truncate(MAX_TOOL_HINTS);
+            }
+        }
+    }
+
+    /// The names remembered for a server, newest first.
+    pub(crate) fn tool_hints(&self, server: &str) -> Vec<String> {
+        self.tool_hints
+            .lock()
+            .unwrap_or_else(|held| held.into_inner())
+            .iter()
+            .find(|(known, _)| known == server)
+            .map(|(_, names)| names.clone())
+            .unwrap_or_default()
     }
 
     /// The same for a warning about one of a server's tools: the first 1,000 of them.
@@ -2418,6 +2470,38 @@ impl Drop for Retry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_client_remembers_a_few_tool_names_newest_first() {
+        let client = Client::new(Options::new().dry_run(false));
+        let inner = client.inner();
+        assert!(inner.tool_hints("desk").is_empty());
+        for index in 0..20 {
+            inner.hint_tool("desk", &format!("t{index}"));
+        }
+        assert_eq!(
+            inner.tool_hints("desk"),
+            ["t19", "t18", "t17", "t16", "t15", "t14", "t13", "t12"]
+        );
+        // One it knows comes first again, once, and the others stay as they were.
+        inner.hint_tool("desk", "t15");
+        inner.hint_tool("desk", "t15");
+        assert_eq!(
+            inner.tool_hints("desk"),
+            ["t15", "t19", "t18", "t17", "t16", "t14", "t13", "t12"]
+        );
+        // Each server has its own, and a name too long to be a tool's isn't kept.
+        inner.hint_tool("other", "search");
+        inner.hint_tool("other", &"x".repeat(MAX_HINT_BYTES + 1));
+        assert_eq!(inner.tool_hints("other"), ["search"]);
+        assert_eq!(inner.tool_hints("desk").len(), MAX_TOOL_HINTS);
+        // Of the servers too, only so many are kept: the newest.
+        for index in 0..MAX_HINTED_SERVERS {
+            inner.hint_tool(&format!("server {index}"), "a");
+        }
+        assert!(inner.tool_hints("desk").is_empty() && inner.tool_hints("other").is_empty());
+        assert_eq!(inner.tool_hints("server 0"), ["a"]);
+    }
 
     #[test]
     fn the_endpoint_must_be_https_or_local() {

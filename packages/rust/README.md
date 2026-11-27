@@ -8,7 +8,8 @@ nothing else yet ([below](#not-yet-supported)). LSquare is an invite-only beta, 
 - One line per MCP server. Nothing the SDK does can make a tool call fail: it never panics, and
   the handler's answer, error or panic reaches the client as it would without it.
 - Two optional inputs on your tools, `session_id` and `intent`, say which calls belong to one task
-  and why each was made ([the extras](#the-extras)). `extras(false)` leaves your tools as they are.
+  and why each was made, and one more tool, `get_more_tools`, lets agents say what they needed and
+  found no tool for ([the extras](#the-extras)). `extras(false)` leaves your server as it is.
 - A tool's reply never waits on the network, and `flush()` waits up to 2 seconds by default.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
 - Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11 or 3.12. Rust 1.88 or
@@ -34,7 +35,7 @@ folder.
    The second is for a new project: a server on `rmcp` 3.11 or 3.12 already keeps the
    requirement it has. `lsquare` is a beta: its only version on crates.io is a pre-release, which
    `cargo add` picks while there is no stable one. A requirement written by hand needs the version in full, as
-   `cargo add` writes it (`lsquare = "0.2.0-beta.3"`): one such as `"0.2"` doesn't match a
+   `cargo add` writes it (`lsquare = "0.2.0-beta.4"`): one such as `"0.2"` doesn't match a
    pre-release.
 
 2. **Instrument the server:**
@@ -70,7 +71,7 @@ folder.
    and one for the call's event: its fields and size, never its content or IDs.
 
    ```
-   [lsquare dry-run] {"server":"weather","records":"every tools/call","extras":{"on":["session_id","intent"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name"}}
+   [lsquare dry-run] {"server":"weather","records":"every tools/call","extras":{"on":["session_id","intent","get_more_tools"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name","get_more_tools":"listed and answered while the handler's get_tool gives a definition for a tool of its own and none of that name, and inputs are recorded for it"}}
    [lsquare dry-run] {"kind":"tool_call","eventId":"the call","fields":["callId","durationMs","input","protocolVersion","result","server","sessionId","sessionSource","status","toolDescription","toolName"],"bytes":646}
    ```
 
@@ -118,6 +119,7 @@ calls on its way is an event of its own. Each `tools/call` becomes one `tool_cal
 | `client`, `protocolVersion`, `server` | The calling app as it named itself, the protocol version, and your server's name and version. A client that gave no name has none: `rmcp` fills in its own name for a request that came without one, which is left out |
 | `orgId`, `userId`, `conversationId`, `metadata` | What `identify` returns |
 | `sessionId`, `sessionSource`, `intent` | The task the call belongs to, where its ID came from (`sent`, `issued` or `protocol`), and why the agent made the call: [the extras](#the-extras) |
+| `extra` | `missing_tools` on a call to the wrapper's own [`get_more_tools`](#get_more_tools-what-agents-looked-for), which has no `toolDescription` |
 | `task`, `round` | A task the call created, and whether the call asked for input or brought it |
 
 ### `instrument()` options
@@ -140,12 +142,13 @@ let options = InstrumentOptions::new()
 | `results`, `results_for` | everywhere | Record results, the same way |
 | `descriptions`, `descriptions_for` | everywhere | Record each call's tool description, the same way |
 | `instructions` | on | Record the server's instructions on each call. `instructions(false)` turns it off |
-| `extras`, `sessions`, `intent` | on | [The extras](#the-extras): `extras(false)` turns both off, `sessions(false)` or `intent(false)` one of them |
+| `extras`, `sessions`, `intent`, `missing_tools` | on | [The extras](#the-extras): `extras(false)` turns all three off, `sessions(false)`, `intent(false)` or `missing_tools(false)` one of them |
 
 ### The extras
 
-Unless you turn them off, `instrument()` adds two optional inputs to your tools, as the TypeScript
-and Python SDKs do ([what agents do with them](../lsquare/README.md#what-agents-do-with-them)):
+Unless you turn them off, `instrument()` adds two optional inputs to your tools and one tool to
+your server, as the TypeScript and Python SDKs do
+([what agents do with them](../lsquare/README.md#what-agents-do-with-them)):
 
 - **`session_id`** groups a task's calls. An agent sends the task's ID on every call after the
   first. A call that comes without one is given a new ID, `ses_` and 22 characters, in a text block
@@ -155,6 +158,8 @@ and Python SDKs do ([what agents do with them](../lsquare/README.md#what-agents-
   is your tool's own, without that block.
 - **`intent`** asks the agent why it calls the tool, in one sentence. It is the event's `intent`,
   cut at 500 characters and redacted like any other text, whether or not arguments are recorded.
+- **`get_more_tools`** is a tool agents call when none of yours fits what they need, with a
+  required `need`: [below](#get_more_tools-what-agents-looked-for).
 
 `list_tools` shows the inputs, and `call_tool` takes them out of a call before your handler sees
 it, so a tool that refuses inputs it doesn't know (`#[serde(deny_unknown_fields)]`) is called as
@@ -191,6 +196,27 @@ results; an ID the agent sends still comes first. A server that keeps no session
 (`with_legacy_session_mode(false)`, as in the quickstart) serves each request on a connection of
 its own, so its calls are given IDs in their results.
 
+#### `get_more_tools`: what agents looked for
+
+Listed after your own tools, it is described to agents as: "Call this when none of the available
+tools fits what you need, or one fits only in part. It doesn't return new tools: it tells the
+server's developers what to add." It is marked as read-only, since nothing on your server changes,
+and as reaching outside the server, since what the agent writes leaves it. The wrapper answers it
+itself ("Noted. No other tools are available right now."), your handler never sees the call, and
+the call is recorded like any other, as a `tool_call` event with `extra: "missing_tools"` and the
+`need` in its `input`. A call without a `need` that is a string is refused with an error result.
+
+It is there while all of this holds, and otherwise your server is listed and called as it is:
+
+- Your handler's `get_tool` gives a definition for a tool of its own, and none for a tool named
+  `get_more_tools`: a server that has one keeps it, and the log says so.
+- The `inputs` option records its arguments. With `inputs(false)`, or an `inputs_for` that says no
+  for it, the tool isn't offered, since the request wouldn't be recorded; the log says so.
+- The client hasn't been shut down.
+
+It goes on the last page of a paged list, when that page lists a tool your handler defines.
+Clients that cap the number of tools across servers count it.
+
 **Unlike the TypeScript and Python SDKs:**
 
 - A call that ends in an error result (`isError`) is given no new ID: `rmcp` answers some calls
@@ -201,11 +227,19 @@ its own, so its calls are given IDs in their results.
   would read the ID.
 - Over HTTP with sessions, the session is the connection the wrapper serves, not the
   `Mcp-Session-Id`: a session that `rmcp` restores on another server instance is a new one.
-- `get_more_tools` [isn't there yet](#not-yet-supported).
+- A tool named `get_more_tools` that your server has but has disabled (`disable_route`), or that
+  your handler's `get_tool` gives no definition for, can't be seen: the wrapper lists and answers
+  its own in that tool's place. `missing_tools(false)` leaves the name to you.
+- A server built anew for each request answers `get_more_tools` once its client has seen a tool
+  your handler defines, in a listing or a call: until then, in a process that has just started, a
+  call to it goes to your handler, which doesn't know the tool. The wrapper never lists your tools
+  itself to find out. It remembers a few tool names for each server, by the name and version the
+  server gives itself, so two different servers on one client should be named differently.
 
-**Upgrading from 0.2.0-beta.1:** the extras are on by default, so your tools are listed with two
-more optional inputs, and some results end with one more text block. `extras(false)` keeps
-everything as it was.
+**Upgrading:** from 0.2.0-beta.1, the inputs are on by default, so your tools are listed with two
+more optional inputs, and some results end with one more text block; `extras(false)` keeps
+everything as it was then. From 0.2.0-beta.2 or beta.3, your server is listed with one more tool,
+`get_more_tools`; `missing_tools(false)` keeps it as it was, with the two inputs.
 
 ## What leaves your process
 
@@ -270,8 +304,6 @@ the limit resets, and checks every 15 minutes whether it was raised.
 
 This beta is the client and the `rmcp` wrapper. Compared with the TypeScript and Python SDKs:
 
-- **`get_more_tools`**, the tool agents call when none fits. The other two
-  [extras](#the-extras), `session_id` and `intent`, are here.
 - **`capture()` and `turn` events:** agent turns, inside a tool call or outside MCP.
 - **Other Rust MCP libraries.** Only `rmcp`, and only 3.11 and 3.12: `lsquare` forwards each
   method of rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that

@@ -1,4 +1,5 @@
-//! The extras' inputs: `session_id` and `intent`, which the wrapper adds to every tool it can.
+//! The extras: the `session_id` and `intent` inputs, which the wrapper adds to every tool it can,
+//! and `get_more_tools`, the tool it adds and answers itself.
 //! A port of the JSON Schema half of `packages/lsquare/src/mcp/extras.ts`: in Rust a tool's
 //! schema is all there is to read of it, as for a low-level server in TypeScript.
 //!
@@ -13,6 +14,17 @@ pub(crate) const INTENT: &str = "intent";
 /// How each input is described to the agent: TypeScript's words, which a test compares.
 pub(crate) const SESSION_DESCRIPTION: &str = "The ID of the task this call belongs to. Leave it out on your first call. On every later call for the same task, send the ID an earlier result gave you, and pass it to any subagent working on that task.";
 pub(crate) const INTENT_DESCRIPTION: &str = "In one sentence, why you're calling this tool and what the user is trying to do. No personal data or secrets.";
+
+/// The tool the wrapper adds, for an agent to say what it needed and couldn't do.
+pub(crate) const MISSING_TOOLS: &str = "get_more_tools";
+const NEED: &str = "need";
+/// How the tool and its input are described to the agent, and what it is answered: TypeScript's
+/// words, which a test compares.
+pub(crate) const MISSING_TOOLS_DESCRIPTION: &str = "Call this when none of the available tools fits what you need, or one fits only in part. It doesn't return new tools: it tells the server's developers what to add.";
+const NEED_DESCRIPTION: &str =
+    "What you needed to do and couldn't, in one or two sentences. No personal data or secrets.";
+const NOTED: &str = "Noted. No other tools are available right now.";
+const NO_NEED: &str = "Invalid arguments for tool get_more_tools: need is required, as a string saying what you needed to do and couldn't.";
 
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 const ID_LENGTH: usize = 22;
@@ -59,6 +71,36 @@ pub(crate) fn new_session_id() -> String {
 /// What the text block at the end of a result says, to give the agent its task's ID.
 pub(crate) fn id_block(id: &str) -> String {
     format!("Task ID: {id}. Send it as session_id on later calls for this task, and pass it to any subagent working on it.")
+}
+
+/// `get_more_tools`' input schema as it is listed: a required `need`, and `session_id` when
+/// sessions are on.
+pub(crate) fn missing_tools_schema(sessions: bool) -> Map<String, Value> {
+    let input = |text: &str| {
+        let mut input = Map::new();
+        input.insert("type".into(), "string".into());
+        input.insert("description".into(), text.into());
+        Value::Object(input)
+    };
+    let mut properties = Map::new();
+    properties.insert(NEED.into(), input(NEED_DESCRIPTION));
+    if sessions {
+        properties.insert(SESSION_ID.into(), input(SESSION_DESCRIPTION));
+    }
+    let mut schema = Map::new();
+    schema.insert("type".into(), "object".into());
+    schema.insert("properties".into(), Value::Object(properties));
+    schema.insert("required".into(), Value::Array(vec![NEED.into()]));
+    schema
+}
+
+/// The wrapper's reply to a call of `get_more_tools`: its text, and whether it is an error, which
+/// it is without a `need` that is a string, as the MCP SDKs refuse arguments.
+pub(crate) fn missing_tools_reply(arguments: Option<&Map<String, Value>>) -> (&'static str, bool) {
+    match arguments.and_then(|arguments| arguments.get(NEED)) {
+        Some(Value::String(_)) => (NOTED, false),
+        _ => (NO_NEED, true),
+    }
 }
 
 /// What a tool's listed input schema says of the extras' inputs.
@@ -329,6 +371,11 @@ mod tests {
             format!("'{SESSION_DESCRIPTION}'"),
             format!("\"{INTENT_DESCRIPTION}\""),
             format!("text: `{}`", id_block("${id}")),
+            format!("export const MISSING_TOOLS = '{MISSING_TOOLS}'"),
+            format!("\"{MISSING_TOOLS_DESCRIPTION}\""),
+            format!("const NEED_DESCRIPTION = \"{NEED_DESCRIPTION}\""),
+            format!("const REPLY = \"{NOTED}\""),
+            format!("const NO_NEED = \"{NO_NEED}\""),
             format!("export const SESSION_FORMAT = /^ses_[A-Za-z0-9_-]{{{ID_LENGTH}}}$/"),
             format!("const ALPHABET = '{alphabet}'"),
             format!("randomBytes({ID_LENGTH})"),

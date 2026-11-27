@@ -622,7 +622,7 @@ async fn dry_run_sends_nothing_and_says_what_it_would_send() {
     let lines = seen.lines();
     assert_eq!(
         lines[0],
-        r#"[lsquare dry-run] {"server":"test-server","records":"every tools/call","extras":{"on":["session_id","intent"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name"}}"#
+        r#"[lsquare dry-run] {"server":"test-server","records":"every tools/call","extras":{"on":["session_id","intent","get_more_tools"],"for":"tools the handler's get_tool gives a definition for, whose input schema is an object of named properties without an input of that name","get_more_tools":"listed and answered while the handler's get_tool gives a definition for a tool of its own and none of that name, and inputs are recorded for it"}}"#
     );
     let summary: Value =
         serde_json::from_str(lines[1].strip_prefix("[lsquare dry-run] ").unwrap()).unwrap();
