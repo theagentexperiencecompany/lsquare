@@ -3,6 +3,7 @@
 //! `packages/lsquare/src/client.ts`.
 
 use std::cell::Cell;
+use std::sync::atomic::AtomicBool;
 
 use super::*;
 use crate::event::{shape_agent, turn::build_turn, EarlyAgent};
@@ -111,7 +112,17 @@ pub(crate) struct CallScope {
     /// The call this one was made inside of, if any: another client's, say, whose own captures
     /// in here are still that call's.
     outer: Option<Arc<CallScope>>,
+    /// The turns captured inside the call that are still on their way: a reply that waits for
+    /// the call's event waits for them too.
+    turns: Mutex<Vec<Followed>>,
+    /// `flush()` was called inside the call: its reply waits for its event.
+    flushed: AtomicBool,
 }
+
+/// How many of a call's turns its reply waits for at once: one captured while that many are
+/// still on their way is sent as usual, only not waited for. A tool that runs long and captures
+/// many turns while the ingestion is slow holds no more than this.
+const MAX_CALL_TURNS: usize = 100;
 
 impl CallScope {
     /// A call that starts on this task, inside whatever call the task is handling already.
@@ -121,6 +132,40 @@ impl CallScope {
             call_id,
             slot: Mutex::new(Slot::Open),
             outer: CALL.try_with(Arc::clone).ok(),
+            turns: Mutex::new(Vec::new()),
+            flushed: AtomicBool::new(false),
+        }
+    }
+
+    fn turns(&self) -> MutexGuard<'_, Vec<Followed>> {
+        self.turns.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A turn captured inside the call is on its way.
+    fn follow(&self, turn: Followed) {
+        let mut turns = self.turns();
+        turns.retain(|turn| !turn.ended());
+        if turns.len() < MAX_CALL_TURNS {
+            turns.push(turn);
+        }
+    }
+
+    /// What a reply that waits for the call's event waits for besides it: the turns captured
+    /// inside the call still on their way, and whether `flush()` was called inside it. Taken
+    /// once, as the call ends or a wrapper further in takes it over.
+    pub(crate) fn followed(&self) -> (Vec<Followed>, bool) {
+        let mut turns = std::mem::take(&mut *self.turns());
+        turns.retain(|turn| !turn.ended());
+        (turns, self.flushed.swap(false, Ordering::AcqRel))
+    }
+
+    /// Takes those over from the scope of a wrapper further out, of the same client.
+    pub(crate) fn follow_on(&self, (turns, flushed): (Vec<Followed>, bool)) {
+        for turn in turns {
+            self.follow(turn);
+        }
+        if flushed {
+            self.flushed.store(true, Ordering::Release);
         }
     }
 
@@ -192,6 +237,16 @@ fn current_call(client: &Arc<Inner>) -> Option<Arc<CallScope>> {
         scope = candidate.outer.clone();
     }
     None
+}
+
+/// `flush()` is called inside a tool, on the call's own client and task: the call's reply waits
+/// for the call's event, whatever the wrapper's options.
+pub(super) fn flushing(client: &Arc<Inner>) {
+    if depth() == 0 {
+        if let Some(call) = current_call(client) {
+            call.flushed.store(true, Ordering::Release);
+        }
+    }
 }
 
 /// What the wrapper reads of a `capture()` inside the call: the IDs that group the call and make
@@ -268,7 +323,8 @@ impl Inner {
         }
         // Inside a call on an instrumented server, from the app's own code: the first capture
         // before the tool returns is the call's agent part; any other is a turn linked to it.
-        if let Some(call) = current_call(self).filter(|_| depth == 0) {
+        let call = current_call(self).filter(|_| depth == 0);
+        if let Some(call) = &call {
             if call.claim() {
                 // Read now, as any capture's data is: what the app gave is let go of as this
                 // returns, and the call keeps what was read of it.
@@ -286,17 +342,23 @@ impl Inner {
                 fields.insert("callId".into(), call.call_id.clone().into());
             }
         }
-        self.capture_turn(input, depth);
+        let on_its_way = self.capture_turn(input, depth);
+        // Before the tool returns, its sending is the call's too: a reply that waits for the
+        // call's event waits for it.
+        if let (Some(call), Some(turn)) = (&call, on_its_way) {
+            call.follow(turn);
+        }
     }
 
     /// A turn of its own: built here and now, then queued, or handed to `before_send` first.
-    fn capture_turn(self: &Arc<Self>, input: &Value, depth: u8) {
+    /// Returns it while it is still on its way.
+    fn capture_turn(self: &Arc<Self>, input: &Value, depth: u8) -> Option<Followed> {
         let captured_at = iso(now_ms());
         // The hook's time counts from here, whenever a runtime gets to start it.
         let deadline = by(self.before_send_timeout);
         let admitted = {
             let mut state = self.lock();
-            Self::admission(&mut state, true)
+            self.admission(&mut state, true)
         };
         // Its place as the daily limit's check, if it was given it, is given back wherever this
         // ends before the event is registered with it.
@@ -305,9 +367,7 @@ impl Inner {
             check,
         });
         self.after();
-        let Some(claim) = &mut claim else {
-            return;
-        };
+        let claim = claim.as_mut()?;
         let hook = self.before_send.clone();
         // Never sent unredacted: a failure here drops the event.
         let built = catch_unwind(AssertUnwindSafe(|| {
@@ -332,10 +392,11 @@ impl Inner {
         };
         let draft = match built {
             Err(_) => {
-                return refused(Error::new(
+                refused(Error::new(
                     ErrorCode::RedactionFailed,
                     "Building the event failed; it was dropped, never sent unredacted.",
-                ))
+                ));
+                return None;
             }
             Ok(Err(refusal)) => {
                 let (code, message) = match refusal.code {
@@ -345,7 +406,8 @@ impl Inner {
                 };
                 let mut error = Error::new(code, message);
                 error.paths = refusal.paths;
-                return refused(error);
+                refused(error);
+                return None;
             }
             Ok(Ok(draft)) => draft,
         };
@@ -370,11 +432,11 @@ impl Inner {
             }
         };
         self.after();
-        let Some(building) = building else {
-            return;
-        };
+        let building = building?;
+        let on_its_way = building.followed();
         let Some(hook) = hook else {
-            return self.conclude(building, Ok(Some(draft)), None);
+            self.conclude(building, Ok(Some(draft)), None);
+            return Some(on_its_way).filter(|turn| !turn.ended());
         };
         match self.runtime() {
             Some(runtime) => {
@@ -399,6 +461,7 @@ impl Inner {
                 None,
             ),
         }
+        Some(on_its_way).filter(|turn| !turn.ended())
     }
 }
 
@@ -552,6 +615,66 @@ mod tests {
             Value::Object(captured_ids(odd.as_object().unwrap())),
             serde_json::json!({ "orgId": false, "userId": null })
         );
+    }
+
+    /// An event still on its way.
+    fn on_its_way() -> Followed {
+        Followed(Arc::new(Tracker {
+            event_id: String::new(),
+            outcome: AtomicU8::new(0),
+            retry_at: Mutex::new(None),
+        }))
+    }
+
+    #[test]
+    fn a_call_follows_a_bounded_number_of_its_turns_at_once() {
+        let lsquare = client();
+        let call = scope(&lsquare);
+        let turns: Vec<Followed> = (0..MAX_CALL_TURNS + 20).map(|_| on_its_way()).collect();
+        for turn in &turns {
+            call.follow(turn.clone());
+        }
+        // Those past the bound are sent as usual, only not waited for. As the ones before them
+        // end, there is room again.
+        for turn in &turns[..30] {
+            turn.0.end(SENT);
+        }
+        call.follow(on_its_way());
+        let (followed, flushed) = call.followed();
+        assert_eq!(followed.len(), MAX_CALL_TURNS - 30 + 1);
+        assert!(followed.iter().all(|turn| !turn.ended()) && !flushed);
+        // Taken once: the reply that waits for them has them.
+        assert!(call.followed().0.is_empty());
+        // A wrapper that takes the call over follows them on, within the same bound.
+        let inner = scope(&lsquare);
+        inner.follow_on((turns[30..].to_vec(), true));
+        for _ in 0..30 {
+            inner.follow(on_its_way());
+        }
+        let (followed, flushed) = inner.followed();
+        assert_eq!(turns[30..].len(), 90);
+        assert_eq!(followed.len(), MAX_CALL_TURNS);
+        assert!(flushed);
+    }
+
+    #[test]
+    fn a_flush_marks_the_call_it_is_called_inside_of_and_no_other() {
+        let (lsquare, other) = (client(), client());
+        let call = scope(&lsquare);
+        CALL.sync_scope(call.clone(), || {
+            // Another client's flush, and one from a callback, ask nothing of this call.
+            flushing(other.inner());
+            in_hook(0);
+            flushing(lsquare.inner());
+            let _ = CALLBACK_DEPTH.try_with(|own| own.set(0));
+        });
+        assert!(!call.followed().1);
+        CALL.sync_scope(call.clone(), || flushing(lsquare.inner()));
+        assert!(call.followed().1);
+        // Once the call is over, there is no call to mark.
+        call.close();
+        CALL.sync_scope(call.clone(), || flushing(lsquare.inner()));
+        assert!(!call.followed().1);
     }
 
     /// Captures as it is dropped: what a tool's own guard does when its call is let go.
