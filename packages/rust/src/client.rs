@@ -31,9 +31,17 @@ use crate::time::{iso, next_midnight, now_ms, parse_iso};
 mod capture;
 mod identified;
 
+tokio::task_local! {
+    /// Set by the wrapper around `identify`. A `flush()` from inside it doesn't wait for the
+    /// events of calls still being built: its own call's is one of them, and waits for it.
+    pub(crate) static IDENTIFYING: ();
+}
+
 // The wrapper's side of both.
 #[cfg(feature = "rmcp")]
 pub(crate) use capture::{CallScope, Captured, CALL};
+#[cfg(feature = "rmcp")]
+pub(crate) type Left = (Vec<Followed>, bool);
 pub(crate) use identified::Identified;
 #[cfg(feature = "rmcp")]
 pub(crate) use identified::{both, CONVERSATION, ORG, USER};
@@ -517,11 +525,24 @@ struct Holdback {
     next_check: Instant,
     /// The check, once it is queued.
     check: Option<u64>,
-    /// A call was taken as the check, and its event is still being built.
-    checking: bool,
+    /// An event was taken as the check, and is still being built.
+    checking: Option<Checking>,
     dropped: u64,
     id: u64,
 }
+
+/// An event taken as a daily limit's check and not yet queued: by a token of its own, and since
+/// when. One that hasn't come in `check_patience` (its task sits on a runtime nobody runs) gives
+/// its place up to the next event; when it does come, it finds its token no longer the check's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Checking {
+    token: u64,
+    since: Instant,
+}
+
+/// How long past `before_send`'s own time an event taken as the check may still be on its way,
+/// `identify`'s second included.
+const CHECK_GRACE: Duration = Duration::from_secs(60);
 
 #[derive(Default)]
 struct State {
@@ -1037,6 +1058,11 @@ impl Client {
     /// pending when it returns are reported to `on_error`. It also waits, within the same time,
     /// until `on_error` was told of whatever failed before, and up to a second more for what it
     /// reports itself. Never fails.
+    ///
+    /// Inside a tool on a server instrumented with this client, the call's own event isn't one
+    /// of those: it doesn't exist until the tool returns. A flush there sends what else is
+    /// queued, and makes the tool's reply wait for the call's event in its turn, up to the
+    /// flush timeout (see `InstrumentOptions::flush_before_reply`).
     pub async fn flush(&self) -> FlushResult {
         self.flush_within(self.inner.flush_timeout).await
     }
@@ -1047,8 +1073,27 @@ impl Client {
         if inner.mode == Mode::Disabled {
             return FlushResult::default();
         }
-        let targets = inner.lock().trackers();
-        inner.wait_for(&targets, Instant::now() + timeout).await;
+        // Inside a tool on a server instrumented with this client, the call's own event isn't
+        // one of these: it is registered once the tool returns. The call's reply waits for it
+        // instead (see `mcp.rs`). Only counting marks nothing.
+        if !timeout.is_zero() {
+            capture::flushing(inner);
+        }
+        let targets = {
+            let state = inner.lock();
+            // From `identify`, not the events of calls still being built: its own call's is one
+            // of them, and waits for it.
+            if IDENTIFYING.try_with(|()| ()).is_ok() {
+                state
+                    .entries
+                    .values()
+                    .map(|entry| entry.tracker.clone())
+                    .collect()
+            } else {
+                state.trackers()
+            }
+        };
+        inner.wait_for(&targets, by(timeout), true).await;
         let mut result = FlushResult::default();
         let mut built = None;
         let mut reported = false;
@@ -1083,7 +1128,7 @@ impl Client {
         }
         if reported {
             inner.after();
-            inner.wait_for(&[], Instant::now() + REPORT_GRACE).await;
+            inner.wait_for(&[], by(REPORT_GRACE), true).await;
         }
         result
     }
@@ -1105,11 +1150,11 @@ impl Client {
             inner.lock().closed = true;
             return FlushResult::default();
         }
-        let deadline = Instant::now() + timeout;
+        let deadline = by(timeout);
         let mut targets = inner.lock().trackers();
         // Calls whose events are still being built get the chance to be queued first.
         let building = inner.lock().building.clone();
-        inner.wait_for(&building, deadline).await;
+        inner.wait_for(&building, deadline, true).await;
         {
             let mut state = inner.lock();
             state.closed = true;
@@ -1135,7 +1180,7 @@ impl Client {
             }
         }
         inner.after();
-        inner.wait_for(&targets, deadline).await;
+        inner.wait_for(&targets, deadline, true).await;
         {
             let mut state = inner.lock();
             let left: Vec<u64> = state.entries.keys().copied().collect();
@@ -1155,7 +1200,7 @@ impl Client {
         inner.after();
         // Told of what was dropped before this returns, if the handler takes no longer than that.
         inner
-            .wait_for(&[], deadline.max(Instant::now() + REPORT_GRACE))
+            .wait_for(&[], deadline.max(by(REPORT_GRACE)), true)
             .await;
         let mut result = FlushResult::default();
         for tracker in &targets {
@@ -1338,10 +1383,27 @@ pub(crate) struct Building {
     inner: Arc<Inner>,
     tracker: Arc<Tracker>,
     reserved: usize,
-    /// It checks whether a daily limit still holds: that limit's hold-back, by its ID.
+    /// It checks whether a daily limit still holds: by its claim's token (see `Checking`).
     check: Option<u64>,
     /// Its event was built, and queued or ended: its end is no longer this one's to give.
     done: bool,
+}
+
+/// An event on its way, to wait for: all that a reply waiting for it holds of it.
+#[derive(Clone)]
+pub(crate) struct Followed(Arc<Tracker>);
+
+impl Followed {
+    /// It was sent, or dropped.
+    pub(crate) fn ended(&self) -> bool {
+        self.0.outcome() != 0
+    }
+}
+
+impl Building {
+    pub(crate) fn followed(&self) -> Followed {
+        Followed(self.tracker.clone())
+    }
 }
 
 impl Drop for Building {
@@ -1354,11 +1416,7 @@ impl Drop for Building {
             state.bytes = state.bytes.saturating_sub(self.reserved);
             state.reserved = state.reserved.saturating_sub(self.reserved);
             // The check it was to be never went: the next call can be.
-            if let (Some(id), Some(holdback)) = (self.check, &mut state.holdback) {
-                if holdback.id == id {
-                    holdback.checking = false;
-                }
-            }
+            Inner::release_check(&mut state, self.check);
             // Let go before its event was built (its task's runtime ended, or there was none):
             // the event is dropped, and that is said. Not when shutdown ended it: it said so.
             if !self.done && state.end(&self.tracker, FAILED) {
@@ -1389,6 +1447,34 @@ impl Inner {
 
     pub(crate) fn identified(&self) -> &Identified {
         &self.identified
+    }
+
+    pub(crate) fn flush_timeout(&self) -> Duration {
+        self.flush_timeout
+    }
+
+    /// Waits until each of `followed` has ended (sent, or dropped), or until `deadline`. One
+    /// whose next attempt is due after the deadline isn't waited for: it can't end in time.
+    pub(crate) async fn settled(self: &Arc<Self>, followed: &[Followed], deadline: Instant) {
+        let targets: Vec<Arc<Tracker>> = followed.iter().map(|one| one.0.clone()).collect();
+        self.wait_for(&targets, deadline, false).await;
+    }
+
+    /// The same, to hand to a host that keeps a request alive for it: it owns what it needs, and
+    /// settles once `on_error` was told of what was reported meanwhile too, since the host may
+    /// stop the process then.
+    pub(crate) fn sending(
+        self: &Arc<Self>,
+        followed: Vec<Followed>,
+        deadline: Instant,
+    ) -> impl std::future::Future<Output = ()> + Send + 'static {
+        let inner = self.clone();
+        async move {
+            inner.settled(&followed, deadline).await;
+            inner
+                .wait_for(&[], deadline.max(by(REPORT_GRACE)), true)
+                .await;
+        }
     }
 
     pub(crate) fn enabled(&self) -> bool {
@@ -1581,7 +1667,7 @@ impl Inner {
         }
         let building = {
             let mut state = self.lock();
-            match Self::admission(&mut state, false) {
+            match self.admission(&mut state, false) {
                 None => None,
                 Some(check) => self.register(&mut state, call_id, estimate, check),
             }
@@ -1592,25 +1678,30 @@ impl Inner {
 
     /// Whether an event recorded now is taken at all: not after shutdown, which is said once,
     /// nor while a daily limit holds, unless it is the one that checks whether the limit still
-    /// does: then that limit's hold-back, by its ID, which the event keeps until it is queued
-    /// (`register`), or gives back (`release_check`). `turn`: it comes from `capture()`.
-    fn admission(state: &mut State, turn: bool) -> Option<Option<u64>> {
+    /// does: then its claim's token, which the event keeps until it is queued (`register`), or
+    /// gives back (`release_check`). `turn`: it comes from `capture()`.
+    fn admission(&self, state: &mut State, turn: bool) -> Option<Option<u64>> {
         if state.closed {
             Self::refuse_closed(state, turn);
             return None;
         }
-        match Self::held_back(state) {
+        let patience = self.before_send_timeout.saturating_add(CHECK_GRACE);
+        match Self::held_back(state, patience) {
             Admission::Drop => None,
             Admission::Send => Some(None),
-            Admission::Check(holdback) => Some(Some(holdback)),
+            Admission::Check(token) => Some(Some(token)),
         }
     }
 
-    /// The check an event was to be never went: the next one can be.
+    /// The check an event was to be never went: the next one can be. Only while the claim is
+    /// still this event's: one that gave its place up frees nobody else's.
     fn release_check(state: &mut State, check: Option<u64>) {
-        if let (Some(id), Some(holdback)) = (check, &mut state.holdback) {
-            if holdback.id == id {
-                holdback.checking = false;
+        if let (Some(token), Some(holdback)) = (check, &mut state.holdback) {
+            if holdback
+                .checking
+                .is_some_and(|checking| checking.token == token)
+            {
+                holdback.checking = None;
             }
         }
     }
@@ -1675,7 +1766,7 @@ impl Inner {
     }
 
     /// Whether a call recorded while a daily limit holds goes ahead, becomes the check, or is dropped and counted.
-    fn held_back(state: &mut State) -> Admission {
+    fn held_back(state: &mut State, patience: Duration) -> Admission {
         let Some(holdback) = &mut state.holdback else {
             return Admission::Send;
         };
@@ -1683,21 +1774,28 @@ impl Inner {
             Self::end_holdback(state);
             return Admission::Send;
         }
-        let due = Instant::now() >= holdback.next_check;
+        let now = Instant::now();
+        let due = now >= holdback.next_check;
         if let (Some(check), true) = (holdback.check, due) {
             // Unanswered for a whole interval: dropped and counted, and this event checks instead.
             holdback.check = None;
             holdback.dropped += 1;
             state.finish(check, FAILED, None);
         }
+        state.tokens += 1;
+        let token = state.tokens;
         let Some(holdback) = &mut state.holdback else {
             return Admission::Send;
         };
-        if holdback.check.is_none() && !holdback.checking && due {
+        // An event taken as the check that still hasn't come gives its place up.
+        let free = holdback
+            .checking
+            .is_none_or(|checking| now.saturating_duration_since(checking.since) >= patience);
+        if holdback.check.is_none() && free && due {
             // The next check's time is set once this one is queued: one that never is leaves the
             // next call to be the check.
-            holdback.checking = true;
-            return Admission::Check(holdback.id);
+            holdback.checking = Some(Checking { token, since: now });
+            return Admission::Check(token);
         }
         holdback.dropped += 1;
         Admission::Drop
@@ -1738,7 +1836,7 @@ impl Inner {
             until,
             next_check: Instant::now() + QUOTA_PROBE,
             check: None,
-            checking: false,
+            checking: None,
             dropped: 0,
             id: state.tokens,
         });
@@ -1971,6 +2069,28 @@ impl Inner {
             state.end(&tracker, FAILED);
             return;
         }
+        // A limit that has reset holds nothing back any more, whoever finds out first.
+        if state
+            .holdback
+            .as_ref()
+            .is_some_and(|holdback| now_ms() >= holdback.until)
+        {
+            Self::end_holdback(&mut state);
+        }
+        // Taken as a daily limit's check, and no longer it: its limit gave way to another, or it
+        // gave its place up. While a limit holds, it is then an event like any other, dropped
+        // and counted: here, before it can take the room of the event that is the check.
+        if let (Some(token), Some(holdback)) = (building.check, &mut state.holdback) {
+            let still = holdback
+                .checking
+                .is_some_and(|checking| checking.token == token);
+            if !still {
+                building.check = None;
+                holdback.dropped += 1;
+                state.end(&tracker, FAILED);
+                return;
+            }
+        }
         if !state.make_room(json.len(), self.max_queue_events, self.max_queue_bytes) {
             state.report(
                 Error::new(
@@ -1999,12 +2119,15 @@ impl Inner {
             },
         );
         state.queued.push_back(seq);
-        // It is the check of the limit it was taken for, if that one still holds: one that
-        // outlived it is an event like any other, of whatever holds now.
-        if let (Some(id), Some(holdback)) = (building.check.take(), &mut state.holdback) {
-            if holdback.id == id {
+        // It is the check it was taken as, its claim still being the limit's (one whose limit
+        // has ended since is an event like any other).
+        if let (Some(token), Some(holdback)) = (building.check.take(), &mut state.holdback) {
+            if holdback
+                .checking
+                .is_some_and(|checking| checking.token == token)
+            {
                 holdback.check = Some(seq);
-                holdback.checking = false;
+                holdback.checking = None;
                 holdback.next_check = Instant::now() + QUOTA_PROBE;
             }
         }
@@ -2404,7 +2527,12 @@ impl Inner {
     /// far, within the same time. What is ready is sent from here, at first and each time
     /// something changes: an event another runtime gave back as it ended has only this one to send
     /// it.
-    async fn wait_for(self: &Arc<Self>, targets: &[Arc<Tracker>], deadline: Instant) {
+    async fn wait_for(
+        self: &Arc<Self>,
+        targets: &[Arc<Tracker>],
+        deadline: Instant,
+        reports: bool,
+    ) {
         loop {
             let notified = self.changed.notified();
             tokio::pin!(notified);
@@ -2421,7 +2549,7 @@ impl Inner {
                         .lock()
                         .unwrap_or_else(PoisonError::into_inner)
                         .is_some_and(|retry_at| retry_at > deadline)
-            }) || self.lock().reporting.undelivered();
+            }) || (reports && self.lock().reporting.undelivered());
             if !waiting || Instant::now() >= deadline {
                 return;
             }
@@ -2747,52 +2875,159 @@ mod tests {
             until: now_ms() + 3_600_000,
             next_check,
             check: None,
-            checking: false,
+            checking: None,
             dropped: 0,
             id,
         };
+        let another = Some(Checking {
+            token: u64::MAX,
+            since: Instant::now(),
+        });
+        let checking = || inner.lock().holdback.as_ref().and_then(|now| now.checking);
         // A check is due, and the next call is taken as it.
         inner.lock().holdback = Some(holdback(1, Instant::now()));
         let mut check = inner.admit("call-1", 10).expect("the call is taken");
-        assert_eq!(check.check, Some(1));
-        assert!(inner
-            .lock()
-            .holdback
-            .as_ref()
-            .is_some_and(|now| now.checking));
+        assert_eq!(checking().map(|claim| claim.token), check.check);
+        assert!(check.check.is_some());
+        // Until it is queued, no other event is.
+        assert!(inner.admit("call-other", 10).is_none());
         // While its event is built, that limit ends and another begins, with a check of its own
         // on its way.
         let later = Instant::now() + QUOTA_PROBE;
         inner.lock().holdback = Some(Holdback {
-            checking: true,
+            checking: another,
             ..holdback(2, later)
         });
         let mut event = Map::new();
         event.insert("eventId".into(), "call-1".into());
         inner.enqueue(&mut check, Event(event));
         drop(check);
-        // The old check is an event like any other now: the new limit's check, and its time, are
-        // as they were.
+        // The old check is an event like any other now, dropped and counted while a limit holds:
+        // the new limit's check, and its time, are as they were.
         let state = inner.lock();
         let now = state.holdback.as_ref().expect("the second limit holds");
-        assert_eq!((now.id, now.check, now.checking), (2, None, true));
+        assert_eq!((now.id, now.check, now.checking), (2, None, another));
         assert_eq!(now.next_check, later);
-        assert_eq!(state.queued.len(), 1);
+        assert_eq!((state.queued.len(), now.dropped), (0, 1));
         drop(state);
 
         // One let go before its event was built doesn't free the next limit's check either.
         inner.lock().holdback = Some(holdback(3, Instant::now()));
         let unbuilt = inner.admit("call-2", 10).expect("the call is taken");
-        assert_eq!(unbuilt.check, Some(3));
+        assert!(unbuilt.check.is_some());
         inner.lock().holdback = Some(Holdback {
-            checking: true,
+            checking: another,
             ..holdback(4, later)
         });
         drop(unbuilt);
-        assert!(inner
-            .lock()
-            .holdback
-            .as_ref()
-            .is_some_and(|now| now.checking));
+        assert_eq!(checking(), another);
+    }
+
+    #[test]
+    fn a_check_whose_limit_has_reset_by_the_time_it_comes_is_sent_like_any_other() {
+        let client = Client::new(
+            Options::new()
+                .api_key("lsq_test_key".to_owned())
+                .endpoint("http://127.0.0.1:9")
+                .dry_run(false)
+                .logger(|_, _| {}),
+        );
+        let inner = client.inner();
+        inner.lock().holdback = Some(Holdback {
+            until: now_ms() + 3_600_000,
+            next_check: Instant::now(),
+            check: None,
+            checking: None,
+            dropped: 0,
+            id: 1,
+        });
+        let mut stale = inner.admit("stale", 10).expect("the call is taken");
+        assert!(stale.check.is_some());
+        // Another event took its place as the check, and then the limit reset, which nothing
+        // has noticed yet.
+        {
+            let mut state = inner.lock();
+            let limit = state.holdback.as_mut().expect("the limit holds");
+            limit.checking = Some(Checking {
+                token: u64::MAX,
+                since: Instant::now(),
+            });
+            limit.until = now_ms() - 1;
+        }
+        let mut event = Map::new();
+        event.insert("eventId".into(), "stale".into());
+        inner.enqueue(&mut stale, Event(event));
+        drop(stale);
+        let state = inner.lock();
+        assert!(state.holdback.is_none());
+        assert_eq!(state.queued.len(), 1);
+    }
+
+    #[test]
+    fn an_event_taken_as_the_check_that_never_comes_gives_its_place_up() {
+        let client = Client::new(
+            Options::new()
+                .api_key("lsq_test_key".to_owned())
+                .endpoint("http://127.0.0.1:9")
+                .dry_run(false)
+                .before_send_timeout(Duration::from_secs(5))
+                .logger(|_, _| {}),
+        );
+        let inner = client.inner();
+        let checking = || inner.lock().holdback.as_ref().and_then(|now| now.checking);
+        let started = Instant::now();
+        inner.lock().holdback = Some(Holdback {
+            until: now_ms() + 3_600_000,
+            next_check: started,
+            check: None,
+            checking: None,
+            dropped: 0,
+            id: 1,
+        });
+        // Taken as the check, and parked: its task sits on a runtime nobody runs.
+        let mut parked = inner.admit("parked", 10).expect("the call is taken");
+        let first = checking().expect("a claim");
+        assert_eq!(parked.check, Some(first.token));
+        // Within the hook's time and a minute more, it may still be on its way.
+        let age = |by: Duration| {
+            if let Some(Checking { since, .. }) = &mut inner
+                .lock()
+                .holdback
+                .as_mut()
+                .and_then(|now| now.checking.as_mut())
+            {
+                *since = started - by;
+            }
+        };
+        age(Duration::from_secs(64));
+        assert!(inner.admit("too soon", 10).is_none());
+        assert_eq!(checking().map(|claim| claim.token), Some(first.token));
+        // Past that, the next event is the check in its place.
+        age(Duration::from_secs(66));
+        let mut next = inner.admit("next", 10).expect("the call is taken");
+        let second = checking().expect("a claim");
+        assert_ne!(second.token, first.token);
+        assert_eq!(next.check, Some(second.token));
+        // The parked one comes at last: an event like any other, dropped while the limit
+        // holds, which neither is the check, nor frees the one that took its place, nor takes
+        // any room in the queue.
+        let mut event = Map::new();
+        event.insert("eventId".into(), "parked".into());
+        inner.enqueue(&mut parked, Event(event));
+        drop(parked);
+        assert_eq!(checking(), Some(second));
+        assert_eq!(
+            inner.lock().holdback.as_ref().and_then(|now| now.check),
+            None
+        );
+        assert!(inner.lock().queued.is_empty());
+        // And the one that took it is the check once it is queued.
+        let mut event = Map::new();
+        event.insert("eventId".into(), "next".into());
+        inner.enqueue(&mut next, Event(event));
+        drop(next);
+        let state = inner.lock();
+        let now = state.holdback.as_ref().expect("the limit holds");
+        assert!(now.check.is_some() && now.checking.is_none());
     }
 }

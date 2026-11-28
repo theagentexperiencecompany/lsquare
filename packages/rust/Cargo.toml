@@ -1,6 +1,6 @@
 [package]
 name = "lsquare"
-version = "0.2.0-beta.5"
+version = "0.2.0-beta.6"
 edition = "2021"
 rust-version = "1.88"
 description = "Record every tool call of your MCP server in LSquare"
@@ -63,6 +63,10 @@ required-features = ["rmcp"]
 
 [[test]]
 name = "capture_in_call"
+required-features = ["rmcp"]
+
+[[test]]
+name = "reply"
 required-features = ["rmcp"]
 
 [package.metadata.docs.rs]

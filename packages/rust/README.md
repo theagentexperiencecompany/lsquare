@@ -11,8 +11,9 @@ so [request access](https://lsquare.io) to get an API key.
 - Two optional inputs on your tools, `session_id` and `intent`, say which calls belong to one task
   and why each was made, and one more tool, `get_more_tools`, lets agents say what they needed and
   found no tool for ([the extras](#the-extras)). `extras(false)` leaves your server as it is.
-- A tool's reply never waits on the network, nor does `capture()`, and `flush()` waits up to 2
-  seconds by default.
+- A tool's reply never waits on the network unless you ask it to
+  ([hosts that stop after the reply](#hosts-that-stop-after-the-reply)), nor does `capture()`, and
+  `flush()` waits up to 2 seconds by default.
 - Common private data is redacted, and long values shortened, before anything leaves your process.
 - Tokio, with timers and IO as `#[tokio::main]` enables them, and `rmcp` 3.11 or 3.12. Rust 1.88 or
   later.
@@ -37,7 +38,7 @@ folder.
    The second is for a new project: a server on `rmcp` 3.11 or 3.12 already keeps the
    requirement it has. `lsquare` is a beta: its only version on crates.io is a pre-release, which
    `cargo add` picks while there is no stable one. A requirement written by hand needs the version in full, as
-   `cargo add` writes it (`lsquare = "0.2.0-beta.5"`): one such as `"0.2"` doesn't match a
+   `cargo add` writes it (`lsquare = "0.2.0-beta.6"`): one such as `"0.2"` doesn't match a
    pre-release.
 
 2. **Instrument the server:**
@@ -107,8 +108,9 @@ wherever the handler went: `.serve(transport)`, or the factory of a `StreamableH
 records `call_tool`, reads the descriptions `list_tools` gives, adds [the extras](#the-extras) to
 both, and passes every other method on to your handler unchanged. A handler instrumented twice,
 one wrapper inside the other, is recorded once, by the inner one and with its options, which
-decide the extras too, also after that one's client was shut down; another tool your handler
-calls on its way is an event of its own. Each `tools/call` becomes one `tool_call` event:
+decide the extras too, also after that one's client was shut down (where the outer one passes
+the call on from a task of its own, each records it); another tool your handler calls on its
+way is an event of its own. Each `tools/call` becomes one `tool_call` event:
 
 | Field | What it holds |
 | --- | --- |
@@ -146,6 +148,8 @@ let options = InstrumentOptions::new()
 | `descriptions`, `descriptions_for` | everywhere | Record each call's tool description, the same way |
 | `instructions` | on | Record the server's instructions on each call. `instructions(false)` turns it off |
 | `extras`, `sessions`, `intent`, `missing_tools` | on | [The extras](#the-extras): `extras(false)` turns all three off, `sessions(false)`, `intent(false)` or `missing_tools(false)` one of them |
+| `flush_before_reply` | off | Each reply waits for its call's event to be sent, up to the client's `flush_timeout`: for [hosts that stop after the reply](#hosts-that-stop-after-the-reply) |
+| `wait_until` | none | Each call's sending is handed to the host instead, which keeps the request alive for it; the reply doesn't wait |
 
 ### The extras
 
@@ -244,6 +248,55 @@ more optional inputs, and some results end with one more text block; `extras(fal
 everything as it was then. From 0.2.0-beta.2 or beta.3, your server is listed with one more tool,
 `get_more_tools`; `missing_tools(false)` keeps it as it was, with the two inputs.
 
+## Hosts that stop after the reply
+
+By default a call's event is sent in the background, after the reply. On a host that stops your
+process, or its CPU, once a request is answered (AWS Lambda, Cloud Run without always-on CPU, a
+serverless function), an event still on its way then is lost. Two options keep it:
+
+```rust
+let server = instrument(Weather, &lsquare, InstrumentOptions::new().flush_before_reply(true));
+```
+
+- **`flush_before_reply(true)`:** each reply waits, from the moment the tool returns and for at
+  most the client's `flush_timeout` (2 seconds by default), until the call's event was built and
+  then sent or dropped, and so were the turns [captured inside the call](#inside-a-tool) before
+  the tool returned (100 of them at most at once). `identify` gets that long too, its second at
+  most. The reply goes at the deadline whatever is left, or as soon as the request is cancelled;
+  what is left is still sent if the process lives on. The tool's error, or its panic, waits the
+  same way and then goes on as it was. A `flush_timeout` of zero waits for nothing, and leaves
+  `identify` its second. Every call then takes as long as sending its event, usually one short
+  request, longer: keep the timeout under what your callers and proxies allow a tool. The
+  deadline is counted on your runtime: code of yours that blocks its thread, such as an
+  `identify` that blocks on a runtime of one thread, holds the reply as it holds everything else.
+  Of two wrappers one inside the other, the inner one's option decides and the outer one's reply
+  is what waits, so a handler between the two has the tool's answer as soon as the tool gave it.
+- **`wait_until(...)`:** for a host that keeps a request alive for work it is handed, as
+  Vercel's `wait_until` does. Your function is called once per call, as the tool returns, with a
+  future that settles once the call's event and its turns were sent or dropped, 30 seconds
+  later at most, and `on_error` was told of what failed, for which it has up to a second more;
+  hand that future to the host. The reply doesn't wait. The event is built and sent on the
+  runtime your server runs on, which must keep running while the host waits: the future only
+  watches. The options are those of one `instrument()` call, so where a server is made for each
+  request, give each one that request's own `wait_until`:
+
+  ```rust
+  let options = InstrumentOptions::new().wait_until(move |sending| state.wait_until(sending));
+  ```
+
+  With both options set, `wait_until` is used and `flush_before_reply` ignored, which is logged
+  once. Your function runs on the tool's path: it should only hand the future on. If it panics,
+  the call goes on as if it hadn't been asked.
+- **`lsquare.flush().await` inside a tool** makes that tool's own reply wait as
+  `flush_before_reply` does, whatever the options: it sends what else is queued, without waiting
+  on the call's own event, which the reply then waits for, up to the same deadline. That holds
+  on the task your handler runs on, and for a `flush_within` that waits at all: one with a zero
+  timeout only counts. With `wait_until` set as well, the reply waits no longer than the host
+  was asked to.
+
+A reply never waits for `on_error` or the logger; what a host was handed (`wait_until`) does. A
+server that stays up between requests needs none of this.
+
 ## Agent turns: `capture()`
 
 When your own code runs an agent, `capture()` records one of its turns: what it was asked and
@@ -293,7 +346,8 @@ to the call's own event:
   `conversation_id` given there that isn't valid drops the call's event (`invalid_id`), as it
   would anywhere; a `turn_id` that can't be kept is left out.
 - **Any other capture is a `turn` event of its own, linked to the call** by `callId`, unless you
-  give one with `Turn::call_id`.
+  give one with `Turn::call_id`. A reply that [waits for its call's event](#hosts-that-stop-after-the-reply)
+  waits for the ones captured before the tool returned too.
 - **A conversation given this way groups the call**, so the call gets no session from
   [the extras](#the-extras), unless the agent sent one.
 - **"Inside" is the task your handler runs on**, from the moment rmcp calls `call_tool` until its
@@ -340,7 +394,6 @@ to the call's own event:
 - `flush()` counts the events still on their way as it is called. A turn already logged in dry
   run, or dropped as it was captured, isn't among them; TypeScript's `flush()` counts it when it
   is called at once.
-- A reply never waits for the call's event or its turns: see [below](#not-yet-supported).
 
 ## What leaves your process
 
@@ -384,7 +437,7 @@ written as JavaScript writes them; one too large for a double is then sent as `n
 | `api_key` | none | The project's key. Without it, outside dry run, the client is disabled |
 | `endpoint` | `LSQUARE_ENDPOINT`, then `https://ingest.lsquare.io` | The ingestion service. `https`, or `http` for localhost |
 | `dry_run` | `LSQUARE_DRY_RUN=1` | Runs everything, sends nothing, and logs one line per event |
-| `flush_timeout` | 2 s | How long `flush()` waits. `shutdown()` waits 5 s, or this when longer. Both give `on_error` up to a second more for what they report themselves |
+| `flush_timeout` | 2 s | How long `flush()` waits. `shutdown()` waits 5 s, or this when longer. Both give `on_error` up to a second more for what they report themselves. Also how long a reply waits for its call's event, with [`flush_before_reply`](#hosts-that-stop-after-the-reply) or a `flush()` inside the tool |
 | `before_send` | none | Gets every event before the patterns run; returns it, changed or not, or `None` to drop it. Runs on a thread of its own, never on the tool's path nor on your runtime |
 | `before_send_timeout` | the flush timeout | An event whose hook returns later is dropped (`hook_timeout`) |
 | `max_concurrent_hooks` | 16 | `before_send` hooks, and `identify` hooks, running at once |
@@ -403,12 +456,13 @@ the limit resets, and checks every 15 minutes whether it was raised.
 
 ## Not yet supported
 
-This beta is the client, `capture()` and the `rmcp` wrapper. Compared with the TypeScript and
-Python SDKs:
+This beta is the client, `capture()` and the `rmcp` wrapper, with a reply that can wait for its
+event. Compared with the TypeScript and Python SDKs:
 
-- **A reply that waits for its call's event**, and for the turns captured inside the call:
-  `flushBeforeReply`, `waitUntil`, and `flush()` inside a tool, for hosts that stop a process once
-  it has replied.
+- **A warning on hosts known to stop after the reply.** TypeScript logs one on AWS Lambda, Cloud
+  Run, Vercel and Cloudflare Workers when neither `waitUntil` nor `flushBeforeReply` is set. Here
+  nothing is logged: an environment variable doesn't tell a Cloud Run service whose CPU is always
+  on from one that isn't. Set [`flush_before_reply`](#hosts-that-stop-after-the-reply) yourself.
 - **Other Rust MCP libraries.** Only `rmcp`, and only 3.11 and 3.12: `lsquare` forwards each
   method of rmcp's `ServerHandler` by hand, so it accepts no later rmcp until a release that
   forwards what that one adds. A test compares the two lists, and CI runs the tests with each end
@@ -417,6 +471,15 @@ Python SDKs:
   `identify` must still be `Send`, and its tests don't run that way.
 - **Calls `rmcp` refuses before your handler** (a malformed request, a missing header) aren't
   recorded: the wrapper sees what reaches `call_tool`.
+
+Two more differences in how a reply waits:
+
+- **An event whose next try is due after the reply's deadline doesn't hold the reply.** After a
+  429 with `Retry-After: 30` and two seconds to wait, the reply goes at once; TypeScript's waits
+  its two seconds. The event is still retried if the process lives on.
+- **`flush()` from `identify`** doesn't wait for events still being built, on the client it is
+  called on: calls waiting for their `identify`, its own call's among them, which waits for it,
+  and events still with `before_send`.
 
 ## Licence
 

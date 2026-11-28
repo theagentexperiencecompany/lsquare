@@ -64,8 +64,8 @@ use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 use crate::client::{
-    both, CallScope, Captured, Client, Error, ErrorCode, Inner, Level, CALL, CONVERSATION, ORG,
-    USER,
+    both, CallScope, Captured, Client, Error, ErrorCode, Followed, Inner, Left, Level, CALL,
+    CONVERSATION, IDENTIFYING, ORG, USER,
 };
 use crate::event::{BlockIn, CallData, CallHead, CallShaper, ResourceIn, ResultIn, TypedResult};
 use crate::extras::{
@@ -80,6 +80,14 @@ use crate::time::{iso, now_ms};
 
 /// How long a call's event waits for `identify` after the tool returns.
 const IDENTIFY_WAIT: Duration = Duration::from_millis(1_000);
+/// How long a host that was handed a call's sending (`wait_until`) is asked to stay for it.
+const WAIT_UNTIL: Duration = Duration::from_millis(30_000);
+
+/// `wait` after `from`: a wait too long to add to a time is a long one.
+fn after(from: Instant, wait: Duration) -> Instant {
+    from.checked_add(wait)
+        .unwrap_or_else(|| from + Duration::from_secs(365 * 24 * 60 * 60))
+}
 /// How many listed tools' descriptions an instance keeps.
 const MAX_LISTED: usize = 10_000;
 
@@ -186,6 +194,10 @@ impl IdentifyInput {
 type IdentifyFuture = Pin<Box<dyn Future<Output = Result<Identity, IdentifyError>> + Send>>;
 type Identify = Arc<dyn Fn(IdentifyInput) -> IdentifyFuture + Send + Sync>;
 type PerTool = Arc<dyn Fn(&str) -> bool + Send + Sync>;
+/// A call's sending, as it is handed to the host: it settles once the call's event, and the
+/// turns captured inside the call, were sent or dropped, and `on_error` was told.
+type Sending = Pin<Box<dyn Future<Output = ()> + Send>>;
+type WaitUntil = Arc<dyn Fn(Sending) + Send + Sync>;
 
 /// Everywhere, nowhere, or for the tools a function answers true for.
 #[derive(Clone)]
@@ -216,6 +228,8 @@ pub struct InstrumentOptions {
     sessions: bool,
     intent: bool,
     missing_tools: bool,
+    flush_before_reply: bool,
+    wait_until: Option<WaitUntil>,
 }
 
 impl Default for InstrumentOptions {
@@ -229,6 +243,8 @@ impl Default for InstrumentOptions {
             sessions: true,
             intent: true,
             missing_tools: true,
+            flush_before_reply: false,
+            wait_until: None,
         }
     }
 }
@@ -362,6 +378,40 @@ impl InstrumentOptions {
         self.missing_tools = add;
         self
     }
+
+    /// Make each reply wait for its call's event, or not (the default): for a host that stops
+    /// your process, or its CPU, once a request is answered, where an event still on its way
+    /// when the reply goes is lost.
+    ///
+    /// The reply then waits, from the moment the tool returns and for at most the client's
+    /// [`flush_timeout`](crate::Options::flush_timeout) (2 seconds by default), until the call's
+    /// event was sent or dropped, and so were the turns captured inside the call before the tool
+    /// returned. `identify` gets that long too, its second at most. A flush timeout of zero waits
+    /// for nothing. A tool makes its own reply wait this way, whatever this option, by calling
+    /// [`Client::flush`] inside it.
+    pub fn flush_before_reply(mut self, wait: bool) -> InstrumentOptions {
+        self.flush_before_reply = wait;
+        self
+    }
+
+    /// Hand each call's sending to the host instead: for a host that keeps a request alive for
+    /// work it is given, such as Vercel's `wait_until`. The function is called once per call, as
+    /// the tool returns, with a future that settles once the call's event, and the turns
+    /// captured inside the call before the tool returned, were sent or dropped, 30 seconds later
+    /// at most, and `on_error` was told of what failed, for which it has up to a second more.
+    /// The reply doesn't wait for it. The events are built and sent on the runtime the server
+    /// runs on, which must keep running meanwhile; the host's executor only waits.
+    ///
+    /// The options are those of one `instrument()` call, so on a server built for each request,
+    /// give it that request's own `wait_until`. With this set, `flush_before_reply` is ignored,
+    /// which is said once. The function runs on the tool's path: it must only hand the future on.
+    pub fn wait_until<F>(mut self, wait_until: F) -> InstrumentOptions
+    where
+        F: Fn(Pin<Box<dyn Future<Output = ()> + Send>>) + Send + Sync + 'static,
+    {
+        self.wait_until = Some(Arc::new(wait_until));
+        self
+    }
 }
 
 struct Shared {
@@ -483,6 +533,9 @@ pub fn instrument<H: ServerHandler>(
     } else {
         (None, None)
     };
+    if inner.enabled() && options.wait_until.is_some() && options.flush_before_reply {
+        inner.warn_once("flush-ignored", "[lsquare] Both wait_until and flush_before_reply are set: wait_until is used, and flush_before_reply ignored.");
+    }
     if inner.dry_run() {
         let name = server
             .as_ref()
@@ -556,7 +609,13 @@ struct Taken {
     scope: Arc<CallScope>,
     /// Where this wrapper's `identify` is decided: revoked as a wrapper further in takes the call.
     gate: Option<Arc<Gate>>,
+    /// What a wrapper further in, which recorded the call, leaves this one's reply to wait
+    /// for: the reply is this wrapper's to hold, once whatever sits between the two has run.
+    waits: Mutex<Vec<Waits>>,
 }
+
+/// What a reply waits for: on which client, which events, and until when.
+type Waits = (Arc<Inner>, Vec<Followed>, Instant);
 
 /// What a wrapper further in takes over of a call from the one that had it.
 struct Handed {
@@ -566,11 +625,25 @@ struct Handed {
     call_id: Option<String>,
     /// What was captured as its agent part so far, on this wrapper's own client.
     captured: Option<Result<Box<Captured>, ()>>,
+    /// The turns captured so far on that client that are still on their way, and whether
+    /// `flush()` was called: the reply waits for them as if the call had always been this one's.
+    left: Left,
+    /// The wrapper it is taken over from, whose reply it is.
+    outer: Arc<Taken>,
 }
 
 impl Taken {
     fn further_in(&self) -> bool {
         self.further_in.load(Ordering::Acquire)
+    }
+
+    /// A wrapper further in leaves this one's reply something to wait for. What was left
+    /// before and has ended since is let go of: a handler that passes a call on many times
+    /// holds no more than is still on its way.
+    fn wait_for(&self, waits: Waits) {
+        let mut waiting = self.waits.lock().unwrap_or_else(PoisonError::into_inner);
+        waiting.retain(|(_, followed, _)| followed.iter().any(|event| !event.ended()));
+        waiting.push(waits);
     }
 }
 
@@ -714,6 +787,8 @@ struct Unanswered<'a, H: ServerHandler> {
     wrapper: &'a Instrumented<H>,
     call: Option<Call>,
     taken: Arc<Taken>,
+    /// The wrapper further out the call was taken over from, whose reply it is.
+    outer: Option<Arc<Taken>>,
 }
 
 impl<H: ServerHandler> Drop for Unanswered<'_, H> {
@@ -721,8 +796,15 @@ impl<H: ServerHandler> Drop for Unanswered<'_, H> {
         if let Some(call) = self.call.take() {
             if self.taken.further_in() {
                 call.superseded();
-            } else {
-                let _ = catch_unwind(AssertUnwindSafe(|| self.wrapper.finish(call, None)));
+            } else if let Ok(finished) =
+                catch_unwind(AssertUnwindSafe(|| self.wrapper.finish(call, None)))
+            {
+                // Nothing waits here: there is no reply of this wrapper's. One further out
+                // still has its own to give (what sat between the two gave this call up, a
+                // timeout say), and waits for this event with it.
+                if let (Some(outer), Some((followed, by))) = (&self.outer, finished.reply) {
+                    outer.wait_for((self.wrapper.shared.client.clone(), followed, by));
+                }
             }
         }
     }
@@ -807,14 +889,12 @@ impl Gate {
     /// The tool returned, now: `identify` has `wait` more. Returns when that was, taken here,
     /// where its answer is decided: one that returned before it met no deadline, and one that
     /// returns after it has this one to meet, however long the tool's own thread then takes.
-    fn close(&self, wait: Duration) -> Instant {
+    fn close(&self, wait: Duration) -> (Instant, Instant) {
         let mut state = self.state();
         let ended = self.client.identified().now();
-        let deadline = ended
-            .checked_add(wait)
-            .unwrap_or_else(|| ended + IDENTIFY_WAIT);
+        let deadline = after(ended, wait);
         Self::close_at(self, &mut state, ended, deadline);
-        ended
+        (ended, deadline)
     }
 
     fn close_at(&self, state: &mut GateState, ended: Instant, deadline: Instant) {
@@ -1511,12 +1591,16 @@ impl<H: ServerHandler> Instrumented<H> {
             let (mut undecided, mut answer) = (undecided, Some(answer));
             // Its panic is a failure like another. What it panicked with is the app's too, and
             // is let go of only once the failure is known.
-            let (mut running, _panicked) = match catch_unwind(AssertUnwindSafe(|| identify(*input)))
-            {
+            let made = catch_unwind(AssertUnwindSafe(|| {
+                IDENTIFYING.sync_scope((), || identify(*input))
+            }));
+            let (mut running, _panicked) = match made {
                 Ok(running) => (Some(CatchUnwind(Box::pin(running))), None),
                 Err(panic) => (None, Some(panic)),
             };
-            std::future::poll_fn(move |context| {
+            // Marked as `identify` while it runs: a `flush()` from inside it doesn't wait for
+            // the call it is answering for.
+            let deciding = std::future::poll_fn(move |context| {
                 let answered = match &mut running {
                     None => Err(None),
                     Some(running) => match Pin::new(running).poll(context) {
@@ -1541,8 +1625,8 @@ impl<H: ServerHandler> Instrumented<H> {
                     let _ = answer.send((identity, in_time));
                 }
                 Poll::Ready(())
-            })
-            .await;
+            });
+            IDENTIFYING.scope((), deciding).await;
         });
         call.identification = Some(Identification::Running(Identifying {
             task,
@@ -1574,11 +1658,15 @@ impl<H: ServerHandler> Instrumented<H> {
                         gate.revoke();
                     }
                     let captured = outer.scope.close();
+                    let left = outer.scope.followed();
+                    // Another client's captures are no part of this one's event.
+                    let same = outer.scope.is_of(client);
                     Some(Handed {
                         connection: outer.connection.clone(),
                         call_id: first.then(|| outer.scope.call_id().to_owned()),
-                        // Another client's capture is no part of this one's event.
-                        captured: captured.filter(|_| outer.scope.is_of(client)),
+                        captured: captured.filter(|_| same),
+                        left: if same { left } else { Left::default() },
+                        outer: outer.clone(),
                     })
                 } else {
                     None
@@ -1586,9 +1674,13 @@ impl<H: ServerHandler> Instrumented<H> {
             })
             .ok()
             .flatten();
-        let (handed, taken_over) = match handed {
-            Some(handed) => (handed.connection, Some((handed.call_id, handed.captured))),
-            None => (None, None),
+        let (handed, taken_over, outer) = match handed {
+            Some(handed) => (
+                handed.connection,
+                Some((handed.call_id, handed.captured, handed.left)),
+                Some(handed.outer),
+            ),
+            None => (None, None, None),
         };
         // The extras' inputs are taken out whether or not the call is recorded: a client that was
         // shut down still serves tools listed with them.
@@ -1644,10 +1736,11 @@ impl<H: ServerHandler> Instrumented<H> {
         // or else random. Should that fail, the call goes on as it would without the wrapper,
         // and the wrapper's own tool is answered all the same.
         let Ok(scope) = catch_unwind(AssertUnwindSafe(|| {
-            let (call_id, captured) = taken_over.unwrap_or_default();
+            let (call_id, captured, left) = taken_over.unwrap_or_default();
             let call_id = call_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let scope = CallScope::new(client, call_id);
             scope.adopt(captured);
+            scope.follow_on(left);
             Arc::new(scope)
         })) else {
             if answer {
@@ -1667,6 +1760,7 @@ impl<H: ServerHandler> Instrumented<H> {
             connection: connection.clone(),
             scope: scope.clone(),
             gate: gate.clone(),
+            waits: Mutex::default(),
         });
         // Whatever fails in here, the call goes on as it would without it.
         let arrival = Arrival {
@@ -1683,12 +1777,15 @@ impl<H: ServerHandler> Instrumented<H> {
             // Not recorded: a `capture()` inside it is a turn of its own.
             scope.close();
         }
+        // A request that is cancelled has no reply to hold back.
+        let cancellation = context.ct.clone();
         // Should the MCP SDK let go of the call before the handler answers (its connection
         // closed), it is recorded as it goes.
         let mut unanswered = Unanswered {
             wrapper: self,
             call,
             taken: taken.clone(),
+            outer: outer.clone(),
         };
         let identify = |unanswered: &mut Unanswered<'_, H>| {
             if let Some(call) = &mut unanswered.call {
@@ -1734,18 +1831,50 @@ impl<H: ServerHandler> Instrumented<H> {
                 }
             }
         };
-        // A new session's ID, to tell the agent.
+        // A new session's ID, to tell the agent; and what the reply waits for, if it does.
         let mut issued = None;
+        let mut waits = None;
         if let Some(call) = unanswered.call.take() {
             if taken.further_in() {
                 call.superseded();
             } else {
                 match catch_unwind(AssertUnwindSafe(|| self.finish(call, Some(&outcome)))) {
-                    Ok(id) => issued = id,
-                    Err(_) => client.report(Error::new(
-                        ErrorCode::InternalError,
-                        "Recording a tool call failed unexpectedly; its event was dropped.",
-                    )),
+                    Ok(finished) => (issued, waits) = (finished.issued, finished.reply),
+                    Err(_) => {
+                        client.report(Error::new(
+                            ErrorCode::InternalError,
+                            "Recording a tool call failed unexpectedly; its event was dropped.",
+                        ));
+                        // Nothing was handed to the host: what is, settles once that report
+                        // has reached `on_error`.
+                        self.hand_over(Vec::new(), Instant::now());
+                    }
+                }
+            }
+        }
+        // The reply, the handler's error or its panic waits for the call's event, and for the
+        // turns captured inside the call: until each was sent or dropped, the deadline, or the
+        // request's cancellation, whichever comes first. What is left goes on by itself. With a
+        // wrapper further in, that one recorded the call and left what to wait for here.
+        let mut waiting =
+            std::mem::take(&mut *taken.waits.lock().unwrap_or_else(PoisonError::into_inner));
+        if let Some((followed, by)) = waits {
+            waiting.push((client.clone(), followed, by));
+        }
+        match &outer {
+            // The reply is a wrapper's further out: it waits there, so that what sits between
+            // the two gets the tool's answer as soon as the tool gave it.
+            Some(outer) => {
+                for waits in waiting {
+                    outer.wait_for(waits);
+                }
+            }
+            None => {
+                for (client, followed, by) in waiting {
+                    tokio::select! {
+                        () = client.settled(&followed, by) => {}
+                        () = cancellation.cancelled() => {}
+                    }
                 }
             }
         }
@@ -1771,13 +1900,27 @@ impl<H: ServerHandler> Instrumented<H> {
     /// `outcome` is the handler's answer, or its panic; `None` when the call was let go before
     /// either, which is recorded as a cancelled one.
     ///
-    /// Returns the ID of the session it started for the call, if it did: the reply tells the
-    /// agent.
-    fn finish(&self, mut call: Call, outcome: Option<&Outcome>) -> Option<String> {
+    /// Returns the ID of the session it started for the call, if it did, which the reply tells
+    /// the agent; and what the reply waits for, if it does.
+    fn finish(&self, mut call: Call, outcome: Option<&Outcome>) -> Finished {
         let client = &self.shared.client;
-        // The tool has returned: `identify` has a second more, and a `capture()` from now on is
-        // a turn of its own.
-        let finished = match &call.gate {
+        let options = &self.shared.options;
+        // The tool has returned: a `capture()` from now on is a turn of its own.
+        let captured = call.scope.close();
+        let (mut followed, flushed) = call.scope.followed();
+        // The reply waits for the call's event where the option says so and nothing is handed
+        // to the host, or where the tool called `flush()`: for the flush timeout, counted from
+        // here. With none, it waits for nothing.
+        let timeout = client.flush_timeout();
+        let reply_waits = (flushed || (options.wait_until.is_none() && options.flush_before_reply))
+            && !timeout.is_zero();
+        // `identify` has a second more, or as long as the reply waits when that is less.
+        let identify_wait = if reply_waits {
+            IDENTIFY_WAIT.min(timeout)
+        } else {
+            IDENTIFY_WAIT
+        };
+        let (finished, identify_by) = match &call.gate {
             Some(gate) => {
                 // One that never started (there was nowhere to run it, or starting it failed)
                 // has failed, known now at the latest.
@@ -1787,11 +1930,30 @@ impl<H: ServerHandler> Instrumented<H> {
                 ) {
                     gate.fail();
                 }
-                gate.close(IDENTIFY_WAIT)
+                gate.close(identify_wait)
             }
-            None => Instant::now(),
+            None => {
+                let now = Instant::now();
+                (now, after(now, identify_wait))
+            }
         };
-        let captured = call.scope.close();
+        let reply_by = after(finished, timeout);
+        // What a host was handed goes on after the reply, for as long as it is asked to stay.
+        let send_by = if reply_waits && options.wait_until.is_none() {
+            reply_by
+        } else {
+            after(finished, WAIT_UNTIL)
+        };
+        // However the call's event ends, the turns captured inside it are waited for.
+        let leave = |issued: Option<String>, followed: Vec<Followed>| {
+            self.hand_over(followed.clone(), send_by);
+            Finished {
+                issued,
+                // No longer than what the host was handed lasts.
+                reply: (reply_waits && !followed.is_empty())
+                    .then_some((followed, reply_by.min(send_by))),
+            }
+        };
         // A failed call's text can quote what the tool would have returned, and what it was sent:
         // it is kept only when both are recorded.
         let error_text = call.inputs && call.results;
@@ -1945,7 +2107,7 @@ impl<H: ServerHandler> Instrumented<H> {
                     )
                     .about(&call.call_id),
                 );
-                return issued;
+                return leave(issued, followed);
             }
             Some(Ok(captured)) => {
                 let Captured { ids, agent } = *captured;
@@ -1969,8 +2131,9 @@ impl<H: ServerHandler> Instrumented<H> {
         // Registered before the reply leaves, so a flush from here on waits for this event.
         let Some(building) = client.admit(&call.call_id, shaped.held_bytes()) else {
             // An event dropped for want of room still leaves the calls that follow their ID.
-            return issued;
+            return leave(issued, followed);
         };
+        followed.push(building.followed());
         let (session_id, session_source) = session.unzip();
         let head = CallHead {
             call_id: call.call_id,
@@ -1994,13 +2157,12 @@ impl<H: ServerHandler> Instrumented<H> {
         };
         let identification = call.identification;
         let gate = call.gate;
-        let client = client.clone();
+        let recorder = client.clone();
         let rest = async move {
             let mut head = head;
-            let waited =
-                identified(identification, gate.as_deref(), finished + IDENTIFY_WAIT).await;
+            let waited = identified(identification, gate.as_deref(), identify_by).await;
             let diagnostic = who(&mut head, waited, captured, gate.as_deref());
-            client.record(building, shaped, head, diagnostic).await;
+            recorder.record(building, shaped, head, diagnostic).await;
         };
         match Handle::try_current() {
             Ok(runtime) => {
@@ -2009,8 +2171,46 @@ impl<H: ServerHandler> Instrumented<H> {
             // Nowhere to finish it: the event is dropped, and counts as failed.
             Err(_) => drop(rest),
         }
-        issued
+        leave(issued, followed)
     }
+
+    /// Hands a call's sending to the host, where it asked for it (`wait_until`): what is left of
+    /// it once the reply has gone, until `by` at the latest. The host's function is the app's:
+    /// whatever it does, the call goes on.
+    fn hand_over(&self, followed: Vec<Followed>, by: Instant) {
+        if let Some(wait_until) = &self.shared.options.wait_until {
+            let sending = CatchUnwind(Box::pin(self.shared.client.sending(followed, by)));
+            let sending: Sending = match Handle::try_current() {
+                // The watching is done here, on the runtime the server runs on, which has the
+                // timers and sends the events. The host is handed only its end: whatever
+                // executor it polls that on, with or without Tokio, nothing of the SDK's runs
+                // there, and should this runtime end first, so does what the host waits for.
+                Ok(runtime) => {
+                    let (done, settled) = oneshot::channel::<()>();
+                    runtime.spawn(async move {
+                        let _ = sending.await;
+                        let _ = done.send(());
+                    });
+                    Box::pin(async move {
+                        let _ = settled.await;
+                    })
+                }
+                // No runtime here (the call was let go of outside one): nothing can be sent,
+                // and what there is to watch, the host's own executor watches.
+                Err(_) => Box::pin(async move {
+                    let _ = sending.await;
+                }),
+            };
+            let _ = catch_unwind(AssertUnwindSafe(|| wait_until(sending)));
+        }
+    }
+}
+
+/// What `finish` leaves the reply: the ID of the session it started for the call, if it did, and
+/// what the reply waits for, with until when, if it does.
+struct Finished {
+    issued: Option<String>,
+    reply: Option<(Vec<Followed>, Instant)>,
 }
 
 /// What `identify` gave, waited for until `deadline`: its IDs, none when there is no `identify`,
@@ -2699,8 +2899,9 @@ mod tests {
     fn the_tools_return_is_timed_where_identifys_answer_is_decided() {
         let (client, gate) = gated();
         let before = Instant::now();
-        let ended = gate.close(Duration::from_secs(60));
+        let (ended, deadline) = gate.close(Duration::from_secs(60));
         assert!(ended >= before && ended <= Instant::now());
+        assert_eq!(deadline, ended + Duration::from_secs(60));
         assert!(gate.returned(false, USER));
         // With no time left after the tool, an answer that comes after it is late.
         let gate = Gate::new(client.inner());
